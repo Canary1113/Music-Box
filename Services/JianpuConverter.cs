@@ -10,7 +10,7 @@ namespace 音乐魔盒.Services
     public sealed class JianpuConverter
     {
         private const int DefaultMeasuresPerLine = 3;
-        private const int JianpuPitchCorrectionSemitones = 2;
+        private const int JianpuPitchCorrectionSemitones = 0;
         private const int NativeBarlineRenderWidthPx = 22;
         private const int NativeKeyLabelRenderWidthPx = 56;
         private const int NativeLineRightPaddingPx = 18;
@@ -1616,6 +1616,9 @@ namespace 音乐魔盒.Services
         }
     }
 }
+
+
+
 
 
 

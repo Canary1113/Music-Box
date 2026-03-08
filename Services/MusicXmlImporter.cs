@@ -352,6 +352,7 @@ namespace 音乐魔盒.Services
                         centerDefault: DefaultDirectionCenterStaffOffset,
                         aboveDefault: -8f,
                         belowDefault: 18f);
+                    dynamicOffset = AdjustGrandStaffDirectionOffset(directionElement, dynamicOffset, DefaultDirectionCenterStaffOffset);
 
                     mark = new ExpressionMark
                     {
@@ -409,6 +410,7 @@ namespace 音乐魔盒.Services
                             centerDefault: DefaultDirectionCenterStaffOffset,
                             aboveDefault: -8f,
                             belowDefault: 14f);
+                        wedgeOffset = AdjustGrandStaffDirectionOffset(directionElement, wedgeOffset, DefaultDirectionCenterStaffOffset + 1.2f);
 
                         mark = new ExpressionMark
                         {
@@ -560,6 +562,21 @@ namespace 音乐魔盒.Services
                 "above" => aboveDefault,
                 "below" => belowDefault,
                 _ => centerDefault
+            };
+        }
+
+        private static float AdjustGrandStaffDirectionOffset(
+            XElement directionElement,
+            float fallbackOffset,
+            float middleGapOffset)
+        {
+            string? placement = ResolveDirectionPlacement(directionElement);
+            int staffNumber = ParseInt(directionElement.Element("staff")?.Value, 0);
+            return (staffNumber, placement) switch
+            {
+                (1, "below") => middleGapOffset,
+                (2, "above") => middleGapOffset,
+                _ => fallbackOffset
             };
         }
 
@@ -1352,6 +1369,7 @@ namespace 音乐魔盒.Services
         }
     }
 }
+
 
 
 

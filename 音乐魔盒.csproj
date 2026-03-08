@@ -9,6 +9,7 @@
     <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
     <WinUISDKReferences>false</WinUISDKReferences>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <EnableMsixTooling>true</EnableMsixTooling>
     <Nullable>enable</Nullable>
     <DefaultItemExcludes>$(DefaultItemExcludes);build_verify\**\*</DefaultItemExcludes>
@@ -76,5 +77,16 @@
     <WindowsPackageType>None</WindowsPackageType>
     <ApplicationIcon>Assets\logo.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="codex-backup-*\**\*.cs" />
+    <Page Remove="codex-backup-*\**\*.xaml" />
+    <None Remove="codex-backup-*\**\*" />
+    <Compile Remove="temp-audio-runner\**\*.cs" />
+    <None Remove="temp-audio-runner\**\*" />
+  </ItemGroup>
 </Project>
+
+
+
+
 

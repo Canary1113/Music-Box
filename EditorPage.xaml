@@ -809,11 +809,12 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <Border x:Name="PlaybackOverlaySheen"
                             IsHitTestVisible="False"
                             Visibility="Collapsed"
-                            Grid.ColumnSpan="4"
+                            Grid.ColumnSpan="5"
                             VerticalAlignment="Top"
                             Height="6"
                             Background="{StaticResource PlaybackGlassSheenBrush}"
@@ -822,7 +823,7 @@
                             Margin="2,-1,-2,0"/>
                     <Border x:Name="PlaybackOverlayRefraction"
                             IsHitTestVisible="False"
-                            Grid.ColumnSpan="4"
+                            Grid.ColumnSpan="5"
                             HorizontalAlignment="Stretch"
                             VerticalAlignment="Stretch"
                             Background="#00FFFFFF"
@@ -897,6 +898,38 @@
                                   FontFamily="Segoe Fluent Icons"
                                   FontSize="16"/>
                     </Button>
+                    <Button x:Name="PlaybackOverlayVolumeButton"
+                            Grid.Column="4"
+                            Width="32"
+                            Height="32"
+                            Margin="0"
+                            Padding="0"
+                            Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
+                            BorderBrush="Transparent"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            CornerRadius="16">
+                        <Button.Flyout>
+                            <Flyout Placement="TopEdgeAlignedRight">
+                                <Border Width="188"
+                                        Padding="10,8"
+                                        Background="{ThemeResource PlaybackOverlayAcrylicBrush}"
+                                        BorderBrush="Transparent"
+                                        BorderThickness="0"
+                                        CornerRadius="28">
+                                    <Slider x:Name="PlaybackVolumeSlider"
+                                            Width="168"
+                                            Minimum="0"
+                                            Maximum="160"
+                                            Value="128"
+                                            SmallChange="4"
+                                            StepFrequency="1"
+                                            ValueChanged="PlaybackVolumeSlider_ValueChanged"/>
+                                </Border>
+                            </Flyout>
+                        </Button.Flyout>
+                        <SymbolIcon Symbol="Volume"/>
+                    </Button>
                 </Grid>
             </Border>
 
@@ -945,3 +978,9 @@
         </Grid.KeyboardAccelerators>
     </Grid>
 </Page>
+
+
+
+
+
+

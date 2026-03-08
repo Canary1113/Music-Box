@@ -416,11 +416,11 @@ namespace 音乐魔盒
             float braceX = left;
             float rowStartX = left + 54f;
 
-            ds.DrawText(_nativePreview.Title, 0f, 20f, canvasWidth, 60f, ink, _titleFormat);
+            ds.DrawText(_nativePreview.Title, 0f, 62f, canvasWidth, 60f, ink, _titleFormat);
             string meta = $"1={_nativePreview.KeyText}   {_nativePreview.MeterText}   {_nativePreview.Bpm} BPM";
-            ds.DrawText(meta, rowStartX, 98f, subInk, _metaFormat);
+            ds.DrawText(meta, rowStartX, 154f, subInk, _metaFormat);
 
-            float systemTop = 140f;
+            float systemTop = 226f;
             foreach (var system in _nativePreview.Systems)
             {
                 float upperExtraRise = EstimateUpperChordRise(system);
@@ -450,7 +450,7 @@ namespace 音乐魔盒
                 return 720f;
             }
 
-            float systemTop = 140f;
+            float systemTop = 226f;
             foreach (var system in _nativePreview.Systems)
             {
                 float upperExtraRise = EstimateUpperChordRise(system);
@@ -486,9 +486,7 @@ namespace 音乐魔盒
 
                     int rowCount = token.ChordPitches.Count;
                     int maxTopDots = token.ChordPitches.Max(p => Math.Max(0, p.TopDots));
-                    float rise = Math.Max(0, rowCount - 1) * ChordRowStep
-                        + Math.Max(0, maxTopDots) * ChordDotSpacing
-                        + 6.5f;
+                    float rise = GetChordVerticalRise(rowCount, maxTopDots);
                     maxRise = Math.Max(maxRise, rise);
                 }
             }
@@ -794,16 +792,22 @@ namespace 音乐魔盒
             }
 
             string accidentalPrefix = splitIndex > 0 ? text[..splitIndex] : string.Empty;
-            string bodyText = splitIndex < text.Length ? text[splitIndex..] : "0";
+            string bodyAndExtend = splitIndex < text.Length ? text[splitIndex..] : "0";
+            if (string.IsNullOrWhiteSpace(bodyAndExtend))
+            {
+                bodyAndExtend = "0";
+            }
+
+            int extendCount = 0;
+            while (extendCount < bodyAndExtend.Length && bodyAndExtend[^(extendCount + 1)] == '-')
+            {
+                extendCount++;
+            }
+
+            string bodyText = extendCount > 0 ? bodyAndExtend[..^extendCount] : bodyAndExtend;
             if (string.IsNullOrWhiteSpace(bodyText))
             {
                 bodyText = "0";
-            }
-
-            var bodyGlyphs = new List<(string Text, bool IsAccidental)>(bodyText.Length);
-            foreach (char ch in bodyText)
-            {
-                bodyGlyphs.Add((ch.ToString(), IsAccidentalChar(ch)));
             }
 
             float accidentalWidth = 0f;
@@ -812,22 +816,16 @@ namespace 音乐魔盒
                 accidentalWidth += MeasureGlyphWidth(ds, accidentalPrefix[i].ToString(), _accidentalFormat);
             }
 
-            float bodyWidth = 0f;
-            var bodyWidths = new float[bodyGlyphs.Count];
-            for (int i = 0; i < bodyGlyphs.Count; i++)
-            {
-                var format = bodyGlyphs[i].IsAccidental ? _accidentalFormat : _tokenFormat;
-                float w = MeasureGlyphWidth(ds, bodyGlyphs[i].Text, format);
-                bodyWidths[i] = w;
-                bodyWidth += w;
-            }
+            float bodyWidth = MeasureGlyphWidth(ds, bodyText, _tokenFormat);
+            float extendWidth = MeasureExtendDrawWidth(ds, _tokenFormat, extendCount);
+            float totalWidth = bodyWidth + (extendWidth > 0f ? 2.2f + extendWidth : 0f);
+            float bodyStart = x + Math.Max(0f, (width - totalWidth) * 0.5f);
+            bodyStart = Math.Clamp(bodyStart, clipStart + 1f, Math.Max(clipStart + 1f, clipEnd - totalWidth - 1f));
 
-            float bodyStart = x + Math.Max(0f, (width - bodyWidth) * 0.5f);
-            bodyStart = Math.Clamp(bodyStart, clipStart + 1f, Math.Max(clipStart + 1f, clipEnd - bodyWidth - 1f));
             float accidentalRight = float.MinValue;
             if (accidentalWidth > 0f)
             {
-                float accidentalGap = 0.45f;
+                float accidentalGap = 0.55f;
                 float minGapToBody = 0.25f;
                 float accidentalStart = bodyStart - accidentalGap - accidentalWidth;
                 float maxAllowedStart = bodyStart - minGapToBody - accidentalWidth;
@@ -852,24 +850,94 @@ namespace 音乐魔盒
                 accidentalRight = cursor;
             }
 
-            float bodyCursor = bodyStart;
-            for (int i = 0; i < bodyGlyphs.Count; i++)
+            ds.DrawText(bodyText, bodyStart, y, color, _tokenFormat);
+            float centerX = bodyStart + bodyWidth * 0.5f;
+            float bodyRight = bodyStart + bodyWidth;
+            if (extendCount > 0)
             {
-                var format = bodyGlyphs[i].IsAccidental ? _accidentalFormat : _tokenFormat;
-                float yOffset = bodyGlyphs[i].IsAccidental ? -5f : 0f;
-                ds.DrawText(bodyGlyphs[i].Text, bodyCursor, y + yOffset, color, format);
-                bodyCursor += bodyWidths[i];
+                DrawExtendSegments(ds, bodyRight + 2.2f, y, extendCount, color, _tokenFormat);
             }
 
-            float bodyLeft = bodyStart;
-            float bodyRight = bodyStart + bodyWidth;
-            float centerX = bodyStart + bodyWidth * 0.5f;
             if (accidentalWidth <= 0f)
             {
                 accidentalRight = float.MinValue;
             }
 
-            return new TokenDrawMetrics(bodyLeft, bodyRight, accidentalRight, centerX);
+            return new TokenDrawMetrics(bodyStart, bodyStart + totalWidth, accidentalRight, centerX);
+        }
+
+        private static float MeasureExtendDrawWidth(Microsoft.Graphics.Canvas.CanvasDrawingSession ds, CanvasTextFormat format, int extendCount)
+        {
+            if (extendCount <= 0)
+            {
+                return 0f;
+            }
+
+            float dashWidth = MeasureGlyphWidth(ds, "-", format);
+            float gap = Math.Max(6f, dashWidth * 1.25f);
+            return extendCount * dashWidth + Math.Max(0, extendCount - 1) * gap;
+        }
+
+        private static void DrawExtendSegments(
+            Microsoft.Graphics.Canvas.CanvasDrawingSession ds,
+            float startX,
+            float y,
+            int extendCount,
+            Color color,
+            CanvasTextFormat format)
+        {
+            if (extendCount <= 0)
+            {
+                return;
+            }
+
+            float dashWidth = MeasureGlyphWidth(ds, "-", format);
+            float gap = Math.Max(6f, dashWidth * 1.25f);
+            float cursor = startX;
+            for (int i = 0; i < extendCount; i++)
+            {
+                ds.DrawText("-", cursor, y, color, format);
+                cursor += dashWidth + gap;
+            }
+        }
+
+        private static float GetChordFontScale(int rowCount)
+        {
+            return rowCount switch
+            {
+                <= 3 => 1f,
+                4 => 0.92f,
+                5 => 0.84f,
+                _ => 0.76f
+            };
+        }
+
+        private static float GetChordRowStep(int rowCount)
+        {
+            float scale = GetChordFontScale(rowCount);
+            return Math.Max(13.8f, ChordRowStep * (0.84f + scale * 0.16f));
+        }
+
+        private static float GetChordVerticalRise(int rowCount, int maxTopDots)
+        {
+            float scale = GetChordFontScale(rowCount);
+            float rowStep = GetChordRowStep(rowCount);
+            float dotSpacing = Math.Max(3.1f, ChordDotSpacing * (0.82f + scale * 0.18f));
+            return Math.Max(0, rowCount - 1) * rowStep
+                + Math.Max(0, maxTopDots) * dotSpacing
+                + 6.5f * (0.88f + scale * 0.12f);
+        }
+
+        private static CanvasTextFormat CreateScaledTextFormat(CanvasTextFormat source, float scale)
+        {
+            return new CanvasTextFormat
+            {
+                FontFamily = source.FontFamily,
+                FontSize = Math.Max(8f, source.FontSize * scale),
+                FontWeight = source.FontWeight,
+                HorizontalAlignment = source.HorizontalAlignment,
+                VerticalAlignment = source.VerticalAlignment
+            };
         }
 
         private TokenDrawMetrics DrawChordTokenText(
@@ -888,62 +956,70 @@ namespace 音乐魔盒
             }
 
             var rows = token.ChordPitches;
-            float rowStep = ChordRowStep;
-            string extend = token.ExtendCount > 0 ? new string('-', Math.Min(6, token.ExtendCount)) : string.Empty;
+            int rowCount = rows.Count;
+            float fontScale = GetChordFontScale(rowCount);
+            float rowStep = GetChordRowStep(rowCount);
+            float dotSpacing = Math.Max(3.1f, ChordDotSpacing * (0.82f + fontScale * 0.18f));
+            float dotRadius = Math.Max(0.94f, 1.12f * (0.84f + fontScale * 0.16f));
+            float accidentalYOffset = -4.3f * (0.82f + fontScale * 0.18f);
+            float bottomDotBaseOffset = Math.Max(15.6f, 22.6f * (0.76f + fontScale * 0.24f));
+            var degreeFormat = CreateScaledTextFormat(_chordDegreeFormat, fontScale);
+            var accidentalFormat = CreateScaledTextFormat(_chordAccidentalFormat, Math.Min(1f, fontScale + 0.02f));
 
-            var rowWidths = new float[rows.Count];
-            var degreeWidths = new float[rows.Count];
-            float stackWidth = 0f;
-            for (int i = 0; i < rows.Count; i++)
+            var accidentalWidths = new float[rowCount];
+            var degreeWidths = new float[rowCount];
+            float maxAccidentalWidth = 0f;
+            float maxDegreeWidth = 0f;
+            for (int i = 0; i < rowCount; i++)
             {
                 float accW = 0f;
                 if (!string.IsNullOrWhiteSpace(rows[i].Accidental))
                 {
                     foreach (char ch in rows[i].Accidental)
                     {
-                        accW += MeasureGlyphWidth(ds, ch.ToString(), _chordAccidentalFormat);
+                        accW += MeasureGlyphWidth(ds, ch.ToString(), accidentalFormat);
                     }
                 }
 
-                float degW = MeasureGlyphWidth(ds, string.IsNullOrWhiteSpace(rows[i].Degree) ? "0" : rows[i].Degree, _chordDegreeFormat);
-                float rowWidth = accW + degW;
+                float degW = MeasureGlyphWidth(ds, string.IsNullOrWhiteSpace(rows[i].Degree) ? "0" : rows[i].Degree, degreeFormat);
+                accidentalWidths[i] = accW;
                 degreeWidths[i] = degW;
-                rowWidths[i] = rowWidth;
-                stackWidth = Math.Max(stackWidth, rowWidth);
+                maxAccidentalWidth = Math.Max(maxAccidentalWidth, accW);
+                maxDegreeWidth = Math.Max(maxDegreeWidth, degW);
             }
 
-            float extendWidth = string.IsNullOrEmpty(extend) ? 0f : MeasureGlyphWidth(ds, extend, _chordDegreeFormat);
-            float totalWidth = stackWidth + (extendWidth > 0f ? extendWidth + 1.3f : 0f);
+            float stackWidth = maxAccidentalWidth + maxDegreeWidth;
+            float extendWidth = MeasureExtendDrawWidth(ds, degreeFormat, token.ExtendCount);
+            float totalWidth = stackWidth + (extendWidth > 0f ? extendWidth + 2.2f : 0f);
             float bodyStart = x + Math.Max(0f, (width - totalWidth) * 0.5f);
             bodyStart = Math.Clamp(bodyStart, clipStart + 1f, Math.Max(clipStart + 1f, clipEnd - totalWidth - 1f));
 
-            float topRowY = y - ((rows.Count - 1) * rowStep) - 1.3f;
+            float degreeStart = bodyStart + maxAccidentalWidth;
+            float topRowY = y - Math.Max(0, rowCount - 1) * rowStep + 5.4f;
             float maxAccidentalRight = float.MinValue;
-            const float dotSpacing = ChordDotSpacing;
-            const float dotRadius = 1.12f;
-            for (int i = 0; i < rows.Count; i++)
+            for (int i = 0; i < rowCount; i++)
             {
                 var row = rows[i];
                 float rowY = topRowY + i * rowStep;
-                float rowStart = bodyStart + (stackWidth - rowWidths[i]) * 0.5f;
-                float cursor = rowStart;
+                float cursor = degreeStart - accidentalWidths[i];
 
                 if (!string.IsNullOrWhiteSpace(row.Accidental))
                 {
                     foreach (char ch in row.Accidental)
                     {
                         string glyph = ch.ToString();
-                        float w = MeasureGlyphWidth(ds, glyph, _chordAccidentalFormat);
-                        ds.DrawText(glyph, cursor, rowY - 4.3f, color, _chordAccidentalFormat);
+                        float w = MeasureGlyphWidth(ds, glyph, accidentalFormat);
+                        ds.DrawText(glyph, cursor, rowY + accidentalYOffset, color, accidentalFormat);
                         cursor += w;
                     }
 
-                    maxAccidentalRight = Math.Max(maxAccidentalRight, cursor);
+                    maxAccidentalRight = Math.Max(maxAccidentalRight, degreeStart);
                 }
 
                 string degreeText = string.IsNullOrWhiteSpace(row.Degree) ? "0" : row.Degree;
-                ds.DrawText(degreeText, cursor, rowY, color, _chordDegreeFormat);
-                float degreeCenterX = cursor + degreeWidths[i] * 0.5f;
+                float degreeX = degreeStart;
+                ds.DrawText(degreeText, degreeX, rowY, color, degreeFormat);
+                float degreeCenterX = degreeX + degreeWidths[i] * 0.5f;
                 for (int d = 0; d < row.TopDots; d++)
                 {
                     ds.FillCircle(degreeCenterX, rowY - 1.5f - d * dotSpacing, dotRadius, color);
@@ -951,15 +1027,13 @@ namespace 音乐魔盒
 
                 for (int d = 0; d < row.BottomDots; d++)
                 {
-                    ds.FillCircle(degreeCenterX, rowY + 22.6f + d * dotSpacing, dotRadius, color);
+                    ds.FillCircle(degreeCenterX, rowY + bottomDotBaseOffset + d * dotSpacing, dotRadius, color);
                 }
             }
 
-            if (!string.IsNullOrEmpty(extend))
+            if (token.ExtendCount > 0)
             {
-                float extendX = bodyStart + stackWidth + 1.3f;
-                float extendY = y - 1.0f;
-                ds.DrawText(extend, extendX, extendY, color, _chordDegreeFormat);
+                DrawExtendSegments(ds, bodyStart + stackWidth + 2.2f, y, token.ExtendCount, color, degreeFormat);
             }
 
             if (maxAccidentalRight < -1e20f)
@@ -969,7 +1043,7 @@ namespace 音乐魔盒
 
             float bodyLeft = bodyStart;
             float bodyRight = bodyStart + totalWidth;
-            float centerX = bodyStart + stackWidth * 0.5f;
+            float centerX = degreeStart + maxDegreeWidth * 0.5f;
             return new TokenDrawMetrics(bodyLeft, bodyRight, maxAccidentalRight, centerX);
         }
 
@@ -1003,8 +1077,9 @@ namespace 音乐魔盒
                     + Math.Max(0, maxGlyphCount - 1) * 5.2f
                     + Math.Min(6, Math.Max(0, token.ExtendCount)) * 3.8f
                     + (rowCount >= 3 ? 1.4f : 0f);
-                float scaledChordWidth = chordWidth * MathF.Sqrt(Math.Max(0.35f, durationScale));
-                return Math.Clamp(scaledChordWidth, 16f, 58f);
+                float rowScale = 0.88f + GetChordFontScale(rowCount) * 0.12f;
+                float scaledChordWidth = chordWidth * MathF.Sqrt(Math.Max(0.35f, durationScale)) * rowScale;
+                return Math.Clamp(scaledChordWidth, 14f, 56f);
             }
 
             float textWeight = MathF.Max(0f, (token.Text?.Length ?? 1) - 1) * 1.6f;
@@ -1306,6 +1381,15 @@ namespace 音乐魔盒
         }
     }
 }
+
+
+
+
+
+
+
+
+
 
 
 

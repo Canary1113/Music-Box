@@ -132,6 +132,35 @@ namespace 音乐魔盒.Services
             }
 
             float[] samples = PreprocessSamples(rawSamples, sampleRate);
+            try
+            {
+                var advancedNotes = DetectNotesFromPreparedSamples(samples, sampleRate, progress);
+                if (advancedNotes.Count > 0)
+                {
+                    return advancedNotes;
+                }
+            }
+            catch
+            {
+                // Fall back to a simpler monophonic path when the advanced tracker rejects a file.
+            }
+
+            progress?.Report(new AudioRecognitionProgress { Percent = 74, Stage = "Fallback", ProcessedFrames = 0, TotalFrames = 0 });
+            try
+            {
+                return DetectNotesFallback(samples, sampleRate, progress);
+            }
+            catch
+            {
+                return DetectNotesFixedArray256(samples, sampleRate, progress);
+            }
+        }
+
+        private static IReadOnlyList<DetectedAudioNote> DetectNotesFromPreparedSamples(
+            float[] samples,
+            int sampleRate,
+            IProgress<AudioRecognitionProgress>? progress)
+        {
             int frameSize = Math.Clamp((int)(sampleRate * 0.046), 1024, 4096);
             int hopSize = Math.Max(128, frameSize / 5);
             int totalFrames = Math.Max(1, ((samples.Length - frameSize) / hopSize) + 1);
@@ -209,6 +238,312 @@ namespace 音乐魔盒.Services
             var refined = RefineDetectedNotes(samples, sampleRate, cleaned, progress);
             var finalNotes = CleanShortNoiseNotes(StabilizeVoices(refined));
 
+            progress?.Report(new AudioRecognitionProgress { Percent = 100, Stage = "Done", ProcessedFrames = totalFrames, TotalFrames = totalFrames });
+            return finalNotes;
+        }
+
+        private static IReadOnlyList<DetectedAudioNote> DetectNotesFixedArray256(
+            float[] samples,
+            int sampleRate,
+            IProgress<AudioRecognitionProgress>? progress)
+        {
+            if (samples == null || samples.Length < 512 || sampleRate <= 0)
+            {
+                return Array.Empty<DetectedAudioNote>();
+            }
+
+            int frameSize = Math.Clamp((int)(sampleRate * 0.072d), 1024, 4096);
+            int hopSize = Math.Max(128, frameSize / 3);
+            int totalFrames = Math.Max(1, ((Math.Max(samples.Length - frameSize, 0)) / hopSize) + 1);
+            double minRms = Math.Max(0.0032d, EstimateAdaptiveMinRms(samples, frameSize, hopSize) * 0.58d);
+            const double minFreq = 55d;
+            const double maxFreq = 1760d;
+            var notes = new List<DetectedAudioNote>();
+            int[] midiBuckets = new int[256];
+            double[] midiFreqSum = new double[256];
+
+            int currentMidi = -1;
+            int currentStart = 0;
+            int currentEnd = 0;
+            double currentFreqSum = 0d;
+            double currentFreqWeight = 0d;
+            int currentFrames = 0;
+
+            void FlushCurrent()
+            {
+                if (currentMidi < 0 || currentFrames < 2)
+                {
+                    currentMidi = -1;
+                    currentStart = 0;
+                    currentEnd = 0;
+                    currentFreqSum = 0d;
+                    currentFreqWeight = 0d;
+                    currentFrames = 0;
+                    return;
+                }
+
+                double durationSeconds = Math.Max(0d, (currentEnd - currentStart) / (double)sampleRate);
+                if (durationSeconds >= 0.070d)
+                {
+                    int safeMidi = Math.Clamp(currentMidi, 0, 255);
+                    double freq = currentFreqWeight > 1e-6d ? currentFreqSum / currentFreqWeight : MidiToFrequency(Math.Clamp(safeMidi, 24, 108));
+                    notes.Add(new DetectedAudioNote
+                    {
+                        Midi = Math.Clamp(safeMidi, 24, 108),
+                        FrequencyHz = freq,
+                        StartSeconds = currentStart / (double)sampleRate,
+                        DurationSeconds = durationSeconds
+                    });
+                }
+
+                currentMidi = -1;
+                currentStart = 0;
+                currentEnd = 0;
+                currentFreqSum = 0d;
+                currentFreqWeight = 0d;
+                currentFrames = 0;
+            }
+
+            int frameIndex = 0;
+            for (int start = 0; start + frameSize <= samples.Length; start += hopSize, frameIndex++)
+            {
+                if ((frameIndex & 7) == 0)
+                {
+                    int percent = 78 + Math.Clamp((int)Math.Round(frameIndex / (double)Math.Max(1, totalFrames) * 20d), 0, 20);
+                    progress?.Report(new AudioRecognitionProgress { Percent = percent, Stage = "Fallback256", ProcessedFrames = frameIndex, TotalFrames = totalFrames });
+                }
+
+                Array.Clear(midiBuckets, 0, midiBuckets.Length);
+                Array.Clear(midiFreqSum, 0, midiFreqSum.Length);
+
+                double rms = ComputeRms(samples, start, frameSize);
+                if (rms < minRms)
+                {
+                    FlushCurrent();
+                    continue;
+                }
+
+                try
+                {
+                    var (yinFreq, yinScore) = EstimatePitchNormalizedDifference(samples, start, frameSize, sampleRate, minFreq, maxFreq);
+                    if (yinFreq > 0d && yinScore >= 0.08d)
+                    {
+                        var (yinMidi, _) = PitchUtils.FrequencyToMidiWithCents(yinFreq);
+                        int bucket = Math.Clamp(yinMidi, 0, 255);
+                        midiBuckets[bucket] += 3;
+                        midiFreqSum[bucket] += yinFreq * 3d;
+                    }
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    var (autoFreq, autoScore) = EstimatePitchAutocorrelation(samples, start, frameSize, sampleRate, minFreq, maxFreq);
+                    if (autoFreq > 0d && autoScore >= 0.08d)
+                    {
+                        var (autoMidi, _) = PitchUtils.FrequencyToMidiWithCents(autoFreq);
+                        int bucket = Math.Clamp(autoMidi, 0, 255);
+                        midiBuckets[bucket] += 2;
+                        midiFreqSum[bucket] += autoFreq * 2d;
+                    }
+                }
+                catch
+                {
+                }
+
+                int bestBucket = -1;
+                int bestVotes = 0;
+                for (int i = 0; i < midiBuckets.Length; i++)
+                {
+                    if (midiBuckets[i] > bestVotes)
+                    {
+                        bestVotes = midiBuckets[i];
+                        bestBucket = i;
+                    }
+                }
+
+                if (bestBucket < 0 || bestVotes <= 0)
+                {
+                    FlushCurrent();
+                    continue;
+                }
+
+                bool continueRun = currentMidi >= 0 && Math.Abs(bestBucket - currentMidi) <= 2 && start - currentEnd <= hopSize * 2;
+                if (!continueRun)
+                {
+                    FlushCurrent();
+                    currentMidi = bestBucket;
+                    currentStart = start;
+                }
+
+                if (currentMidi < 0)
+                {
+                    currentMidi = bestBucket;
+                    currentStart = start;
+                }
+
+                currentEnd = start + frameSize;
+                currentFreqSum += midiFreqSum[bestBucket];
+                currentFreqWeight += Math.Max(1, midiBuckets[bestBucket]);
+                currentFrames++;
+            }
+
+            FlushCurrent();
+            var cleaned = CleanShortNoiseNotes(StabilizeVoices(notes));
+            progress?.Report(new AudioRecognitionProgress { Percent = 100, Stage = "Done", ProcessedFrames = totalFrames, TotalFrames = totalFrames });
+            return cleaned;
+        }
+        private static IReadOnlyList<DetectedAudioNote> DetectNotesFallback(
+            float[] samples,
+            int sampleRate,
+            IProgress<AudioRecognitionProgress>? progress)
+        {
+            if (samples.Length < 512 || sampleRate <= 0)
+            {
+                return Array.Empty<DetectedAudioNote>();
+            }
+
+            int frameSize = Math.Clamp((int)(sampleRate * 0.060d), 1024, 4096);
+            int hopSize = Math.Max(128, frameSize / 4);
+            int totalFrames = Math.Max(1, ((Math.Max(samples.Length - frameSize, 0)) / hopSize) + 1);
+            double adaptiveMinRms = Math.Max(0.0038d, EstimateAdaptiveMinRms(samples, frameSize, hopSize) * 0.72d);
+            const double minFreq = 55d;
+            const double maxFreq = 1760d;
+            var output = new List<DetectedAudioNote>();
+
+            int? runMidi = null;
+            int runStartSample = 0;
+            int runEndSample = 0;
+            double freqSum = 0d;
+            double weightSum = 0d;
+            double confidenceSum = 0d;
+            int voicedFrames = 0;
+
+            void FlushRun()
+            {
+                if (!runMidi.HasValue || voicedFrames < 2)
+                {
+                    runMidi = null;
+                    runStartSample = 0;
+                    runEndSample = 0;
+                    freqSum = 0d;
+                    weightSum = 0d;
+                    confidenceSum = 0d;
+                    voicedFrames = 0;
+                    return;
+                }
+
+                double startSeconds = runStartSample / (double)sampleRate;
+                double durationSeconds = Math.Max(0d, (runEndSample - runStartSample) / (double)sampleRate);
+                double meanConfidence = confidenceSum / Math.Max(1, voicedFrames);
+                if (durationSeconds >= 0.070d && meanConfidence >= 0.16d)
+                {
+                    int safeMidi = Math.Clamp(runMidi.Value, 24, 108);
+                    double resolvedFreq = weightSum > 1e-6d ? freqSum / weightSum : MidiToFrequency(safeMidi);
+                    output.Add(new DetectedAudioNote
+                    {
+                        Midi = safeMidi,
+                        FrequencyHz = resolvedFreq,
+                        StartSeconds = startSeconds,
+                        DurationSeconds = durationSeconds
+                    });
+                }
+
+                runMidi = null;
+                runStartSample = 0;
+                runEndSample = 0;
+                freqSum = 0d;
+                weightSum = 0d;
+                confidenceSum = 0d;
+                voicedFrames = 0;
+            }
+
+            int frameIndex = 0;
+            for (int start = 0; start + frameSize <= samples.Length; start += hopSize, frameIndex++)
+            {
+                if ((frameIndex & 7) == 0)
+                {
+                    int percent = 74 + Math.Clamp((int)Math.Round(frameIndex / (double)Math.Max(1, totalFrames) * 24d), 0, 24);
+                    progress?.Report(new AudioRecognitionProgress { Percent = percent, Stage = "Fallback", ProcessedFrames = frameIndex, TotalFrames = totalFrames });
+                }
+
+                double rms = ComputeRms(samples, start, frameSize);
+                double zcr = ComputeZeroCrossingRate(samples, start, frameSize);
+                if (rms < adaptiveMinRms || zcr > 0.42d)
+                {
+                    FlushRun();
+                    continue;
+                }
+
+                var (yinFreq, yinScore) = EstimatePitchNormalizedDifference(samples, start, frameSize, sampleRate, minFreq, maxFreq);
+                var (autoFreq, autoScore) = EstimatePitchAutocorrelation(samples, start, frameSize, sampleRate, minFreq, maxFreq);
+                double resolvedFreq = 0d;
+                double resolvedConfidence = 0d;
+                if (yinFreq > 0d && autoFreq > 0d)
+                {
+                    double yinWeight = 0.80d + yinScore * 0.90d;
+                    double autoWeight = 0.45d + autoScore * 0.65d;
+                    resolvedFreq = (yinFreq * yinWeight + autoFreq * autoWeight) / Math.Max(0.01d, yinWeight + autoWeight);
+                    resolvedConfidence = Math.Max(yinScore, autoScore * 0.92d);
+                }
+                else if (yinFreq > 0d)
+                {
+                    resolvedFreq = yinFreq;
+                    resolvedConfidence = yinScore;
+                }
+                else if (autoFreq > 0d)
+                {
+                    resolvedFreq = autoFreq;
+                    resolvedConfidence = autoScore * 0.88d;
+                }
+
+                if (resolvedFreq <= 0d || resolvedConfidence < 0.15d)
+                {
+                    FlushRun();
+                    continue;
+                }
+
+                var (midi, _) = PitchUtils.FrequencyToMidiWithCents(resolvedFreq);
+                int safeMidi = Math.Clamp(midi, 24, 108);
+                bool canContinueRun = runMidi.HasValue
+                    && Math.Abs(safeMidi - runMidi.Value) <= 1
+                    && start - runEndSample <= hopSize * 2;
+                if (!canContinueRun)
+                {
+                    FlushRun();
+                }
+
+                if (!runMidi.HasValue)
+                {
+                    runMidi = safeMidi;
+                    runStartSample = start;
+                    runEndSample = start + frameSize;
+                }
+                else
+                {
+                    runMidi = (int)Math.Round((runMidi.Value * voicedFrames + safeMidi) / (double)Math.Max(1, voicedFrames + 1));
+                    runEndSample = start + frameSize;
+                }
+
+                double voteWeight = Math.Max(0.10d, resolvedConfidence);
+                freqSum += resolvedFreq * voteWeight;
+                weightSum += voteWeight;
+                confidenceSum += resolvedConfidence;
+                voicedFrames++;
+            }
+
+            FlushRun();
+            var cleaned = CleanShortNoiseNotes(StabilizeVoices(output));
+            if (cleaned.Count == 0)
+            {
+                progress?.Report(new AudioRecognitionProgress { Percent = 100, Stage = "Done", ProcessedFrames = totalFrames, TotalFrames = totalFrames });
+                return cleaned;
+            }
+
+            var refined = RefineDetectedNotes(samples, sampleRate, cleaned, progress);
+            var finalNotes = CleanShortNoiseNotes(StabilizeVoices(refined));
             progress?.Report(new AudioRecognitionProgress { Percent = 100, Stage = "Done", ProcessedFrames = totalFrames, TotalFrames = totalFrames });
             return finalNotes;
         }
@@ -1713,6 +2048,9 @@ namespace 音乐魔盒.Services
         }
     }
 }
+
+
+
 
 
 

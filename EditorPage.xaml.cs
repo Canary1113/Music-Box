@@ -380,6 +380,7 @@ namespace 音乐魔盒
         private int _playbackCurrentTick;
         private int _playbackTotalTicks;
         private double _playbackTicksPerSecond;
+        private double _playbackVolume = 1.28d;
         private bool _isPlaybackRunning;
         private bool _isPlaybackPaused;
         private DateTimeOffset _playbackStartTimeUtc;
@@ -7167,7 +7168,17 @@ namespace 音乐魔盒
                 : _viewModel.Project.Notes.Max(n => Math.Max(0, n.StartTick));
             int maxExpressionTick = _viewModel.Project.ExpressionMarks.Count == 0
                 ? 0
-                : _viewModel.Project.ExpressionMarks.Max(m => Math.Max(0, m.StartTick));
+                : _viewModel.Project.ExpressionMarks.Max(m =>
+                {
+                    int tick = Math.Max(0, m.StartTick);
+                    string code = NormalizeExpressionCode(m.Code);
+                    if (tick > 0 && IsBarlineAnchoredScoreMark(code))
+                    {
+                        tick--;
+                    }
+
+                    return tick;
+                });
             int maxTimeSigTick = _viewModel.Project.TimeSignatureChanges.Count == 0
                 ? 0
                 : _viewModel.Project.TimeSignatureChanges.Max(c => Math.Max(0, c.Tick));
@@ -8223,6 +8234,10 @@ namespace 音乐魔盒
             if (localMeasureIndex == 0)
             {
                 leadInset += Math.Max(SymbolSizeGap * 0.42f, _beatWidth * 0.12f);
+            }
+            else
+            {
+                leadInset += Math.Max(SymbolSizeGap * 0.78f, _beatWidth * 0.23f);
             }
 
             if (reserve > 0f)
@@ -10859,7 +10874,7 @@ namespace 音乐魔盒
             }
 
             int baseMidi = Math.Clamp(GetEffectiveNoteMidi(note) + semitoneTranspose, 0, 127);
-            int baseVelocity = note.IsAccent ? 118 : 100;
+            int baseVelocity = GetPlaybackVelocityForNote(note, note.StartTick);
             int safeStart = Math.Max(0, startTick);
             int safeDuration = Math.Max(1, durationTicks);
 
@@ -10965,26 +10980,129 @@ namespace 音乐魔盒
         {
             int start = Math.Max(0, startTick);
             int duration = Math.Max(1, durationTicks);
+            int adjustedVelocity = velocity;
+            bool suppressPedalSustain = false;
             if (applyArticulation)
             {
                 if (source.IsStaccatissimo)
                 {
-                    duration = Math.Max(1, (int)Math.Round(duration * 0.25));
+                    duration = Math.Max(1, (int)Math.Round(duration * 0.08));
+                    adjustedVelocity += 16;
+                    suppressPedalSustain = true;
                 }
                 else if (source.IsStaccato)
                 {
-                    duration = Math.Max(1, (int)Math.Round(duration * 0.55));
+                    duration = Math.Max(1, (int)Math.Round(duration * 0.18));
+                    adjustedVelocity += 10;
+                    suppressPedalSustain = true;
                 }
             }
 
             int end = Math.Max(start + 1, start + duration);
-            end = GetSustainedEndTick(start, end, pedalRanges);
+            if (!suppressPedalSustain)
+            {
+                end = GetSustainedEndTick(start, end, pedalRanges);
+            }
+
             int safeMidi = Math.Clamp(midi, 0, 127);
-            int safeVelocity = Math.Clamp(velocity, 1, 127);
+            int safeVelocity = Math.Clamp(adjustedVelocity, 1, 127);
             _playbackEvents.Add(new PlaybackEvent(start, 1, safeMidi, true, safeVelocity));
             _playbackEvents.Add(new PlaybackEvent(end, 0, safeMidi, false, 0));
             _playbackNoteSpans.Add(new PlaybackNoteSpan(start, end, safeMidi, safeVelocity));
             _playbackTotalTicks = Math.Max(_playbackTotalTicks, end);
+        }
+
+        private int GetPlaybackVelocityForNote(NoteEvent note, int sourceTick)
+        {
+            int velocity = GetPlaybackDynamicVelocityAtTick(sourceTick);
+            if (note.IsAccent)
+            {
+                velocity += 42;
+            }
+
+            if (note.IsStaccatissimo)
+            {
+                velocity += 14;
+            }
+            else if (note.IsStaccato)
+            {
+                velocity += 8;
+            }
+
+            return Math.Clamp(velocity, 28, 127);
+        }
+
+        private int GetPlaybackDynamicVelocityAtTick(int sourceTick)
+        {
+            if (_viewModel == null)
+            {
+                return 92;
+            }
+
+            int safeTick = Math.Max(0, sourceTick);
+            int velocity = 96;
+            foreach (var mark in _viewModel.Project.ExpressionMarks.OrderBy(m => m.StartTick))
+            {
+                int markTick = Math.Max(0, mark.StartTick);
+                if (markTick > safeTick)
+                {
+                    break;
+                }
+
+                string code = NormalizeExpressionCode(mark.Code);
+                switch (code)
+                {
+                    case "ppp": velocity = 46; break;
+                    case "pp": velocity = 58; break;
+                    case "p": velocity = 70; break;
+                    case "mp": velocity = 82; break;
+                    case "mf": velocity = 96; break;
+                    case "f": velocity = 110; break;
+                    case "ff": velocity = 122; break;
+                    case "fff": velocity = 127; break;
+                    case "sf": velocity = 126; break;
+                }
+            }
+
+            velocity += GetPlaybackHairpinVelocityDeltaAtTick(safeTick);
+            return Math.Clamp(velocity, 24, 127);
+        }
+
+        private int GetPlaybackHairpinVelocityDeltaAtTick(int sourceTick)
+        {
+            if (_viewModel == null)
+            {
+                return 0;
+            }
+
+            int safeTick = Math.Max(0, sourceTick);
+            double delta = 0d;
+            foreach (var mark in _viewModel.Project.ExpressionMarks)
+            {
+                string code = NormalizeExpressionCode(mark.Code);
+                if (code is not ("cresc" or "dim" or "cresc_text" or "dim_text"))
+                {
+                    continue;
+                }
+
+                int start = Math.Max(0, mark.StartTick);
+                int end = Math.Max(start + 1, GetExpressionSpanEndTick(mark));
+                if (safeTick < start || safeTick > end)
+                {
+                    continue;
+                }
+
+                double progress = (safeTick - start) / (double)Math.Max(1, end - start);
+                double amount = code is "cresc" or "cresc_text" ? 18d : -18d;
+                if (code is "cresc_text" or "dim_text")
+                {
+                    amount *= 0.72d;
+                }
+
+                delta += amount * progress;
+            }
+
+            return (int)Math.Round(delta);
         }
 
         private PlaybackRepeatSegment? TryGetPlaybackRepeatSegment()
@@ -11443,6 +11561,11 @@ namespace 音乐魔盒
                 ToolTipService.SetToolTip(PlaybackOverlayStopButton, "停止");
                 PlaybackOverlayStopButton.IsEnabled = _isPlaybackRunning || _isPlaybackPaused;
             }
+
+            if (PlaybackOverlayVolumeButton != null)
+            {
+                ToolTipService.SetToolTip(PlaybackOverlayVolumeButton, $"音量 {(int)Math.Round(_playbackVolume * 100d)}%");
+            }
         }
 
         private void PlaybackOverlayPlayPauseButton_Click(object sender, RoutedEventArgs e)
@@ -11580,6 +11703,11 @@ namespace 音乐魔盒
                 PlaybackOverlayStopButton.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
             }
 
+            if (PlaybackOverlayVolumeButton != null)
+            {
+                PlaybackOverlayVolumeButton.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+            }
+
             if (PlaybackProgressText != null)
             {
                 PlaybackProgressText.Visibility = expanded ? Visibility.Visible : Visibility.Collapsed;
@@ -11603,7 +11731,7 @@ namespace 音乐魔盒
                 else
                 {
                     Grid.SetColumn(PlaybackProgressSlider, 0);
-                    Grid.SetColumnSpan(PlaybackProgressSlider, 4);
+                    Grid.SetColumnSpan(PlaybackProgressSlider, 5);
                     PlaybackProgressSlider.HorizontalAlignment = HorizontalAlignment.Stretch;
                     PlaybackProgressSlider.Width = double.NaN;
                     PlaybackProgressSlider.Margin = new Thickness(2, -1, 2, 0);
@@ -11779,7 +11907,7 @@ namespace 音乐魔盒
                 return;
             }
 
-            double expandedWidth = Math.Clamp(viewportWidth * 0.52d, 360d, 900d);
+            double expandedWidth = Math.Clamp(viewportWidth * 0.40d, 280d, 720d);
             expandedWidth = Math.Min(expandedWidth, Math.Max(320d, viewportWidth - 26d));
             double targetWidth = expandedWidth;
             PlaybackOverlay.Width = targetWidth;
@@ -11836,6 +11964,12 @@ namespace 音乐魔盒
                     PlaybackOverlayStopButton.Width = buttonSize;
                     PlaybackOverlayStopButton.Height = buttonSize;
                     PlaybackOverlayStopButton.CornerRadius = new CornerRadius(buttonSize / 2d);
+                }
+                if (PlaybackOverlayVolumeButton != null)
+                {
+                    PlaybackOverlayVolumeButton.Width = buttonSize;
+                    PlaybackOverlayVolumeButton.Height = buttonSize;
+                    PlaybackOverlayVolumeButton.CornerRadius = new CornerRadius(buttonSize / 2d);
                 }
             }
 
@@ -11945,6 +12079,15 @@ namespace 音乐魔盒
             return Math.Max(1e-6, bpm * ticksPerBeat / 60d);
         }
 
+        private void PlaybackVolumeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+        {
+            _playbackVolume = Math.Clamp(e.NewValue / 100d, 0d, 1.6d);
+            if (PlaybackOverlayVolumeButton != null)
+            {
+                ToolTipService.SetToolTip(PlaybackOverlayVolumeButton, $"音量 {(int)Math.Round(_playbackVolume * 100d)}%");
+            }
+        }
+
         private static string FormatPlaybackTime(double seconds)
         {
             if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds < 0)
@@ -11961,8 +12104,10 @@ namespace 音乐魔盒
         private void SendMidiNoteOn(int midi, int velocity = 100)
         {
             if (_midiSynth == null) return;
+            if (_playbackVolume <= 0.001d) return;
             byte pitch = (byte)Math.Clamp(midi, 0, 127);
-            byte vel = (byte)Math.Clamp(velocity, 1, 127);
+            int scaledVelocity = (int)Math.Round(Math.Clamp(velocity, 1, 127) * _playbackVolume);
+            byte vel = (byte)Math.Clamp(scaledVelocity, 1, 127);
             _midiSynth.SendMessage(new MidiNoteOnMessage(0, pitch, vel));
             if (_activePlaybackNotes.TryGetValue(pitch, out int count))
             {
@@ -13366,6 +13511,14 @@ namespace 音乐魔盒
         }
     }
 }
+
+
+
+
+
+
+
+
 
 
 

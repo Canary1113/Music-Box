@@ -345,7 +345,7 @@ namespace 音乐魔盒
             }
 
             int ppq = Math.Max(96, _viewModel?.Project.Ppq ?? 480);
-            AudioStructureInference inference = InferAudioStructure(_detectedNotes, ppq);
+            AudioStructureInference inference = InferAudioStructureSafe(_detectedNotes, ppq);
             RecognizeSummaryText.Text =
                 $"{Loc("识别结果", "Result")}: {Loc("检测到", "Detected")} {_detectedNotes.Count} {Loc("个音符片段", "note segments")} · " +
                 $"{Loc("拍号", "Meter")} {inference.Numerator}/{inference.Denominator}, 1={inference.KeyName}";
@@ -739,7 +739,7 @@ namespace 音乐魔盒
             }
 
             int ppq = Math.Max(96, _viewModel.Project.Ppq);
-            AudioStructureInference inference = InferAudioStructure(_detectedNotes, ppq);
+            AudioStructureInference inference = InferAudioStructureSafe(_detectedNotes, ppq);
             ResetProjectForAudioImport(_viewModel.Project, ppq, inference);
 
             double bpm = Math.Max(20, _viewModel.Project.Bpm);
@@ -860,6 +860,18 @@ namespace 音乐魔盒
             if (inference.KeySignatureChanges.Count > 0)
             {
                 project.KeySignatureChanges.AddRange(inference.KeySignatureChanges);
+            }
+        }
+
+        private static AudioStructureInference InferAudioStructureSafe(IReadOnlyList<DetectedAudioNote> notes, int ppq)
+        {
+            try
+            {
+                return InferAudioStructure(notes, ppq);
+            }
+            catch
+            {
+                return new AudioStructureInference();
             }
         }
 
@@ -1792,3 +1804,4 @@ namespace 音乐魔盒
         }
     }
 }
+
