@@ -1,0 +1,1720 @@
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using NAudio.Dsp;
+using NAudio.Wave;
+
+namespace 音乐魔盒.Services
+{
+    public sealed class DetectedAudioNote
+    {
+        public int Midi { get; init; }
+        public double FrequencyHz { get; init; }
+        public double StartSeconds { get; init; }
+        public double DurationSeconds { get; init; }
+    }
+
+    public sealed class AudioRecognitionProgress
+    {
+        public int Percent { get; init; }
+        public string Stage { get; init; } = string.Empty;
+        public int ProcessedFrames { get; init; }
+        public int TotalFrames { get; init; }
+    }
+
+    public static class AudioPitchRecognizer
+    {
+        private const bool PreferMonophonic = true;
+
+        private readonly struct PitchCandidate
+        {
+            public PitchCandidate(int midi, double frequencyHz, float strength)
+            {
+                Midi = Math.Clamp(midi, 24, 108);
+                FrequencyHz = Math.Max(1d, frequencyHz);
+                Strength = Math.Max(0.01f, strength);
+            }
+
+            public int Midi { get; }
+            public double FrequencyHz { get; }
+            public float Strength { get; }
+        }
+
+        private readonly struct CandidateVote
+        {
+            public CandidateVote(double score, double weightedFrequency, double weight)
+            {
+                Score = score;
+                WeightedFrequency = weightedFrequency;
+                Weight = weight;
+            }
+
+            public double Score { get; }
+            public double WeightedFrequency { get; }
+            public double Weight { get; }
+
+            public CandidateVote Add(double score, double frequency, double weight)
+            {
+                double safeWeight = Math.Max(0.0001d, weight);
+                return new CandidateVote(
+                    Score + score,
+                    WeightedFrequency + frequency * safeWeight,
+                    Weight + safeWeight);
+            }
+
+            public double ResolveFrequency(int midi)
+            {
+                return Weight > 0.0001d
+                    ? WeightedFrequency / Weight
+                    : MidiToFrequency(midi);
+            }
+        }
+
+        private readonly struct FrameAnalysis
+        {
+            public FrameAnalysis(int startSample, double rms, double harmonicity, double flatness, double peakRatio, double zcr, PitchCandidate[] candidates)
+            {
+                StartSample = startSample;
+                Rms = rms;
+                Harmonicity = Math.Clamp(harmonicity, 0d, 1d);
+                Flatness = Math.Clamp(flatness, 0d, 1d);
+                PeakRatio = Math.Clamp(peakRatio, 0d, 1d);
+                ZeroCrossingRate = Math.Clamp(zcr, 0d, 1d);
+                Candidates = candidates ?? Array.Empty<PitchCandidate>();
+            }
+
+            public int StartSample { get; }
+            public double Rms { get; }
+            public double Harmonicity { get; }
+            public double Flatness { get; }
+            public double PeakRatio { get; }
+            public double ZeroCrossingRate { get; }
+            public PitchCandidate[] Candidates { get; }
+            public bool HasPitch => Candidates.Length > 0;
+            public int PrimaryMidi => HasPitch ? Candidates[0].Midi : 0;
+            public float PrimaryStrength => HasPitch ? Candidates[0].Strength : 0f;
+
+            public double Confidence
+            {
+                get
+                {
+                    double primary = Math.Clamp(PrimaryStrength, 0d, 1d);
+                    double zcrPenalty = Math.Clamp(1d - ZeroCrossingRate * 2.2d, 0d, 1d);
+                    return Math.Clamp(
+                        Harmonicity * 0.44d
+                        + PeakRatio * 0.20d
+                        + (1d - Flatness) * 0.22d
+                        + zcrPenalty * 0.08d
+                        + primary * 0.06d,
+                        0d,
+                        1d);
+                }
+            }
+
+            public FrameAnalysis WithoutPitch()
+            {
+                return new FrameAnalysis(StartSample, Rms, Harmonicity, Flatness, PeakRatio, ZeroCrossingRate, Array.Empty<PitchCandidate>());
+            }
+
+            public FrameAnalysis WithCandidates(PitchCandidate[] candidates)
+            {
+                return new FrameAnalysis(StartSample, Rms, Harmonicity, Flatness, PeakRatio, ZeroCrossingRate, candidates);
+            }
+        }
+
+        public static IReadOnlyList<DetectedAudioNote> DetectNotesFromAudio(string audioPath, IProgress<AudioRecognitionProgress>? progress = null)
+        {
+            var (rawSamples, sampleRate) = ReadMonoSamples(audioPath);
+            if (rawSamples.Length == 0 || sampleRate <= 0)
+            {
+                return Array.Empty<DetectedAudioNote>();
+            }
+
+            float[] samples = PreprocessSamples(rawSamples, sampleRate);
+            int frameSize = Math.Clamp((int)(sampleRate * 0.046), 1024, 4096);
+            int hopSize = Math.Max(128, frameSize / 5);
+            int totalFrames = Math.Max(1, ((samples.Length - frameSize) / hopSize) + 1);
+            const double minFreq = 55d;
+            const double maxFreq = 1760d;
+            const double minRms = 0.0052d;
+            double adaptiveMinRms = Math.Max(minRms, EstimateAdaptiveMinRms(samples, frameSize, hopSize));
+
+            var frames = new List<FrameAnalysis>(totalFrames);
+            int frameIndex = 0;
+            for (int start = 0; start + frameSize < samples.Length; start += hopSize, frameIndex++)
+            {
+                if ((frameIndex & 7) == 0)
+                {
+                    int percent = Math.Clamp((int)Math.Round(frameIndex / (double)Math.Max(1, totalFrames) * 68d), 0, 68);
+                    progress?.Report(new AudioRecognitionProgress { Percent = percent, Stage = "Analyzing", ProcessedFrames = frameIndex, TotalFrames = totalFrames });
+                }
+
+                double rms = ComputeRms(samples, start, frameSize);
+                double zcr = ComputeZeroCrossingRate(samples, start, frameSize);
+                if (rms < adaptiveMinRms || zcr > 0.48d)
+                {
+                    frames.Add(new FrameAnalysis(start, rms, 0d, 1d, 0d, zcr, Array.Empty<PitchCandidate>()));
+                    continue;
+                }
+
+                var (autoFreq, autoScore) = EstimatePitchAutocorrelation(samples, start, frameSize, sampleRate, minFreq, maxFreq);
+                var (spectralCandidates, flatness, peakRatio) = AnalyzeSpectrum(samples, start, frameSize, sampleRate, minFreq, maxFreq, maxNotes: 4);
+                var candidates = spectralCandidates.ToList();
+
+                if (autoFreq > 0)
+                {
+                    var (autoMidi, _) = PitchUtils.FrequencyToMidiWithCents(autoFreq);
+                    int safeMidi = Math.Clamp(autoMidi, 24, 108);
+                    int idx = candidates.FindIndex(c => Math.Abs(c.Midi - safeMidi) <= 1);
+                    if (idx >= 0)
+                    {
+                        PitchCandidate m = candidates[idx];
+                        candidates[idx] = new PitchCandidate(m.Midi, (m.FrequencyHz + autoFreq) * 0.5d, m.Strength + 0.30f);
+                    }
+                    else
+                    {
+                        candidates.Add(new PitchCandidate(safeMidi, autoFreq, 1.25f));
+                    }
+                }
+
+                PitchCandidate[] ordered = candidates
+                    .OrderByDescending(c => c.Strength)
+                    .ThenByDescending(c => c.Midi)
+                    .Take(5)
+                    .ToArray();
+
+                if (IsNoisyFrame(rms, zcr, autoScore, flatness, peakRatio, ordered))
+                {
+                    ordered = Array.Empty<PitchCandidate>();
+                }
+                else if (PreferMonophonic)
+                {
+                    ordered = SelectMonophonicCandidates(ordered, autoFreq);
+                }
+
+                frames.Add(new FrameAnalysis(start, rms, autoScore, flatness, peakRatio, zcr, ordered));
+            }
+
+            frames = StabilizeMonophonicTrajectory(frames);
+            frames = SmoothMonophonicFrames(frames);
+            frames = BridgeTinyVoicingGaps(frames);
+            frames = SuppressIsolatedVoicedFrames(frames);
+            progress?.Report(new AudioRecognitionProgress { Percent = 72, Stage = "Grouping", ProcessedFrames = frameIndex, TotalFrames = totalFrames });
+
+            var merged = MergeFrames(frames, sampleRate, frameSize, progress);
+            var stabilized = StabilizeVoices(merged);
+            var cleaned = CleanShortNoiseNotes(stabilized);
+            progress?.Report(new AudioRecognitionProgress { Percent = 88, Stage = "Refining", ProcessedFrames = totalFrames, TotalFrames = totalFrames });
+            var refined = RefineDetectedNotes(samples, sampleRate, cleaned, progress);
+            var finalNotes = CleanShortNoiseNotes(StabilizeVoices(refined));
+
+            progress?.Report(new AudioRecognitionProgress { Percent = 100, Stage = "Done", ProcessedFrames = totalFrames, TotalFrames = totalFrames });
+            return finalNotes;
+        }
+
+        public static IReadOnlyList<DetectedAudioNote> DetectNotesFromWav(string wavPath, IProgress<AudioRecognitionProgress>? progress = null)
+        {
+            return DetectNotesFromAudio(wavPath, progress);
+        }
+
+        private static List<FrameAnalysis> SuppressIsolatedVoicedFrames(IReadOnlyList<FrameAnalysis> frames)
+        {
+            var output = frames.ToList();
+            int i = 0;
+            while (i < output.Count)
+            {
+                if (!IsFrameVoiced(output[i]))
+                {
+                    i++;
+                    continue;
+                }
+
+                int runStart = i;
+                while (i < output.Count && IsFrameVoiced(output[i]))
+                {
+                    i++;
+                }
+
+                int runLen = i - runStart;
+                if (runLen < 2)
+                {
+                    for (int j = runStart; j < i; j++)
+                    {
+                        output[j] = output[j].WithoutPitch();
+                    }
+                }
+            }
+
+            return output;
+        }
+
+        private static List<FrameAnalysis> StabilizeMonophonicTrajectory(IReadOnlyList<FrameAnalysis> frames)
+        {
+            if (!PreferMonophonic || frames.Count == 0)
+            {
+                return frames.ToList();
+            }
+
+            var output = frames.ToList();
+            int i = 0;
+            while (i < output.Count)
+            {
+                if (!IsFrameVoiced(output[i]))
+                {
+                    i++;
+                    continue;
+                }
+
+                int runStart = i;
+                while (i < output.Count && IsFrameVoiced(output[i]))
+                {
+                    i++;
+                }
+
+                int runEnd = i - 1;
+                int frameCount = runEnd - runStart + 1;
+                if (frameCount <= 0)
+                {
+                    continue;
+                }
+
+                var candidatesByFrame = new List<PitchCandidate[]>(frameCount);
+                bool allFramesHaveCandidates = true;
+                for (int idx = runStart; idx <= runEnd; idx++)
+                {
+                    PitchCandidate[] candidates = GetTrajectoryCandidates(output[idx]);
+                    if (candidates.Length == 0)
+                    {
+                        allFramesHaveCandidates = false;
+                        break;
+                    }
+
+                    candidatesByFrame.Add(candidates);
+                }
+
+                if (!allFramesHaveCandidates || candidatesByFrame.Count != frameCount)
+                {
+                    continue;
+                }
+
+                var scoreTable = new double[frameCount][];
+                var backTable = new int[frameCount][];
+                for (int f = 0; f < frameCount; f++)
+                {
+                    int candidateCount = candidatesByFrame[f].Length;
+                    scoreTable[f] = new double[candidateCount];
+                    backTable[f] = new int[candidateCount];
+                    for (int c = 0; c < candidateCount; c++)
+                    {
+                        scoreTable[f][c] = double.NegativeInfinity;
+                        backTable[f][c] = -1;
+                    }
+                }
+
+                FrameAnalysis firstFrame = output[runStart];
+                for (int c = 0; c < candidatesByFrame[0].Length; c++)
+                {
+                    scoreTable[0][c] = ScoreTrajectoryCandidate(candidatesByFrame[0][c], firstFrame.Confidence);
+                }
+
+                for (int f = 1; f < frameCount; f++)
+                {
+                    FrameAnalysis frame = output[runStart + f];
+                    PitchCandidate[] current = candidatesByFrame[f];
+                    PitchCandidate[] previous = candidatesByFrame[f - 1];
+
+                    for (int cur = 0; cur < current.Length; cur++)
+                    {
+                        double baseScore = ScoreTrajectoryCandidate(current[cur], frame.Confidence);
+                        double best = double.NegativeInfinity;
+                        int bestPrev = -1;
+                        for (int prev = 0; prev < previous.Length; prev++)
+                        {
+                            double transition = ScoreTrajectoryTransition(previous[prev].Midi, current[cur].Midi);
+                            double score = scoreTable[f - 1][prev] + baseScore + transition;
+                            if (score > best)
+                            {
+                                best = score;
+                                bestPrev = prev;
+                            }
+                        }
+
+                        scoreTable[f][cur] = best;
+                        backTable[f][cur] = bestPrev;
+                    }
+                }
+
+                int lastFrameIndex = frameCount - 1;
+                int bestLast = 0;
+                double bestLastScore = double.NegativeInfinity;
+                for (int c = 0; c < scoreTable[lastFrameIndex].Length; c++)
+                {
+                    if (scoreTable[lastFrameIndex][c] > bestLastScore)
+                    {
+                        bestLastScore = scoreTable[lastFrameIndex][c];
+                        bestLast = c;
+                    }
+                }
+
+                int state = bestLast;
+                for (int f = lastFrameIndex; f >= 0; f--)
+                {
+                    PitchCandidate selected = candidatesByFrame[f][Math.Clamp(state, 0, candidatesByFrame[f].Length - 1)];
+                    int absoluteIndex = runStart + f;
+                    output[absoluteIndex] = output[absoluteIndex].WithCandidates(new[] { selected });
+                    state = f > 0 ? backTable[f][Math.Clamp(state, 0, backTable[f].Length - 1)] : -1;
+                    if (state < 0 && f > 0)
+                    {
+                        state = 0;
+                    }
+                }
+            }
+
+            return output;
+        }
+
+        private static List<FrameAnalysis> SmoothMonophonicFrames(IReadOnlyList<FrameAnalysis> frames)
+        {
+            if (!PreferMonophonic || frames.Count == 0)
+            {
+                return frames.ToList();
+            }
+
+            var output = frames.ToList();
+            for (int i = 0; i < output.Count; i++)
+            {
+                if (!IsFrameVoiced(output[i]))
+                {
+                    continue;
+                }
+
+                var neighborhood = new List<int>(5);
+                for (int j = Math.Max(0, i - 2); j <= Math.Min(output.Count - 1, i + 2); j++)
+                {
+                    if (IsFrameVoiced(output[j]))
+                    {
+                        neighborhood.Add(output[j].PrimaryMidi);
+                    }
+                }
+
+                if (neighborhood.Count >= 3)
+                {
+                    neighborhood.Sort();
+                    int medianMidi = neighborhood[neighborhood.Count / 2];
+                    int currentMidi = output[i].PrimaryMidi;
+                    if (Math.Abs(currentMidi - medianMidi) >= 2 && output[i].Confidence < 0.70d)
+                    {
+                        float strength = Math.Clamp(output[i].PrimaryStrength * 0.96f, 0.05f, 1.8f);
+                        output[i] = output[i].WithCandidates(new[] { new PitchCandidate(medianMidi, MidiToFrequency(medianMidi), strength) });
+                    }
+                }
+
+                if (output[i].Confidence < 0.30d && i > 0 && i < output.Count - 1 && IsFrameVoiced(output[i - 1]) && IsFrameVoiced(output[i + 1]))
+                {
+                    int prevMidi = output[i - 1].PrimaryMidi;
+                    int nextMidi = output[i + 1].PrimaryMidi;
+                    int curMidi = output[i].PrimaryMidi;
+                    if (Math.Abs(prevMidi - nextMidi) <= 1 && Math.Abs(curMidi - prevMidi) >= 4 && Math.Abs(curMidi - nextMidi) >= 4)
+                    {
+                        output[i] = output[i].WithoutPitch();
+                    }
+                }
+            }
+
+            return output;
+        }
+
+        private static List<FrameAnalysis> BridgeTinyVoicingGaps(IReadOnlyList<FrameAnalysis> frames)
+        {
+            if (!PreferMonophonic || frames.Count < 3)
+            {
+                return frames.ToList();
+            }
+
+            var output = frames.ToList();
+            for (int i = 1; i < output.Count - 1; i++)
+            {
+                if (IsFrameVoiced(output[i]))
+                {
+                    continue;
+                }
+
+                FrameAnalysis prev = output[i - 1];
+                FrameAnalysis next = output[i + 1];
+                if (!IsFrameVoiced(prev) || !IsFrameVoiced(next))
+                {
+                    continue;
+                }
+
+                if (Math.Abs(prev.PrimaryMidi - next.PrimaryMidi) > 1)
+                {
+                    continue;
+                }
+
+                if (Math.Min(prev.Confidence, next.Confidence) < 0.36d)
+                {
+                    continue;
+                }
+
+                int midi = (int)Math.Round((prev.PrimaryMidi + next.PrimaryMidi) / 2d);
+                float strength = Math.Clamp((prev.PrimaryStrength + next.PrimaryStrength) * 0.5f, 0.05f, 1.6f);
+                output[i] = output[i].WithCandidates(new[] { new PitchCandidate(midi, MidiToFrequency(midi), strength) });
+            }
+
+            return output;
+        }
+
+        private static IReadOnlyList<DetectedAudioNote> MergeFrames(
+            IReadOnlyList<FrameAnalysis> frames,
+            int sampleRate,
+            int frameSize,
+            IProgress<AudioRecognitionProgress>? progress)
+        {
+            var notes = new List<DetectedAudioNote>();
+            const double minDurationSeconds = 0.080;
+            int totalFrames = Math.Max(1, frames.Count);
+            int i = 0;
+
+            while (i < frames.Count)
+            {
+                if (!IsFrameVoiced(frames[i]))
+                {
+                    i++;
+                    continue;
+                }
+
+                int startIndex = i;
+                double confidenceSum = 0d;
+                var midiVotes = new Dictionary<int, int>();
+                var weightedFreq = new Dictionary<int, double>();
+                var weightedPower = new Dictionary<int, double>();
+                int dominantMidi = frames[i].PrimaryMidi;
+
+                while (i < frames.Count && IsFrameVoiced(frames[i]))
+                {
+                    FrameAnalysis frame = frames[i];
+                    if (ShouldSplitForPitchChange(frames, i, dominantMidi))
+                    {
+                        break;
+                    }
+
+                    confidenceSum += frame.Confidence;
+                    for (int c = 0; c < frame.Candidates.Length; c++)
+                    {
+                        PitchCandidate candidate = frame.Candidates[c];
+                        midiVotes.TryGetValue(candidate.Midi, out int vote);
+                        midiVotes[candidate.Midi] = vote + (c == 0 ? 2 : 1);
+
+                        weightedFreq.TryGetValue(candidate.Midi, out double freq);
+                        weightedPower.TryGetValue(candidate.Midi, out double power);
+                        float weight = Math.Max(0.05f, candidate.Strength) * (c == 0 ? 1.50f : 0.70f);
+                        weightedFreq[candidate.Midi] = freq + candidate.FrequencyHz * weight;
+                        weightedPower[candidate.Midi] = power + weight;
+                    }
+
+                    dominantMidi = ResolveDominantMidi(midiVotes, dominantMidi);
+                    i++;
+                }
+
+                int frameCount = Math.Max(1, i - startIndex);
+                if (frameCount <= 0 || midiVotes.Count == 0)
+                {
+                    continue;
+                }
+
+                if (frameCount < 3)
+                {
+                    continue;
+                }
+
+                double meanConfidence = confidenceSum / frameCount;
+                if (meanConfidence < 0.34d)
+                {
+                    continue;
+                }
+
+                int endSample = frames[Math.Max(startIndex, i - 1)].StartSample + frameSize;
+                double startSeconds = frames[startIndex].StartSample / (double)sampleRate;
+                double durationSeconds = Math.Max(0d, (endSample - frames[startIndex].StartSample) / (double)sampleRate);
+                if (durationSeconds < minDurationSeconds)
+                {
+                    continue;
+                }
+
+                int primaryMidi = ResolveDominantMidi(midiVotes, dominantMidi);
+                int totalVotes = midiVotes.Values.Sum();
+                midiVotes.TryGetValue(primaryMidi, out int primaryVotes);
+                if (primaryVotes < Math.Max(3, (int)Math.Ceiling(totalVotes * 0.36d)))
+                {
+                    continue;
+                }
+
+                double primaryFreq = weightedPower.TryGetValue(primaryMidi, out double pPower) && pPower > 0d
+                    ? weightedFreq[primaryMidi] / pPower
+                    : MidiToFrequency(primaryMidi);
+
+                notes.Add(new DetectedAudioNote
+                {
+                    Midi = Math.Clamp(primaryMidi, 24, 108),
+                    FrequencyHz = primaryFreq,
+                    StartSeconds = startSeconds,
+                    DurationSeconds = durationSeconds
+                });
+
+                if ((i & 7) == 0)
+                {
+                    int percent = 72 + Math.Clamp((int)Math.Round(i / (double)Math.Max(1, totalFrames) * 25d), 0, 25);
+                    progress?.Report(new AudioRecognitionProgress
+                    {
+                        Percent = percent,
+                        Stage = "Grouping",
+                        ProcessedFrames = i,
+                        TotalFrames = totalFrames
+                    });
+                }
+            }
+
+            return notes
+                .OrderBy(n => n.StartSeconds)
+                .ThenByDescending(n => n.Midi)
+                .ToList();
+        }
+
+        private static bool IsFrameVoiced(FrameAnalysis frame)
+        {
+            if (!frame.HasPitch)
+            {
+                return false;
+            }
+
+            if (frame.Confidence < 0.21d)
+            {
+                return false;
+            }
+
+            if (frame.Flatness > 0.62d && frame.Harmonicity < 0.56d)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsNoisyFrame(
+            double rms,
+            double zcr,
+            double harmonicity,
+            double flatness,
+            double peakRatio,
+            IReadOnlyList<PitchCandidate> candidates)
+        {
+            if (candidates.Count == 0)
+            {
+                return true;
+            }
+
+            float primaryStrength = candidates[0].Strength;
+            bool weakHarmonic = harmonicity < 0.50d;
+            bool flatSpectrum = flatness > 0.55d;
+            bool weakPeaks = peakRatio < 0.14d;
+
+            if (rms < 0.010d && weakHarmonic) return true;
+            if (zcr > 0.34d && harmonicity < 0.66d) return true;
+            if (flatSpectrum && weakHarmonic) return true;
+            if (weakPeaks && harmonicity < 0.62d) return true;
+            if (primaryStrength < 0.10f && harmonicity < 0.70d) return true;
+
+            return false;
+        }
+
+        private static PitchCandidate[] SelectMonophonicCandidates(IReadOnlyList<PitchCandidate> ordered, double autoFreq)
+        {
+            if (ordered == null || ordered.Count == 0)
+            {
+                return Array.Empty<PitchCandidate>();
+            }
+
+            int safeAutoMidi = -1;
+            if (autoFreq > 0d)
+            {
+                (int autoMidi, _) = PitchUtils.FrequencyToMidiWithCents(autoFreq);
+                safeAutoMidi = Math.Clamp(autoMidi, 24, 108);
+            }
+
+            var scored = new List<(PitchCandidate Candidate, double Score)>(ordered.Count * 2);
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                PitchCandidate candidate = ordered[i];
+                double score = Math.Clamp(candidate.Strength, 0.02d, 2.0d) * 1.20d;
+                if (safeAutoMidi >= 0)
+                {
+                    int distance = Math.Abs(candidate.Midi - safeAutoMidi);
+                    score += Math.Max(0d, 1.30d - distance * 0.24d);
+                    if (candidate.Midi - safeAutoMidi >= 12)
+                    {
+                        score -= 0.55d;
+                    }
+                    else if (safeAutoMidi - candidate.Midi >= 12)
+                    {
+                        score -= 0.26d;
+                    }
+                }
+
+                scored.Add((candidate, score));
+                if (candidate.Midi >= 36 && candidate.Strength >= 0.15f)
+                {
+                    int lowerMidi = candidate.Midi - 12;
+                    double lowerFreq = Math.Max(1d, candidate.FrequencyHz * 0.5d);
+                    float lowerStrength = Math.Clamp(candidate.Strength * 0.82f, 0.05f, 1.7f);
+                    double lowerScore = score - 0.12d;
+                    scored.Add((new PitchCandidate(lowerMidi, lowerFreq, lowerStrength), lowerScore));
+                }
+            }
+
+            var selected = scored
+                .OrderByDescending(item => item.Score)
+                .ThenByDescending(item => item.Candidate.Strength)
+                .ThenBy(item => safeAutoMidi >= 0 ? Math.Abs(item.Candidate.Midi - safeAutoMidi) : 0)
+                .GroupBy(item => item.Candidate.Midi)
+                .Select(g => g.First())
+                .Take(3)
+                .Select(item => item.Candidate)
+                .ToList();
+
+            return selected.Count == 0 ? Array.Empty<PitchCandidate>() : selected.ToArray();
+        }
+
+        private static PitchCandidate[] GetTrajectoryCandidates(FrameAnalysis frame)
+        {
+            if (!frame.HasPitch)
+            {
+                return Array.Empty<PitchCandidate>();
+            }
+
+            var deduped = frame.Candidates
+                .OrderByDescending(c => c.Strength)
+                .ThenByDescending(c => c.Midi)
+                .GroupBy(c => c.Midi)
+                .Select(g => g.First())
+                .Take(3)
+                .ToList();
+
+            return deduped.Count == 0 ? Array.Empty<PitchCandidate>() : deduped.ToArray();
+        }
+
+        private static double ScoreTrajectoryCandidate(PitchCandidate candidate, double confidence)
+        {
+            double strength = Math.Clamp(candidate.Strength, 0.02d, 2.0d);
+            double stableRangeBonus = Math.Max(0d, 1d - Math.Abs(candidate.Midi - 66) / 44d) * 0.08d;
+            return strength * 1.15d + Math.Clamp(confidence, 0d, 1d) * 0.88d + stableRangeBonus;
+        }
+
+        private static double ScoreTrajectoryTransition(int prevMidi, int nextMidi)
+        {
+            int delta = Math.Abs(nextMidi - prevMidi);
+            if (delta <= 2)
+            {
+                return 0.35d;
+            }
+
+            if (delta <= 5)
+            {
+                return 0.10d - (delta - 2) * 0.12d;
+            }
+
+            if (delta <= 9)
+            {
+                return -0.42d - (delta - 5) * 0.22d;
+            }
+
+            double octavePenalty = delta >= 12 ? 0.95d : 0d;
+            return -1.50d - (delta - 9) * 0.34d - octavePenalty;
+        }
+
+        private static bool ShouldSplitForPitchChange(IReadOnlyList<FrameAnalysis> frames, int index, int dominantMidi)
+        {
+            if (index <= 0 || index >= frames.Count)
+            {
+                return false;
+            }
+
+            FrameAnalysis current = frames[index];
+            if (!IsFrameVoiced(current))
+            {
+                return false;
+            }
+
+            if (Math.Abs(current.PrimaryMidi - dominantMidi) <= 2 || current.Confidence < 0.34d)
+            {
+                return false;
+            }
+
+            int confirmations = 0;
+            for (int j = index; j < Math.Min(frames.Count, index + 3); j++)
+            {
+                FrameAnalysis probe = frames[j];
+                if (!IsFrameVoiced(probe))
+                {
+                    break;
+                }
+
+                if (Math.Abs(probe.PrimaryMidi - dominantMidi) > 2 && probe.Confidence >= 0.32d)
+                {
+                    confirmations++;
+                }
+            }
+
+            return confirmations >= 2;
+        }
+
+        private static int ResolveDominantMidi(IReadOnlyDictionary<int, int> votes, int fallback)
+        {
+            if (votes.Count == 0)
+            {
+                return Math.Clamp(fallback, 24, 108);
+            }
+
+            return votes
+                .OrderByDescending(kvp => kvp.Value)
+                .ThenBy(kvp => Math.Abs(kvp.Key - fallback))
+                .ThenByDescending(kvp => kvp.Key)
+                .First()
+                .Key;
+        }
+
+        private static double EstimateAdaptiveMinRms(float[] samples, int frameSize, int hopSize)
+        {
+            if (samples.Length < frameSize || frameSize <= 0 || hopSize <= 0)
+            {
+                return 0.0052d;
+            }
+
+            var rmsValues = new List<double>(Math.Min(3000, samples.Length / hopSize + 1));
+            for (int start = 0; start + frameSize < samples.Length; start += hopSize)
+            {
+                rmsValues.Add(ComputeRms(samples, start, frameSize));
+                if (rmsValues.Count >= 3000)
+                {
+                    break;
+                }
+            }
+
+            if (rmsValues.Count == 0)
+            {
+                return 0.0052d;
+            }
+
+            rmsValues.Sort();
+            int p22Index = (int)Math.Round((rmsValues.Count - 1) * 0.22d);
+            p22Index = Math.Clamp(p22Index, 0, rmsValues.Count - 1);
+            double p22 = rmsValues[p22Index];
+            return Math.Clamp(p22 * 2.35d, 0.0052d, 0.024d);
+        }
+
+        private static IReadOnlyList<DetectedAudioNote> StabilizeVoices(IReadOnlyList<DetectedAudioNote> notes)
+        {
+            if (notes == null || notes.Count == 0)
+            {
+                return Array.Empty<DetectedAudioNote>();
+            }
+
+            var output = new List<DetectedAudioNote>(notes.Count);
+            var previousByVoice = new Dictionary<int, int>();
+            var groups = notes
+                .GroupBy(n => Math.Round(n.StartSeconds, 3))
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            foreach (var group in groups)
+            {
+                var ordered = group.OrderBy(n => n.Midi).ToList();
+                for (int voice = 0; voice < ordered.Count; voice++)
+                {
+                    int? prev = previousByVoice.TryGetValue(voice, out int prevMidi) ? prevMidi : null;
+                    int stabilizedMidi = StabilizeOctaveJump(ordered[voice].Midi, prev);
+                    previousByVoice[voice] = stabilizedMidi;
+
+                    output.Add(new DetectedAudioNote
+                    {
+                        Midi = stabilizedMidi,
+                        FrequencyHz = ordered[voice].FrequencyHz > 0d ? ordered[voice].FrequencyHz : MidiToFrequency(stabilizedMidi),
+                        StartSeconds = ordered[voice].StartSeconds,
+                        DurationSeconds = ordered[voice].DurationSeconds
+                    });
+                }
+            }
+
+            return output
+                .OrderBy(n => n.StartSeconds)
+                .ThenByDescending(n => n.Midi)
+                .ToList();
+        }
+
+        private static IReadOnlyList<DetectedAudioNote> CleanShortNoiseNotes(IReadOnlyList<DetectedAudioNote> notes)
+        {
+            if (notes.Count == 0)
+            {
+                return notes;
+            }
+
+            var filtered = notes
+                .Where(n => n.DurationSeconds >= 0.060d)
+                .OrderBy(n => n.StartSeconds)
+                .ThenByDescending(n => n.Midi)
+                .ToList();
+            if (filtered.Count <= 2)
+            {
+                return filtered;
+            }
+
+            var merged = new List<DetectedAudioNote>(filtered.Count);
+            foreach (DetectedAudioNote note in filtered)
+            {
+                if (merged.Count == 0)
+                {
+                    merged.Add(note);
+                    continue;
+                }
+
+                DetectedAudioNote last = merged[^1];
+                double lastEnd = last.StartSeconds + last.DurationSeconds;
+                double gap = note.StartSeconds - lastEnd;
+                if (note.Midi == last.Midi && gap >= -0.01d && gap <= 0.065d)
+                {
+                    double newEnd = Math.Max(lastEnd, note.StartSeconds + note.DurationSeconds);
+                    double newDuration = Math.Max(0.02d, newEnd - last.StartSeconds);
+                    double weightedFreq =
+                        (last.FrequencyHz * Math.Max(0.01d, last.DurationSeconds) + note.FrequencyHz * Math.Max(0.01d, note.DurationSeconds))
+                        / Math.Max(0.02d, last.DurationSeconds + note.DurationSeconds);
+
+                    merged[^1] = new DetectedAudioNote
+                    {
+                        Midi = last.Midi,
+                        FrequencyHz = weightedFreq,
+                        StartSeconds = last.StartSeconds,
+                        DurationSeconds = newDuration
+                    };
+                    continue;
+                }
+
+                merged.Add(note);
+            }
+
+            var output = new List<DetectedAudioNote>(merged.Count);
+            for (int i = 0; i < merged.Count; i++)
+            {
+                DetectedAudioNote current = merged[i];
+                if (current.DurationSeconds < 0.09d && i > 0 && i < merged.Count - 1)
+                {
+                    DetectedAudioNote prev = merged[i - 1];
+                    DetectedAudioNote next = merged[i + 1];
+                    bool bridge = prev.Midi == next.Midi
+                        && Math.Abs(prev.StartSeconds + prev.DurationSeconds - current.StartSeconds) < 0.09d
+                        && Math.Abs(current.StartSeconds + current.DurationSeconds - next.StartSeconds) < 0.09d;
+                    if (bridge)
+                    {
+                        continue;
+                    }
+
+                    bool isolatedLeap =
+                        Math.Abs(current.Midi - prev.Midi) >= 10
+                        && Math.Abs(current.Midi - next.Midi) >= 10
+                        && Math.Abs(prev.Midi - next.Midi) <= 2;
+                    if (isolatedLeap)
+                    {
+                        continue;
+                    }
+                }
+
+                output.Add(current);
+            }
+
+            return CorrectOctaveOutliers(output);
+        }
+
+        private static IReadOnlyList<DetectedAudioNote> CorrectOctaveOutliers(IReadOnlyList<DetectedAudioNote> notes)
+        {
+            if (notes.Count < 3)
+            {
+                return notes;
+            }
+
+            var output = notes.ToList();
+            for (int i = 1; i < output.Count - 1; i++)
+            {
+                DetectedAudioNote prev = output[i - 1];
+                DetectedAudioNote current = output[i];
+                DetectedAudioNote next = output[i + 1];
+
+                int neighborCenter = (int)Math.Round((prev.Midi + next.Midi) * 0.5d);
+                int currentDelta = Math.Abs(current.Midi - neighborCenter);
+                if (currentDelta < 9 || Math.Abs(prev.Midi - next.Midi) > 4)
+                {
+                    continue;
+                }
+
+                int bestMidi = current.Midi;
+                int bestDelta = currentDelta;
+                foreach (int shift in new[] { -12, 12 })
+                {
+                    int candidate = current.Midi + shift;
+                    if (candidate < 24 || candidate > 108)
+                    {
+                        continue;
+                    }
+
+                    int delta = Math.Abs(candidate - neighborCenter);
+                    if (delta < bestDelta)
+                    {
+                        bestDelta = delta;
+                        bestMidi = candidate;
+                    }
+                }
+
+                if (bestMidi == current.Midi || bestDelta >= currentDelta || bestDelta > 4)
+                {
+                    continue;
+                }
+
+                output[i] = new DetectedAudioNote
+                {
+                    Midi = bestMidi,
+                    FrequencyHz = MidiToFrequency(bestMidi),
+                    StartSeconds = current.StartSeconds,
+                    DurationSeconds = current.DurationSeconds
+                };
+            }
+
+            return output;
+        }
+
+        private static IReadOnlyList<DetectedAudioNote> RefineDetectedNotes(
+            float[] samples,
+            int sampleRate,
+            IReadOnlyList<DetectedAudioNote> notes,
+            IProgress<AudioRecognitionProgress>? progress)
+        {
+            if (notes.Count == 0)
+            {
+                return notes;
+            }
+
+            const double minFreq = 55d;
+            const double maxFreq = 1760d;
+            var refined = new List<DetectedAudioNote>(notes.Count);
+            for (int i = 0; i < notes.Count; i++)
+            {
+                if ((i & 3) == 0)
+                {
+                    int percent = 88 + Math.Clamp((int)Math.Round((i + 1) / (double)Math.Max(1, notes.Count) * 10d), 0, 10);
+                    progress?.Report(new AudioRecognitionProgress
+                    {
+                        Percent = percent,
+                        Stage = "Refining",
+                        ProcessedFrames = i + 1,
+                        TotalFrames = notes.Count
+                    });
+                }
+
+                refined.Add(RefineDetectedNote(samples, sampleRate, notes, i, minFreq, maxFreq));
+            }
+
+            return refined
+                .OrderBy(n => n.StartSeconds)
+                .ThenByDescending(n => n.Midi)
+                .ToList();
+        }
+
+        private static DetectedAudioNote RefineDetectedNote(
+            float[] samples,
+            int sampleRate,
+            IReadOnlyList<DetectedAudioNote> notes,
+            int index,
+            double minFreq,
+            double maxFreq)
+        {
+            DetectedAudioNote note = notes[index];
+            if (samples.Length < 512 || note.DurationSeconds <= 0.04d)
+            {
+                return note;
+            }
+
+            int startSample = Math.Clamp((int)Math.Round(note.StartSeconds * sampleRate), 0, Math.Max(0, samples.Length - 1));
+            int endSample = Math.Clamp((int)Math.Round((note.StartSeconds + note.DurationSeconds) * sampleRate), startSample + 1, samples.Length);
+            int padding = Math.Max(24, (int)Math.Round(sampleRate * 0.012d));
+            startSample = Math.Max(0, startSample - padding);
+            endSample = Math.Min(samples.Length, endSample + padding);
+
+            int segmentLength = endSample - startSample;
+            if (segmentLength < 256)
+            {
+                return note;
+            }
+
+            int trimStart = Math.Clamp(startSample + (int)Math.Round(segmentLength * 0.16d), startSample, endSample - 128);
+            int trimEnd = Math.Clamp(endSample - (int)Math.Round(segmentLength * 0.10d), trimStart + 128, endSample);
+            int analysisLength = trimEnd - trimStart;
+            if (analysisLength < 256)
+            {
+                trimStart = startSample;
+                trimEnd = endSample;
+                analysisLength = trimEnd - trimStart;
+                if (analysisLength < 256)
+                {
+                    return note;
+                }
+            }
+
+            double rms = ComputeRms(samples, trimStart, analysisLength);
+            if (rms < 0.0035d)
+            {
+                return note;
+            }
+
+            var scoreByMidi = new Dictionary<int, CandidateVote>();
+            AddPitchVote(scoreByMidi, note.Midi, note.FrequencyHz, 0.82d, 0.72d);
+
+            var (yinFreq, yinScore) = EstimatePitchNormalizedDifference(samples, trimStart, analysisLength, sampleRate, minFreq, maxFreq);
+            if (yinFreq > 0d)
+            {
+                var (yinMidi, _) = PitchUtils.FrequencyToMidiWithCents(yinFreq);
+                AddPitchVote(scoreByMidi, yinMidi, yinFreq, 1.45d + yinScore * 0.9d, 1.10d + yinScore * 0.55d);
+            }
+
+            var (autoFreq, autoScore) = EstimatePitchAutocorrelation(samples, trimStart, analysisLength, sampleRate, minFreq, maxFreq);
+            if (autoFreq > 0d)
+            {
+                var (autoMidi, _) = PitchUtils.FrequencyToMidiWithCents(autoFreq);
+                AddPitchVote(scoreByMidi, autoMidi, autoFreq, 1.15d + autoScore * 0.8d, 0.95d + autoScore * 0.45d);
+            }
+
+            var (spectralCandidates, flatness, peakRatio) = AnalyzeSpectrum(samples, trimStart, analysisLength, sampleRate, minFreq, maxFreq, maxNotes: 6);
+            foreach (PitchCandidate candidate in spectralCandidates)
+            {
+                double score = 0.58d + Math.Clamp(candidate.Strength, 0.02f, 2.0f) * 0.92d;
+                if (flatness < 0.35d)
+                {
+                    score += (0.35d - flatness) * 0.65d;
+                }
+
+                if (peakRatio > 0.30d)
+                {
+                    score += (peakRatio - 0.30d) * 0.45d;
+                }
+
+                AddPitchVote(scoreByMidi, candidate.Midi, candidate.FrequencyHz, score, Math.Max(0.45d, candidate.Strength));
+                if (candidate.Midi >= 36 && candidate.Strength >= 0.16f)
+                {
+                    AddPitchVote(
+                        scoreByMidi,
+                        candidate.Midi - 12,
+                        candidate.FrequencyHz * 0.5d,
+                        score * 0.42d,
+                        Math.Max(0.30d, candidate.Strength * 0.55d));
+                }
+            }
+
+            if (scoreByMidi.Count == 0)
+            {
+                return note;
+            }
+
+            int? prevMidi = index > 0 ? notes[index - 1].Midi : null;
+            int? nextMidi = index + 1 < notes.Count ? notes[index + 1].Midi : null;
+
+            int bestMidi = note.Midi;
+            double bestScore = double.NegativeInfinity;
+            foreach ((int midi, CandidateVote vote) in scoreByMidi)
+            {
+                double score = vote.Score;
+                score += Math.Max(0d, 0.85d - Math.Abs(midi - note.Midi) * 0.09d);
+                if (prevMidi.HasValue)
+                {
+                    score += ScoreRefinedTransition(prevMidi.Value, midi);
+                }
+
+                if (nextMidi.HasValue)
+                {
+                    score += ScoreRefinedTransition(midi, nextMidi.Value);
+                }
+
+                if (midi - note.Midi >= 12)
+                {
+                    score -= 0.45d;
+                }
+
+                if (note.Midi - midi >= 12)
+                {
+                    score -= 0.18d;
+                }
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestMidi = midi;
+                }
+            }
+
+            if (scoreByMidi.TryGetValue(bestMidi, out CandidateVote bestVote))
+            {
+                return new DetectedAudioNote
+                {
+                    Midi = Math.Clamp(bestMidi, 24, 108),
+                    FrequencyHz = bestVote.ResolveFrequency(bestMidi),
+                    StartSeconds = note.StartSeconds,
+                    DurationSeconds = note.DurationSeconds
+                };
+            }
+
+            return note;
+        }
+
+        private static void AddPitchVote(
+            Dictionary<int, CandidateVote> scoreByMidi,
+            int midi,
+            double frequency,
+            double score,
+            double weight)
+        {
+            int safeMidi = Math.Clamp(midi, 24, 108);
+            double safeFrequency = Math.Max(1d, frequency);
+            double safeScore = Math.Max(0.02d, score);
+            double safeWeight = Math.Max(0.05d, weight);
+            if (!scoreByMidi.TryGetValue(safeMidi, out CandidateVote current))
+            {
+                current = new CandidateVote(0d, 0d, 0d);
+            }
+
+            scoreByMidi[safeMidi] = current.Add(safeScore, safeFrequency, safeWeight);
+        }
+
+        private static double ScoreRefinedTransition(int fromMidi, int toMidi)
+        {
+            int delta = Math.Abs(fromMidi - toMidi);
+            if (delta <= 2)
+            {
+                return 0.30d;
+            }
+
+            if (delta <= 5)
+            {
+                return 0.12d - (delta - 2) * 0.08d;
+            }
+
+            if (delta <= 9)
+            {
+                return -0.18d - (delta - 5) * 0.12d;
+            }
+
+            return -0.80d - (delta - 9) * 0.14d;
+        }
+        private static (IReadOnlyList<PitchCandidate> Candidates, double Flatness, double PeakRatio) AnalyzeSpectrum(
+            float[] samples,
+            int start,
+            int length,
+            int sampleRate,
+            double minFreq,
+            double maxFreq,
+            int maxNotes)
+        {
+            int fftSize = NextPowerOfTwo(Math.Clamp(length * 2, 2048, 8192));
+            int m = (int)Math.Log2(fftSize);
+            var fft = new Complex[fftSize];
+            int available = Math.Min(length, samples.Length - start);
+            if (available <= 32)
+            {
+                return (Array.Empty<PitchCandidate>(), 1d, 0d);
+            }
+
+            for (int i = 0; i < available; i++)
+            {
+                float window = 0.5f - 0.5f * (float)Math.Cos(2d * Math.PI * i / Math.Max(1, available - 1));
+                fft[i].X = samples[start + i] * window;
+                fft[i].Y = 0f;
+            }
+
+            for (int i = available; i < fftSize; i++)
+            {
+                fft[i].X = 0f;
+                fft[i].Y = 0f;
+            }
+
+            FastFourierTransform.FFT(true, m, fft);
+
+            int minBin = Math.Max(1, (int)Math.Floor(minFreq * fftSize / sampleRate));
+            int maxBin = Math.Min((fftSize / 2) - 2, (int)Math.Ceiling(maxFreq * fftSize / sampleRate));
+            if (maxBin <= minBin)
+            {
+                return (Array.Empty<PitchCandidate>(), 1d, 0d);
+            }
+
+            var magnitude = new float[fftSize / 2];
+            double sumMag = 0d;
+            double sumLog = 0d;
+            for (int bin = minBin - 1; bin <= maxBin + 1; bin++)
+            {
+                float re = fft[bin].X;
+                float im = fft[bin].Y;
+                float mag = MathF.Sqrt(re * re + im * im);
+                magnitude[bin] = mag;
+                if (bin >= minBin && bin <= maxBin)
+                {
+                    double v = Math.Max(1e-9, mag);
+                    sumMag += v;
+                    sumLog += Math.Log(v);
+                }
+            }
+
+            int binCount = Math.Max(1, maxBin - minBin + 1);
+            double arithmetic = sumMag / binCount;
+            double geometric = Math.Exp(sumLog / binCount);
+            double flatness = arithmetic > 0d ? geometric / arithmetic : 1d;
+
+            var peaks = new List<(float Mag, double Freq, float Score)>();
+            for (int bin = minBin + 1; bin < maxBin - 1; bin++)
+            {
+                float mag = magnitude[bin];
+                if (mag < 1e-6f) continue;
+                if (mag <= magnitude[bin - 1] || mag < magnitude[bin + 1]) continue;
+
+                double freq = bin * sampleRate / (double)fftSize;
+                float biasLow = (float)(1.0 / Math.Sqrt(Math.Max(55d, freq)));
+                float score = mag * (1.55f + 25f * biasLow);
+                peaks.Add((mag, freq, score));
+            }
+
+            if (peaks.Count == 0)
+            {
+                return (Array.Empty<PitchCandidate>(), flatness, 0d);
+            }
+
+            float maxMag = peaks.Max(p => p.Mag);
+            float meanMag = peaks.Average(p => p.Mag);
+            double peakRatio = Math.Clamp((maxMag / Math.Max(1e-6f, meanMag) - 1d) / 14d, 0d, 1d);
+            float threshold = maxMag * 0.18f;
+
+            var selected = new List<PitchCandidate>(Math.Max(1, maxNotes));
+            foreach (var peak in peaks.OrderByDescending(p => p.Score))
+            {
+                if (peak.Mag < threshold)
+                {
+                    continue;
+                }
+
+                var (midi, _) = PitchUtils.FrequencyToMidiWithCents(peak.Freq);
+                int safeMidi = Math.Clamp(midi, 24, 108);
+                if (selected.Any(c => Math.Abs(c.Midi - safeMidi) <= 1))
+                {
+                    continue;
+                }
+
+                if (IsLikelyHarmonic(peak.Freq, selected) && selected.Count > 0)
+                {
+                    continue;
+                }
+
+                float strength = peak.Mag / Math.Max(1e-6f, maxMag);
+                selected.Add(new PitchCandidate(safeMidi, peak.Freq, strength));
+                if (selected.Count >= maxNotes)
+                {
+                    break;
+                }
+            }
+
+            return (selected, flatness, peakRatio);
+        }
+
+        private static bool IsLikelyHarmonic(double frequency, IReadOnlyList<PitchCandidate> selected)
+        {
+            for (int i = 0; i < selected.Count; i++)
+            {
+                double baseFreq = selected[i].FrequencyHz;
+                double ratio = Math.Max(frequency, baseFreq) / Math.Max(1d, Math.Min(frequency, baseFreq));
+                int nearest = (int)Math.Round(ratio);
+                if (nearest is >= 2 and <= 6 && Math.Abs(ratio - nearest) <= 0.06d)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static int StabilizeOctaveJump(int midi, int? previousMidi)
+        {
+            int clamped = Math.Clamp(midi, 24, 108);
+            if (!previousMidi.HasValue)
+            {
+                return clamped;
+            }
+
+            int prev = Math.Clamp(previousMidi.Value, 24, 108);
+            int best = clamped;
+            int bestDelta = Math.Abs(best - prev);
+            for (int shift = -24; shift <= 24; shift += 12)
+            {
+                int candidate = clamped + shift;
+                if (candidate < 24 || candidate > 108)
+                {
+                    continue;
+                }
+
+                int delta = Math.Abs(candidate - prev);
+                if (delta < bestDelta)
+                {
+                    best = candidate;
+                    bestDelta = delta;
+                }
+            }
+
+            return Math.Abs(clamped - prev) <= 9 ? clamped : best;
+        }
+
+        private static int NextPowerOfTwo(int value)
+        {
+            int n = 1;
+            while (n < Math.Max(2, value) && n < (1 << 30))
+            {
+                n <<= 1;
+            }
+
+            return n;
+        }
+
+        private static double MidiToFrequency(int midi)
+        {
+            int safe = Math.Clamp(midi, 0, 127);
+            return 440.0 * Math.Pow(2.0, (safe - 69) / 12.0);
+        }
+
+        private static double ComputeRms(float[] samples, int start, int length)
+        {
+            int end = Math.Min(samples.Length, start + length);
+            if (end <= start) return 0d;
+
+            double energy = 0d;
+            for (int i = start; i < end; i++)
+            {
+                double v = samples[i];
+                energy += v * v;
+            }
+
+            return Math.Sqrt(energy / (end - start));
+        }
+
+        private static double ComputeZeroCrossingRate(float[] samples, int start, int length)
+        {
+            int end = Math.Min(samples.Length, start + length);
+            if (end - start <= 1) return 0d;
+
+            int crossings = 0;
+            float prev = samples[start];
+            for (int i = start + 1; i < end; i++)
+            {
+                float cur = samples[i];
+                if ((prev >= 0f && cur < 0f) || (prev < 0f && cur >= 0f))
+                {
+                    crossings++;
+                }
+                prev = cur;
+            }
+
+            return crossings / (double)(end - start - 1);
+        }
+
+        private static (double Frequency, double Score) EstimatePitchAutocorrelation(float[] samples, int start, int length, int sampleRate, double minFreq, double maxFreq)
+        {
+            int end = Math.Min(samples.Length, start + length);
+            int n = end - start;
+            if (n < 128) return (0d, 0d);
+
+            int minLag = Math.Max(1, (int)(sampleRate / maxFreq));
+            int maxLag = Math.Min(n - 1, (int)(sampleRate / minFreq));
+            if (maxLag <= minLag) return (0d, 0d);
+
+            double bestScore = double.MinValue;
+            int bestLag = -1;
+            for (int lag = minLag; lag <= maxLag; lag++)
+            {
+                double dot = 0d;
+                double e1 = 0d;
+                double e2 = 0d;
+                int limit = n - lag;
+                for (int i = 0; i < limit; i++)
+                {
+                    double a = samples[start + i];
+                    double b = samples[start + i + lag];
+                    dot += a * b;
+                    e1 += a * a;
+                    e2 += b * b;
+                }
+
+                double denom = Math.Sqrt(Math.Max(1e-12, e1 * e2));
+                double score = dot / denom;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestLag = lag;
+                }
+            }
+
+            if (bestLag <= 0) return (0d, 0d);
+            bestLag = PreferFundamentalLag(samples, start, n, minLag, maxLag, bestLag, ref bestScore);
+            double normalized = Math.Clamp((bestScore - 0.35d) / 0.55d, 0d, 1d);
+            if (bestScore < 0.50d) return (0d, normalized);
+
+            double refinedLag = bestLag;
+            if (bestLag > minLag && bestLag < maxLag)
+            {
+                double prevScore = ComputeCorrelationAtLag(samples, start, n, bestLag - 1);
+                double nextScore = ComputeCorrelationAtLag(samples, start, n, bestLag + 1);
+                double denom = prevScore - 2d * bestScore + nextScore;
+                if (Math.Abs(denom) > 1e-9)
+                {
+                    double delta = 0.5d * (prevScore - nextScore) / denom;
+                    delta = Math.Clamp(delta, -0.5d, 0.5d);
+                    refinedLag = bestLag + delta;
+                }
+            }
+
+            return (sampleRate / refinedLag, normalized);
+        }
+
+        private static (double Frequency, double Score) EstimatePitchNormalizedDifference(
+            float[] samples,
+            int start,
+            int length,
+            int sampleRate,
+            double minFreq,
+            double maxFreq)
+        {
+            int end = Math.Min(samples.Length, start + length);
+            int n = end - start;
+            if (n < 256)
+            {
+                return (0d, 0d);
+            }
+
+            int minLag = Math.Max(2, (int)Math.Floor(sampleRate / maxFreq));
+            int maxLag = Math.Min(n - 2, (int)Math.Ceiling(sampleRate / minFreq));
+            if (maxLag <= minLag + 2)
+            {
+                return (0d, 0d);
+            }
+
+            var difference = new double[maxLag + 1];
+            var cmnd = new double[maxLag + 1];
+            cmnd[0] = 1d;
+
+            for (int lag = 1; lag <= maxLag; lag++)
+            {
+                double sum = 0d;
+                int limit = n - lag;
+                for (int i = 0; i < limit; i++)
+                {
+                    double delta = samples[start + i] - samples[start + i + lag];
+                    sum += delta * delta;
+                }
+
+                difference[lag] = sum;
+            }
+
+            double runningSum = 0d;
+            int bestLag = -1;
+            double bestValue = double.MaxValue;
+            for (int lag = 1; lag <= maxLag; lag++)
+            {
+                runningSum += difference[lag];
+                cmnd[lag] = runningSum <= 1e-12d ? 1d : difference[lag] * lag / runningSum;
+                if (lag < minLag)
+                {
+                    continue;
+                }
+
+                if (cmnd[lag] < 0.16d)
+                {
+                    bestLag = lag;
+                    while (bestLag + 1 <= maxLag && cmnd[bestLag + 1] <= cmnd[bestLag])
+                    {
+                        bestLag++;
+                    }
+
+                    bestValue = cmnd[bestLag];
+                    break;
+                }
+
+                if (cmnd[lag] < bestValue)
+                {
+                    bestValue = cmnd[lag];
+                    bestLag = lag;
+                }
+            }
+
+            if (bestLag <= 0)
+            {
+                return (0d, 0d);
+            }
+
+            double score = Math.Clamp((0.42d - bestValue) / 0.28d, 0d, 1d);
+            if (score < 0.18d)
+            {
+                return (0d, score);
+            }
+
+            double refinedLag = bestLag;
+            if (bestLag > minLag && bestLag < maxLag)
+            {
+                double prev = cmnd[bestLag - 1];
+                double cur = cmnd[bestLag];
+                double next = cmnd[bestLag + 1];
+                double denom = prev - 2d * cur + next;
+                if (Math.Abs(denom) > 1e-12d)
+                {
+                    double delta = 0.5d * (prev - next) / denom;
+                    refinedLag = bestLag + Math.Clamp(delta, -0.5d, 0.5d);
+                }
+            }
+
+            return (sampleRate / Math.Max(1d, refinedLag), score);
+        }
+        private static int PreferFundamentalLag(float[] samples, int start, int length, int minLag, int maxLag, int bestLag, ref double bestScore)
+        {
+            int chosenLag = bestLag;
+            double chosenScore = bestScore;
+            for (int multiplier = 2; multiplier <= 4; multiplier++)
+            {
+                int candidateLag = bestLag * multiplier;
+                if (candidateLag <= minLag || candidateLag >= maxLag)
+                {
+                    continue;
+                }
+
+                double candidateScore = ComputeCorrelationAtLag(samples, start, length, candidateLag);
+                bool nearBest = candidateScore >= chosenScore * 0.89d;
+                bool stableEnough = candidateScore >= 0.52d;
+                if (nearBest && stableEnough)
+                {
+                    chosenLag = candidateLag;
+                    chosenScore = candidateScore;
+                    break;
+                }
+            }
+
+            bestScore = chosenScore;
+            return chosenLag;
+        }
+
+        private static double ComputeCorrelationAtLag(float[] samples, int start, int n, int lag)
+        {
+            if (lag <= 0 || lag >= n)
+            {
+                return 0d;
+            }
+
+            double dot = 0d;
+            double e1 = 0d;
+            double e2 = 0d;
+            int limit = n - lag;
+            for (int i = 0; i < limit; i++)
+            {
+                double a = samples[start + i];
+                double b = samples[start + i + lag];
+                dot += a * b;
+                e1 += a * a;
+                e2 += b * b;
+            }
+
+            double denom = Math.Sqrt(Math.Max(1e-12, e1 * e2));
+            return dot / denom;
+        }
+
+        private static float[] PreprocessSamples(float[] input, int sampleRate)
+        {
+            if (input.Length == 0)
+            {
+                return input;
+            }
+
+            float[] output = new float[input.Length];
+            double dt = 1d / Math.Max(1, sampleRate);
+            double hpRc = 1d / (2d * Math.PI * 35d);
+            double hpAlpha = hpRc / (hpRc + dt);
+            double lpRc = 1d / (2d * Math.PI * 4200d);
+            double lpAlpha = dt / (lpRc + dt);
+
+            double hpY = 0d;
+            double lpY = 0d;
+            double prevX = 0d;
+            double peak = 0d;
+            for (int i = 0; i < input.Length; i++)
+            {
+                double x = input[i];
+                hpY = hpAlpha * (hpY + x - prevX);
+                prevX = x;
+                lpY += lpAlpha * (hpY - lpY);
+                double saturated = Math.Tanh(lpY * 1.65d) / Math.Tanh(1.65d);
+                output[i] = (float)saturated;
+                peak = Math.Max(peak, Math.Abs(saturated));
+            }
+
+            if (peak > 1e-6d)
+            {
+                double norm = Math.Min(1.0d, 0.98d / peak);
+                if (norm < 0.999d)
+                {
+                    for (int i = 0; i < output.Length; i++)
+                    {
+                        output[i] = (float)(output[i] * norm);
+                    }
+                }
+            }
+
+            return output;
+        }
+
+        private static (float[] Samples, int SampleRate) ReadMonoSamples(string audioPath)
+        {
+            if (string.IsNullOrWhiteSpace(audioPath) || !File.Exists(audioPath))
+            {
+                throw new FileNotFoundException("音频文件不存在。", audioPath);
+            }
+
+            using var reader = new AudioFileReader(audioPath);
+            int sampleRate = Math.Max(1, reader.WaveFormat.SampleRate);
+            int channels = Math.Max(1, reader.WaveFormat.Channels);
+            int bufferSize = Math.Max(4096, sampleRate * channels);
+            var buffer = new float[bufferSize];
+            var mono = new List<float>(Math.Max(8192, sampleRate * 2));
+
+            int read;
+            while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                int frameCount = read / channels;
+                for (int frame = 0; frame < frameCount; frame++)
+                {
+                    double mixed = 0d;
+                    int frameOffset = frame * channels;
+                    for (int ch = 0; ch < channels; ch++)
+                    {
+                        mixed += buffer[frameOffset + ch];
+                    }
+
+                    mono.Add((float)(mixed / channels));
+                }
+            }
+
+            if (mono.Count == 0)
+            {
+                throw new InvalidDataException("音频中未读取到有效采样。");
+            }
+
+            return (mono.ToArray(), sampleRate);
+        }
+    }
+}
+
+
+
+
+

@@ -1,0 +1,76 @@
+﻿using System;
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using 音乐魔盒.Models;
+
+namespace 音乐魔盒.Services
+{
+    public sealed class ProjectStorage
+    {
+        private readonly JsonSerializerOptions _jsonOptions = new()
+        {
+            WriteIndented = true,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            Converters = { new JsonStringEnumConverter() }
+        };
+
+        public string DataRoot { get; }
+        public string ProjectsFolder => Path.Combine(DataRoot, "projects");
+        public string ExportsFolder => Path.Combine(DataRoot, "exports");
+        public string RecoveryFolder => Path.Combine(DataRoot, "recovery");
+
+        public ProjectStorage()
+        {
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            DataRoot = Path.Combine(localAppData, "MusicMagic");
+        }
+
+        public string GetDefaultProjectPath()
+        {
+            return Path.Combine(ProjectsFolder, "Untitled.json");
+        }
+
+        public (ScoreProject project, string path) LoadOrCreateDefault()
+        {
+            var path = GetDefaultProjectPath();
+            if (!File.Exists(path))
+            {
+                return (ProjectFactory.CreateDefault(), path);
+            }
+
+            return (Load(path), path);
+        }
+
+        public ScoreProject Load(string path)
+        {
+            var json = File.ReadAllText(path);
+            var project = JsonSerializer.Deserialize<ScoreProject>(json, _jsonOptions);
+            if (project == null) return ProjectFactory.CreateDefault();
+
+            project.Notes ??= new();
+            project.ExpressionMarks ??= new();
+            project.TimeSignatureChanges ??= new();
+            project.KeySignatureChanges ??= new();
+            project.StaffClefs ??= new();
+            project.LayoutSystemMeasureCounts ??= new();
+            project.LayoutBarlineOffsets ??= new();
+            return project;
+        }
+
+        public void Save(ScoreProject project, string path)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var json = JsonSerializer.Serialize(project, _jsonOptions);
+            File.WriteAllText(path, json);
+        }
+
+        public void SaveRecovery(ScoreProject project)
+        {
+            Directory.CreateDirectory(RecoveryFolder);
+            var path = Path.Combine(RecoveryFolder, "auto-save.json");
+            var json = JsonSerializer.Serialize(project, _jsonOptions);
+            File.WriteAllText(path, json);
+        }
+    }
+}

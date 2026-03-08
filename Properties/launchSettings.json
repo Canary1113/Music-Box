@@ -1,0 +1,10 @@
+﻿{
+  "profiles": {
+    "音乐魔盒 (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "音乐魔盒 (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
