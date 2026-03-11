@@ -12,6 +12,8 @@ Features may be incomplete, behavior may change, and some parts of the app may s
 
 - Windows 11
 
+![Music Box Screenshot](Assets/readme-screenshot.png)
+
 ## Main Pages
 
 ### Editor Page
