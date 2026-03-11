@@ -9378,7 +9378,27 @@ namespace 音乐魔盒
         {
             isSmufl = false;
 
-            return TryLoadFontFromSystem(familyName, out isSmufl);
+            if (TryLoadFontFromSystem(familyName, out isSmufl))
+            {
+                return true;
+            }
+
+            if (TryCreateFontFaceFromUri(fileName, out var bundledSet, out var bundledFace) && bundledFace != null)
+            {
+                try
+                {
+                    isSmufl = bundledFace.HasCharacter((uint)SmuflGClef)
+                        && bundledFace.HasCharacter((uint)SmuflFClef)
+                        && bundledFace.HasCharacter((uint)SmuflAccidentalSharp);
+                    return true;
+                }
+                finally
+                {
+                    bundledSet?.Dispose();
+                }
+            }
+
+            return false;
         }
 
         private void ShowMusicFontInstallPromptIfNeeded(string familyName)
@@ -9414,10 +9434,9 @@ namespace 音乐魔盒
                     XamlRoot = XamlRoot,
                     Title = isEnglish ? "Music Font Missing" : "\u7f3a\u5c11\u97f3\u4e50\u5b57\u4f53",
                     Content = isEnglish
-                        ? $"{familyName} is not installed. You can open the bundled font folder or let the app try to install it for the current user. Restart the app after installation."
-                        : $"{familyName} \u672a\u5b89\u88c5\u3002\u4f60\u53ef\u4ee5\u6253\u5f00\u968f\u5e94\u7528\u9644\u5e26\u7684\u5b57\u4f53\u76ee\u5f55\uff0c\u6216\u8005\u8ba9\u5e94\u7528\u5c1d\u8bd5\u4e3a\u5f53\u524d\u7528\u6237\u81ea\u52a8\u5b89\u88c5\u3002\u5b89\u88c5\u540e\u8bf7\u91cd\u542f\u5e94\u7528\u3002",
+                        ? $"{familyName} is not installed. Open the bundled font folder and install it manually, then restart the app."
+                        : $"{familyName} \u672a\u5b89\u88c5\u3002\u8bf7\u6253\u5f00\u968f\u5e94\u7528\u9644\u5e26\u7684\u5b57\u4f53\u76ee\u5f55\u624b\u52a8\u5b89\u88c5\uff0c\u7136\u540e\u91cd\u542f\u5e94\u7528\u3002",
                     PrimaryButtonText = isEnglish ? "Go to Install" : "\u524d\u5f80\u5b89\u88c5",
-                    SecondaryButtonText = isEnglish ? "Help Me Install" : "\u5e2e\u6211\u5b89\u88c5",
                     CloseButtonText = isEnglish ? "Later" : "\u7a0d\u540e",
                     DefaultButton = ContentDialogButton.Primary
                 };
@@ -9426,22 +9445,6 @@ namespace 音乐魔盒
                 if (result == ContentDialogResult.Primary)
                 {
                     await OpenBundledFontFolderAsync();
-                }
-                else if (result == ContentDialogResult.Secondary)
-                {
-                    if (TryInstallBundledFontsForCurrentUser())
-                    {
-                        _musicFontStatus = isEnglish
-                            ? "Font files installed. Restart the app to load them."
-                            : "\u5b57\u4f53\u6587\u4ef6\u5df2\u5b89\u88c5\uff0c\u8bf7\u91cd\u542f\u5e94\u7528\u540e\u52a0\u8f7d\u3002";
-                    }
-                    else
-                    {
-                        _musicFontStatus = isEnglish
-                            ? "Automatic font installation failed. Open the font folder and install manually."
-                            : "\u81ea\u52a8\u5b89\u88c5\u5b57\u4f53\u5931\u8d25\uff0c\u8bf7\u6253\u5f00\u5b57\u4f53\u76ee\u5f55\u624b\u52a8\u5b89\u88c5\u3002";
-                    }
-                    StaffCanvas.Invalidate();
                 }
             }
             catch
@@ -9461,63 +9464,10 @@ namespace 音乐魔盒
             await Launcher.LaunchFolderAsync(folder);
         }
 
-        private bool TryInstallBundledFontsForCurrentUser()
-        {
-            try
-            {
-                string? fontFolderPath = GetBundledFontFolderPath();
-                if (string.IsNullOrWhiteSpace(fontFolderPath))
-                {
-                    return false;
-                }
-
-                string bravuraPath = Path.Combine(fontFolderPath, ForcedMusicFontFile);
-                string bravuraTextPath = Path.Combine(fontFolderPath, MusicTextFontFile);
-                if (!File.Exists(bravuraPath) || !File.Exists(bravuraTextPath))
-                {
-                    return false;
-                }
-
-                string command = string.Join("; ", new[]
-                {
-                    "$fontDir = Join-Path $env:LOCALAPPDATA 'Microsoft\\\\Windows\\\\Fonts'",
-                    "New-Item -ItemType Directory -Force -Path $fontDir | Out-Null",
-                    $"Copy-Item -LiteralPath '{EscapePowerShellLiteral(bravuraPath)}' -Destination (Join-Path $fontDir '{EscapePowerShellLiteral(ForcedMusicFontFile)}') -Force",
-                    $"Copy-Item -LiteralPath '{EscapePowerShellLiteral(bravuraTextPath)}' -Destination (Join-Path $fontDir '{EscapePowerShellLiteral(MusicTextFontFile)}') -Force",
-                    "$fontKey = 'HKCU:\\\\Software\\\\Microsoft\\\\Windows NT\\\\CurrentVersion\\\\Fonts'",
-                    "New-Item -Path $fontKey -Force | Out-Null",
-                    $"Set-ItemProperty -Path $fontKey -Name 'Bravura (OpenType)' -Value '{EscapePowerShellLiteral(ForcedMusicFontFile)}'",
-                    $"Set-ItemProperty -Path $fontKey -Name 'Bravura Text (OpenType)' -Value '{EscapePowerShellLiteral(MusicTextFontFile)}'"
-                });
-
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = "powershell.exe",
-                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -Command \"{command}\"",
-                    UseShellExecute = true,
-                    CreateNoWindow = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
-
-                using Process? process = Process.Start(startInfo);
-                process?.WaitForExit(8000);
-                return process is { ExitCode: 0 };
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
         private static string? GetBundledFontFolderPath()
         {
             string candidate = Path.Combine(AppContext.BaseDirectory, "Assets", "Fonts");
             return Directory.Exists(candidate) ? candidate : null;
-        }
-
-        private static string EscapePowerShellLiteral(string value)
-        {
-            return (value ?? string.Empty).Replace("'", "''");
         }
 
         private bool TryCreateFontFace(string fileName, string familyName, out CanvasFontSet? fontSet, out CanvasFontFace? fontFace)
@@ -9526,6 +9476,11 @@ namespace 音乐魔盒
             fontFace = null;
             try
             {
+                if (TryCreateFontFaceFromUri(fileName, out fontSet, out fontFace))
+                {
+                    return true;
+                }
+
                 return TryCreateFontFaceFromSystem(familyName, out fontSet, out fontFace);
             }
             catch
@@ -9535,6 +9490,11 @@ namespace 音乐魔盒
             fontSet?.Dispose();
             fontSet = null;
             fontFace = null;
+            if (TryCreateFontFaceFromUri(fileName, out fontSet, out fontFace))
+            {
+                return true;
+            }
+
             return TryCreateFontFaceFromSystem(familyName, out fontSet, out fontFace);
         }
 
