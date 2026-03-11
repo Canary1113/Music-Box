@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
@@ -821,8 +821,8 @@ namespace 音乐魔盒.Services
             sb.AppendLine("<title>简谱预览</title>");
             sb.AppendLine("<style>");
             sb.AppendLine($":root{{--note-min-width:{noteMinWidth}px;--token-gap:{tokenGap}px;--bg:transparent;--paper:transparent;--ink:#121212;--sub:#4d4d4d;--bar:#000;--line:#000;--scroll-track:rgba(20,20,20,.08);--scroll-thumb:rgba(20,20,20,.42);}}");
-            sb.AppendLine("html[data-theme='dark']{--bg:transparent;--paper:transparent;--ink:#f3f4f6;--sub:#b4b8c0;--bar:#000;--line:#000;--scroll-track:rgba(255,255,255,.10);--scroll-thumb:rgba(255,255,255,.42);}");
-            sb.AppendLine("@media (prefers-color-scheme:dark){html:not([data-theme='light']){--bg:transparent;--paper:transparent;--ink:#f3f4f6;--sub:#b4b8c0;--bar:#000;--line:#000;--scroll-track:rgba(255,255,255,.10);--scroll-thumb:rgba(255,255,255,.42);}}");
+            sb.AppendLine("html[data-theme='dark']{--bg:transparent;--paper:transparent;--ink:#f3f4f6;--sub:#b4b8c0;--bar:#fff;--line:#fff;--scroll-track:rgba(255,255,255,.10);--scroll-thumb:rgba(255,255,255,.42);}");
+            sb.AppendLine("@media (prefers-color-scheme:dark){html:not([data-theme='light']){--bg:transparent;--paper:transparent;--ink:#f3f4f6;--sub:#b4b8c0;--bar:#fff;--line:#fff;--scroll-track:rgba(255,255,255,.10);--scroll-thumb:rgba(255,255,255,.42);}}");
             sb.AppendLine("@page{size:A4 portrait;margin:7mm 4.5mm 6.5mm;}");
             sb.AppendLine("html,body{margin:0;padding:0;height:100%;background:transparent !important;}");
             sb.AppendLine("body{overflow-y:auto;overflow-x:hidden;background:transparent !important;color:var(--ink);font-family:'Source Han Serif SC','Noto Serif CJK SC','Songti SC','SimSun',serif;}");
@@ -841,8 +841,8 @@ namespace 音乐魔盒.Services
             sb.AppendLine(".score{display:flex;flex-direction:column;align-items:stretch;gap:9px;overflow:visible;padding-bottom:2px;max-width:100%;width:max-content;margin:0;}");
             sb.AppendLine(".jp-line{display:flex;align-items:flex-start;flex-wrap:nowrap;gap:0;page-break-inside:avoid;max-width:100%;width:max-content;margin:0;}");
             sb.AppendLine(".jp-system{display:flex;align-items:flex-start;gap:3px;}");
-            sb.AppendLine(".brace-col{display:flex;align-items:center;justify-content:center;min-width:30px;margin-top:15px;}");
-            sb.AppendLine(".brace{display:inline-block;transform:scaleX(.78);transform-origin:center top;font-family:'Times New Roman','Noto Serif SC',serif;font-size:80px;line-height:.76;color:var(--bar);}");
+            sb.AppendLine(".brace-col{display:flex;align-items:center;justify-content:center;min-width:24px;margin-top:15px;transform:translateX(8px);}");
+            sb.AppendLine(".brace{display:inline-block;transform:scaleX(.72);transform-origin:center top;font-family:'Times New Roman','Noto Serif SC',serif;font-size:70px;line-height:.76;color:var(--bar);}");
             sb.AppendLine(".staff-col{display:flex;flex-direction:column;gap:4px;}");
             sb.AppendLine(".key-change{display:inline-flex;align-items:flex-end;justify-content:center;flex:0 0 auto;min-width:52px;font-family:'Times New Roman','Noto Serif SC',serif;font-size:16px;line-height:1;color:var(--sub);margin-top:4px;margin-right:2px;}");
             sb.AppendLine(".key-change.placeholder{visibility:hidden;}");

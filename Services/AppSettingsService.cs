@@ -1,4 +1,4 @@
-using Microsoft.UI.Xaml;
+﻿using Microsoft.UI.Xaml;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -21,6 +21,7 @@ namespace 音乐魔盒.Services
     {
         private const string ThemeKey = "AppThemePreference";
         private const string LanguageKey = "AppLanguageTag";
+        private const string ExperimentalFeaturesKey = "ExperimentalFeaturesEnabled";
         private const string SystemLanguage = "system";
         private static readonly Lazy<AppSettingsService> LazyInstance = new(() => new AppSettingsService());
         private readonly ApplicationDataContainer? _settings;
@@ -29,6 +30,7 @@ namespace 音乐魔盒.Services
 
         private AppThemePreference _themePreference;
         private string _languageTag = SystemLanguage;
+        private bool _experimentalFeaturesEnabled;
 
         public static AppSettingsService Instance => LazyInstance.Value;
 
@@ -43,6 +45,7 @@ namespace 音乐魔盒.Services
 
             _themePreference = ParseThemePreference(GetSettingValue(ThemeKey));
             _languageTag = ParseLanguageTag(GetSettingValue(LanguageKey));
+            _experimentalFeaturesEnabled = ParseBoolSetting(GetSettingValue(ExperimentalFeaturesKey));
         }
 
         public event EventHandler? SettingsChanged;
@@ -74,6 +77,19 @@ namespace 音乐魔盒.Services
             }
         }
 
+        public bool ExperimentalFeaturesEnabled
+        {
+            get => _experimentalFeaturesEnabled;
+            set
+            {
+                if (SetProperty(ref _experimentalFeaturesEnabled, value))
+                {
+                    SetSettingValue(ExperimentalFeaturesKey, value.ToString());
+                    SettingsChanged?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
         public ElementTheme ResolveElementTheme()
         {
             return ThemePreference switch
@@ -97,7 +113,7 @@ namespace 音乐魔盒.Services
 
         private static AppThemePreference ParseThemePreference(string? value)
         {
-            if (Enum.TryParse<AppThemePreference>(value, true, out var parsed))
+            if (Enum.TryParse(value, true, out AppThemePreference parsed))
             {
                 return parsed;
             }
@@ -121,6 +137,11 @@ namespace 音乐魔盒.Services
             return NormalizeLanguageTag(trimmed);
         }
 
+        private static bool ParseBoolSetting(string? value)
+        {
+            return bool.TryParse(value, out bool parsed) && parsed;
+        }
+
         private static string NormalizeLanguageTag(string? raw)
         {
             if (string.IsNullOrWhiteSpace(raw))
@@ -129,17 +150,16 @@ namespace 音乐魔盒.Services
             }
 
             string normalized = raw.Trim().ToLowerInvariant();
-            if (normalized.StartsWith("zh"))
+            if (normalized.StartsWith("zh", StringComparison.Ordinal))
             {
                 return "zh-Hans";
             }
 
-            if (normalized.StartsWith("en"))
+            if (normalized.StartsWith("en", StringComparison.Ordinal))
             {
                 return "en-US";
             }
 
-            // Keep fallback predictable; new languages can be added in LocalizationService.
             return "en-US";
         }
 
@@ -175,7 +195,7 @@ namespace 音乐魔盒.Services
                 }
             }
 
-            return _fallbackValues.TryGetValue(key, out var value) ? value : null;
+            return _fallbackValues.TryGetValue(key, out string? value) ? value : null;
         }
 
         private void SetSettingValue(string key, string value)
@@ -189,7 +209,6 @@ namespace 音乐魔盒.Services
                 }
                 catch
                 {
-                    // Fall through to file-based fallback when LocalSettings is unavailable.
                 }
             }
 
@@ -207,14 +226,14 @@ namespace 音乐魔盒.Services
                 }
 
                 string json = File.ReadAllText(_fallbackPath);
-                var data = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                Dictionary<string, string>? data = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
                 if (data == null)
                 {
                     return;
                 }
 
                 _fallbackValues.Clear();
-                foreach (var entry in data)
+                foreach (KeyValuePair<string, string> entry in data)
                 {
                     if (!string.IsNullOrWhiteSpace(entry.Key))
                     {
@@ -246,3 +265,4 @@ namespace 音乐魔盒.Services
         }
     }
 }
+

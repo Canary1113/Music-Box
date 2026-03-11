@@ -283,7 +283,7 @@ namespace 音乐魔盒.Services
                 }
 
                 double durationSeconds = Math.Max(0d, (currentEnd - currentStart) / (double)sampleRate);
-                if (durationSeconds >= 0.070d)
+                if (durationSeconds >= 0.100d)
                 {
                     int safeMidi = Math.Clamp(currentMidi, 0, 255);
                     double freq = currentFreqWeight > 1e-6d ? currentFreqSum / currentFreqWeight : MidiToFrequency(Math.Clamp(safeMidi, 24, 108));
@@ -438,7 +438,7 @@ namespace 音乐魔盒.Services
                 double startSeconds = runStartSample / (double)sampleRate;
                 double durationSeconds = Math.Max(0d, (runEndSample - runStartSample) / (double)sampleRate);
                 double meanConfidence = confidenceSum / Math.Max(1, voicedFrames);
-                if (durationSeconds >= 0.070d && meanConfidence >= 0.16d)
+                if (durationSeconds >= 0.100d && meanConfidence >= 0.22d)
                 {
                     int safeMidi = Math.Clamp(runMidi.Value, 24, 108);
                     double resolvedFreq = weightSum > 1e-6d ? freqSum / weightSum : MidiToFrequency(safeMidi);
@@ -955,10 +955,11 @@ namespace 音乐魔盒.Services
             bool weakPeaks = peakRatio < 0.14d;
 
             if (rms < 0.010d && weakHarmonic) return true;
-            if (zcr > 0.34d && harmonicity < 0.66d) return true;
+            if (zcr > 0.28d && harmonicity < 0.72d) return true;
             if (flatSpectrum && weakHarmonic) return true;
-            if (weakPeaks && harmonicity < 0.62d) return true;
-            if (primaryStrength < 0.10f && harmonicity < 0.70d) return true;
+            if (flatness > 0.48d && peakRatio < 0.18d) return true;
+            if (weakPeaks && harmonicity < 0.66d) return true;
+            if (primaryStrength < 0.12f && harmonicity < 0.74d) return true;
 
             return false;
         }
@@ -1194,7 +1195,7 @@ namespace 音乐魔盒.Services
             }
 
             var filtered = notes
-                .Where(n => n.DurationSeconds >= 0.060d)
+                .Where(n => n.DurationSeconds >= 0.090d)
                 .OrderBy(n => n.StartSeconds)
                 .ThenByDescending(n => n.Midi)
                 .ToList();
@@ -1257,6 +1258,17 @@ namespace 音乐魔盒.Services
                         && Math.Abs(current.Midi - next.Midi) >= 10
                         && Math.Abs(prev.Midi - next.Midi) <= 2;
                     if (isolatedLeap)
+                    {
+                        continue;
+                    }
+
+                    double prevGap = current.StartSeconds - (prev.StartSeconds + prev.DurationSeconds);
+                    double nextGap = next.StartSeconds - (current.StartSeconds + current.DurationSeconds);
+                    bool isolatedShortBlip =
+                        current.DurationSeconds < 0.12d
+                        && prevGap > 0.05d
+                        && nextGap > 0.05d;
+                    if (isolatedShortBlip)
                     {
                         continue;
                     }

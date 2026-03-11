@@ -97,8 +97,8 @@ namespace 音乐魔盒
         private readonly CanvasTextFormat _braceFormat = new()
         {
             FontFamily = "Times New Roman",
-            FontSize = 94f,
-            FontWeight = Microsoft.UI.Text.FontWeights.Normal,
+            FontSize = 80f,
+            FontWeight = Microsoft.UI.Text.FontWeights.Light,
             HorizontalAlignment = CanvasHorizontalAlignment.Center,
             VerticalAlignment = CanvasVerticalAlignment.Top
         };
@@ -106,8 +106,8 @@ namespace 音乐魔盒
         private readonly CanvasTextFormat _measureNumberFormat = new()
         {
             FontFamily = "Times New Roman",
-            FontSize = 20f,
-            FontWeight = Microsoft.UI.Text.FontWeights.Normal,
+            FontSize = 15f,
+            FontWeight = Microsoft.UI.Text.FontWeights.Light,
             HorizontalAlignment = CanvasHorizontalAlignment.Left,
             VerticalAlignment = CanvasVerticalAlignment.Top
         };
@@ -214,14 +214,14 @@ namespace 音乐魔盒
         {
             if (_viewModel == null)
             {
-                SetStatus(Loc("未找到工程数据。", "Project data not found."));
+                SetStatus(Loc("\u672a\u627e\u5230\u5de5\u7a0b\u6570\u636e\u3002", "Project data not found."));
                 return;
             }
 
             string? path = await PickOpenPathAsync(".json", ".musicxml", ".xml");
             if (string.IsNullOrWhiteSpace(path))
             {
-                SetStatus(Loc("已取消导入。", "Import canceled."));
+                SetStatus(Loc("\u5df2\u53d6\u6d88\u5bfc\u5165\u3002", "Import canceled."));
                 return;
             }
 
@@ -238,7 +238,7 @@ namespace 音乐魔盒
                 }
                 else
                 {
-                    SetStatus(Loc("不支持的文件类型。", "Unsupported file type."));
+                    SetStatus(Loc("\u4e0d\u652f\u6301\u7684\u6587\u4ef6\u7c7b\u578b\u3002", "Unsupported file type."));
                     return;
                 }
 
@@ -247,7 +247,7 @@ namespace 音乐魔盒
             }
             catch (Exception ex)
             {
-                SetStatus($"{Loc("导入失败", "Import failed")}: {ex.Message}");
+                SetStatus($"{Loc("瀵煎叆澶辫触", "Import failed")}: {ex.Message}");
             }
         }
 
@@ -255,13 +255,13 @@ namespace 音乐魔盒
         {
             if (_viewModel == null)
             {
-                SetStatus(Loc("未找到工程数据。", "Project data not found."));
+                SetStatus(Loc("\u672a\u627e\u5230\u5de5\u7a0b\u6570\u636e\u3002", "Project data not found."));
                 return;
             }
 
             _sourceProject = CloneProject(_viewModel.Project);
             await RefreshPreviewAsync();
-            SetStatus(Loc("已从编辑页导入。", "Imported from editor."));
+            SetStatus(Loc("\u5df2\u4ece\u7f16\u8f91\u9875\u5bfc\u5165\u3002", "Imported from editor."));
         }
 
         private async Task RefreshPreviewAsync()
@@ -273,19 +273,19 @@ namespace 音乐魔盒
                 _latestPreviewHtml = string.Empty;
                 JianpuCanvas?.Invalidate();
                 SavePageStateToCache();
-                SetStatus(Loc("请先在“导入”菜单里选择“编辑页导入”或“从文件导入”。", "Choose Import -> From Editor or From File first."));
+                SetStatus(Loc("\u8bf7\u5148\u5728\u201c\u5bfc\u5165\u201d\u83dc\u5355\u91cc\u9009\u62e9\u201c\u7f16\u8f91\u9875\u5bfc\u5165\u201d\u6216\u201c\u4ece\u6587\u4ef6\u5bfc\u5165\u201d\u3002", "Choose Import -> From Editor or From File first."));
                 return;
             }
 
             if (_viewModel == null)
             {
-                SetStatus(Loc("未找到工程数据。", "Project data not found."));
+                SetStatus(Loc("\u672a\u627e\u5230\u5de5\u7a0b\u6570\u636e\u3002", "Project data not found."));
                 return;
             }
 
             try
             {
-                SetStatus(Loc("正在转换简谱...", "Converting to jianpu..."));
+                SetStatus(Loc("\u6b63\u5728\u8f6c\u6362\u7b80\u8c31...", "Converting to jianpu..."));
                 bool darkTheme = ActualTheme == ElementTheme.Dark;
                 _latestPreviewHtml = _jianpuConverter.BuildPreviewHtml(_sourceProject, darkTheme);
 
@@ -295,7 +295,7 @@ namespace 音乐魔盒
                 UpdateCanvasSize();
                 JianpuCanvas.Invalidate();
                 SavePageStateToCache();
-                SetStatus(Loc("简谱预览已更新（原生渲染）。", "Jianpu preview updated (native rendering)."));
+                SetStatus(Loc("\u7b80\u8c31\u9884\u89c8\u5df2\u66f4\u65b0\uff08\u539f\u751f\u6e32\u67d3\uff09\u3002", "Jianpu preview updated (native rendering)."));
             }
             catch (Exception ex)
             {
@@ -303,7 +303,7 @@ namespace 音乐魔盒
                 _nativePreview = null;
                 JianpuCanvas?.Invalidate();
                 SavePageStateToCache();
-                SetStatus($"{Loc("转换失败", "Conversion failed")}: {ex.Message}");
+                SetStatus($"{Loc("杞崲澶辫触", "Conversion failed")}: {ex.Message}");
             }
 
             await Task.CompletedTask;
@@ -402,19 +402,39 @@ namespace 音乐魔盒
         {
             Color ink = GetInkColor();
             Color subInk = Color.FromArgb((byte)(ink.A == 255 ? 190 : ink.A), ink.R, ink.G, ink.B);
-            Color barInk = Color.FromArgb(255, 0, 0, 0);
+            Color barInk = ActualTheme == ElementTheme.Dark
+                ? Color.FromArgb(255, 255, 255, 255)
+                : Color.FromArgb(255, 0, 0, 0);
+            Color measureInk = barInk;
             var ds = args.DrawingSession;
 
             if (_nativePreview == null)
             {
-                ds.DrawText(Loc("当前工程没有音符。", "No notes in current project."), 20f, 20f, subInk, _statusFormat);
+                float emptyCanvasWidth = (float)Math.Max(200d, JianpuCanvas.ActualWidth);
+                float emptyCanvasHeight = (float)Math.Max(160d, JianpuCanvas.ActualHeight);
+                var centeredStatusFormat = new CanvasTextFormat
+                {
+                    FontFamily = _statusFormat.FontFamily,
+                    FontSize = _statusFormat.FontSize,
+                    FontWeight = _statusFormat.FontWeight,
+                    HorizontalAlignment = CanvasHorizontalAlignment.Center,
+                    VerticalAlignment = CanvasVerticalAlignment.Center
+                };
+                ds.DrawText(
+                    Loc("\u5f53\u524d\u5de5\u7a0b\u6ca1\u6709\u97f3\u7b26\u3002", "No notes in current project."),
+                    0f,
+                    0f,
+                    emptyCanvasWidth,
+                    emptyCanvasHeight,
+                    subInk,
+                    centeredStatusFormat);
                 return;
             }
 
             float canvasWidth = (float)Math.Max(200d, JianpuCanvas.ActualWidth);
             float left = 34f;
-            float braceX = left;
-            float rowStartX = left + 54f;
+            float braceX = left + 14f;
+            float rowStartX = left + 50f;
 
             ds.DrawText(_nativePreview.Title, 0f, 62f, canvasWidth, 60f, ink, _titleFormat);
             string meta = $"1={_nativePreview.KeyText}   {_nativePreview.MeterText}   {_nativePreview.Bpm} BPM";
@@ -428,18 +448,17 @@ namespace 音乐魔盒
                 float upperRowTop = systemTop + 26f + extraSystemPadding;
                 float lowerRowTop = upperRowTop + 70f;
 
-                ds.DrawText(system.StartMeasureNumber.ToString(), left - 10f, systemTop - 18f, subInk, _measureNumberFormat);
-                ds.DrawText("{", braceX + 6f, systemTop + 16f, subInk, _braceFormat);
+                ds.DrawText(system.StartMeasureNumber.ToString(), left + 18f, systemTop - 13f, measureInk, _measureNumberFormat);
+                ds.DrawText("{", braceX + 4f, systemTop + 18f, measureInk, _braceFormat);
 
                 DrawStaffRow(ds, system, upperRowTop, isUpper: true, ink, subInk, barInk, rowStartX, canvasWidth);
                 DrawStaffRow(ds, system, lowerRowTop, isUpper: false, ink, subInk, barInk, rowStartX, canvasWidth);
 
                 systemTop += 188f + extraSystemPadding;
             }
-
             if (!_previewLoaded)
             {
-                ds.DrawText(Loc("正在准备预览...", "Preparing preview..."), left, systemTop + 8f, subInk, _statusFormat);
+                ds.DrawText(Loc("姝ｅ湪鍑嗗棰勮...", "Preparing preview..."), left, systemTop + 8f, subInk, _statusFormat);
             }
         }
 
@@ -817,7 +836,7 @@ namespace 音乐魔盒
             }
 
             float bodyWidth = MeasureGlyphWidth(ds, bodyText, _tokenFormat);
-            float extendWidth = MeasureExtendDrawWidth(ds, _tokenFormat, extendCount);
+            float extendWidth = extendCount > 0 ? Math.Max(MeasureExtendDrawWidth(ds, _tokenFormat, extendCount), Math.Max(0f, width - bodyWidth - 6f)) : 0f;
             float totalWidth = bodyWidth + (extendWidth > 0f ? 2.2f + extendWidth : 0f);
             float bodyStart = x + Math.Max(0f, (width - totalWidth) * 0.5f);
             bodyStart = Math.Clamp(bodyStart, clipStart + 1f, Math.Max(clipStart + 1f, clipEnd - totalWidth - 1f));
@@ -855,7 +874,7 @@ namespace 音乐魔盒
             float bodyRight = bodyStart + bodyWidth;
             if (extendCount > 0)
             {
-                DrawExtendSegments(ds, bodyRight + 2.2f, y, extendCount, color, _tokenFormat);
+                DrawExtendSegments(ds, bodyRight + 2.2f, y, extendCount, extendWidth, color, _tokenFormat);
             }
 
             if (accidentalWidth <= 0f)
@@ -883,6 +902,7 @@ namespace 音乐魔盒
             float startX,
             float y,
             int extendCount,
+            float regionWidth,
             Color color,
             CanvasTextFormat format)
         {
@@ -892,12 +912,14 @@ namespace 音乐魔盒
             }
 
             float dashWidth = MeasureGlyphWidth(ds, "-", format);
-            float gap = Math.Max(6f, dashWidth * 1.25f);
-            float cursor = startX;
+            float slotWidth = extendCount > 0
+                ? Math.Max(dashWidth, regionWidth / extendCount)
+                : dashWidth;
+            float dashOffset = Math.Max(0f, (slotWidth - dashWidth) * 0.5f);
             for (int i = 0; i < extendCount; i++)
             {
+                float cursor = startX + i * slotWidth + dashOffset;
                 ds.DrawText("-", cursor, y, color, format);
-                cursor += dashWidth + gap;
             }
         }
 
@@ -989,13 +1011,13 @@ namespace 音乐魔盒
             }
 
             float stackWidth = maxAccidentalWidth + maxDegreeWidth;
-            float extendWidth = MeasureExtendDrawWidth(ds, degreeFormat, token.ExtendCount);
+            float extendWidth = token.ExtendCount > 0 ? Math.Max(MeasureExtendDrawWidth(ds, degreeFormat, token.ExtendCount), Math.Max(0f, width - stackWidth - 6f)) : 0f;
             float totalWidth = stackWidth + (extendWidth > 0f ? extendWidth + 2.2f : 0f);
             float bodyStart = x + Math.Max(0f, (width - totalWidth) * 0.5f);
             bodyStart = Math.Clamp(bodyStart, clipStart + 1f, Math.Max(clipStart + 1f, clipEnd - totalWidth - 1f));
 
             float degreeStart = bodyStart + maxAccidentalWidth;
-            float topRowY = y - Math.Max(0, rowCount - 1) * rowStep + 5.4f;
+            float topRowY = y - Math.Max(0, rowCount - 1) * rowStep + 8.6f;
             float maxAccidentalRight = float.MinValue;
             for (int i = 0; i < rowCount; i++)
             {
@@ -1033,7 +1055,7 @@ namespace 音乐魔盒
 
             if (token.ExtendCount > 0)
             {
-                DrawExtendSegments(ds, bodyStart + stackWidth + 2.2f, y, token.ExtendCount, color, degreeFormat);
+                DrawExtendSegments(ds, bodyStart + stackWidth + 2.2f, y, token.ExtendCount, extendWidth, color, degreeFormat);
             }
 
             if (maxAccidentalRight < -1e20f)
@@ -1126,7 +1148,7 @@ namespace 音乐魔盒
 
         private static bool IsAccidentalChar(char ch)
         {
-            return ch == '#' || ch == '♯' || ch == 'b' || ch == '♭' || ch == '♮';
+            return ch == '#' || ch == '\u266F' || ch == 'b' || ch == '\u266D' || ch == '\u266E';
         }
 
         private static bool HasLeadingAccidental(string? text)
@@ -1165,33 +1187,33 @@ namespace 音乐魔盒
         {
             if (_sourceProject == null)
             {
-                SetStatus(Loc("请先导入工程，再导出 MusicXML。", "Import a score before exporting MusicXML."));
+                SetStatus(Loc("\u8bf7\u5148\u5bfc\u5165\u5de5\u7a0b\uff0c\u518d\u5bfc\u51fa MusicXML\u3002", "Import a score before exporting MusicXML."));
                 return;
             }
 
             try
             {
                 string suggested = GetSuggestedExportName("musicxml");
-                string? path = await PickSavePathAsync(".musicxml", "MusicXML 乐谱", suggested);
+                string? path = await PickSavePathAsync(".musicxml", "MusicXML \u4e50\u8c31", suggested);
                 if (string.IsNullOrWhiteSpace(path))
                 {
-                    SetStatus(Loc("已取消导出。", "Export canceled."));
+                    SetStatus(Loc("\u5df2\u53d6\u6d88\u5bfc\u51fa\u3002", "Export canceled."));
                     return;
                 }
 
                 _musicXmlExporter.Export(CloneProject(_sourceProject), path);
-                SetStatus($"{Loc("已导出 MusicXML", "MusicXML exported")}: {path}");
+                SetStatus($"{Loc("\u5df2\u5bfc\u51fa MusicXML", "MusicXML exported")}: {path}");
             }
             catch (Exception ex)
             {
-                SetStatus($"{Loc("导出失败", "Export failed")}: {ex.Message}");
+                SetStatus($"{Loc("\u5bfc\u51fa\u5931\u8d25", "Export failed")}: {ex.Message}");
             }
         }
         private async Task ExportPreviewToPdfAsync()
         {
             if (_viewModel == null)
             {
-                SetStatus(Loc("未找到工程数据。", "Project data not found."));
+                SetStatus(Loc("\u672a\u627e\u5230\u5de5\u7a0b\u6570\u636e\u3002", "Project data not found."));
                 return;
             }
 
@@ -1201,15 +1223,15 @@ namespace 音乐魔盒
 
                 if (string.IsNullOrWhiteSpace(_latestPreviewHtml))
                 {
-                    SetStatus(Loc("预览尚未就绪，无法导出 PDF。", "Preview not ready. Cannot export PDF."));
+                    SetStatus(Loc("\u9884\u89c8\u5c1a\u672a\u5c31\u7eea\uff0c\u65e0\u6cd5\u5bfc\u51fa PDF\u3002", "Preview not ready. Cannot export PDF."));
                     return;
                 }
 
                 string suggested = GetSuggestedExportName("pdf");
-                string? path = await PickSavePathAsync(".pdf", "PDF 文档", suggested);
+                string? path = await PickSavePathAsync(".pdf", "PDF \u6587\u6863", suggested);
                 if (string.IsNullOrWhiteSpace(path))
                 {
-                    SetStatus(Loc("已取消导出。", "Export canceled."));
+                    SetStatus(Loc("\u5df2\u53d6\u6d88\u5bfc\u51fa\u3002", "Export canceled."));
                     return;
                 }
 
@@ -1217,7 +1239,7 @@ namespace 音乐魔盒
                 CoreWebView2? core = PdfExportWebView.CoreWebView2;
                 if (core == null)
                 {
-                    SetStatus(Loc("PDF 导出内核未就绪。", "PDF export core is not ready."));
+                    SetStatus(Loc("PDF \u5bfc\u51fa\u5185\u6838\u672a\u5c31\u7eea\u3002", "PDF export core is not ready."));
                     return;
                 }
 
@@ -1240,16 +1262,16 @@ namespace 音乐魔盒
                 bool ok = await core.PrintToPdfAsync(path, printSettings);
                 if (!ok)
                 {
-                    SetStatus(Loc("导出失败：WebView2 未生成 PDF。", "Export failed: WebView2 did not generate PDF."));
+                    SetStatus(Loc("\u5bfc\u51fa\u5931\u8d25\uff1aWebView2 \u672a\u751f\u6210 PDF\u3002", "Export failed: WebView2 did not generate PDF."));
                     return;
                 }
 
-                _viewModel.SetStatus($"{Loc("已导出简谱 PDF", "Jianpu PDF exported")}: {Path.GetFileName(path)}");
-                SetStatus($"{Loc("已导出", "Exported")}: {path}");
+                _viewModel.SetStatus($"{Loc("\u5df2\u5bfc\u51fa\u7b80\u8c31 PDF", "Jianpu PDF exported")}: {Path.GetFileName(path)}");
+                SetStatus($"{Loc("\u5df2\u5bfc\u51fa", "Exported")}: {path}");
             }
             catch (Exception ex)
             {
-                SetStatus($"{Loc("导出失败", "Export failed")}: {ex.Message}");
+                SetStatus($"{Loc("瀵煎嚭澶辫触", "Export failed")}: {ex.Message}");
             }
         }
 
@@ -1325,7 +1347,7 @@ namespace 音乐魔盒
             }
 
             string normalizedExtension = extension.StartsWith('.') ? extension : $".{extension}";
-            return $"{title}-简谱{normalizedExtension}";
+            return $"{title}-\u7b80\u8c31{normalizedExtension}";
         }
 
         private void RestorePageStateFromCache()
@@ -1381,6 +1403,10 @@ namespace 音乐魔盒
         }
     }
 }
+
+
+
+
 
 
 

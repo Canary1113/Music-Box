@@ -380,13 +380,15 @@ namespace 音乐魔盒
         private int _playbackCurrentTick;
         private int _playbackTotalTicks;
         private double _playbackTicksPerSecond;
-        private double _playbackVolume = 1.28d;
+        private double _playbackVolume = 0.80d;
         private bool _isPlaybackRunning;
         private bool _isPlaybackPaused;
         private DateTimeOffset _playbackStartTimeUtc;
         private readonly string _playbackMidiPath = Path.Combine(Path.GetTempPath(), "musicbox-preview.mid");
         private bool _isDraggingPlaybackSlider;
+        private bool _resumePlaybackAfterSliderDrag;
         private bool _syncingPlaybackSlider;
+        private bool _playbackSliderPointerHandlersRegistered;
         private bool _isPlaybackOverlayPointerOver;
         private bool _isPlaybackOverlayExpanded;
         private bool _playbackOverlayScaleInitialized;
@@ -618,7 +620,11 @@ namespace 音乐魔盒
             SetKeySignatureSelection(_viewModel?.KeySignatureFifths ?? 0);
             SetTempoSelection(_viewModel?.Bpm ?? 0);
             SetSnapSelection(_viewModel?.SnapDivision ?? 8);
-            SetNoteLengthSelection(_viewModel?.SelectedNoteLength ?? NoteLength.Quarter);
+            if (_viewModel != null)
+            {
+                _viewModel.SelectedNoteLength = NoteLength.None;
+            }
+            EnsureDefaultNoteLengthSelection();
             SetDurationInputModeSelection(_isRestInputMode);
             UpdateNoteTypeMenuEnabledState();
             ApplyLocalizedEditorText();
@@ -655,6 +661,13 @@ namespace 音乐魔盒
         private void EditorPage_Loaded(object sender, RoutedEventArgs e)
         {
             LocalizationService.LanguageChanged += LocalizationService_LanguageChanged;
+            if (!_playbackSliderPointerHandlersRegistered && PlaybackProgressSlider != null)
+            {
+                PlaybackProgressSlider.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(PlaybackProgressSlider_PointerPressed), true);
+                PlaybackProgressSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(PlaybackProgressSlider_PointerReleased), true);
+                PlaybackProgressSlider.AddHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(PlaybackProgressSlider_PointerCaptureLost), true);
+                _playbackSliderPointerHandlersRegistered = true;
+            }
             ApplyLocalizedEditorText();
             UpdatePlaybackOverlayTheme();
             UpdateTopToolbarLayout();
@@ -679,6 +692,13 @@ namespace 音乐魔盒
         private void EditorPage_Unloaded(object sender, RoutedEventArgs e)
         {
             LocalizationService.LanguageChanged -= LocalizationService_LanguageChanged;
+            if (_playbackSliderPointerHandlersRegistered && PlaybackProgressSlider != null)
+            {
+                PlaybackProgressSlider.RemoveHandler(UIElement.PointerPressedEvent, new PointerEventHandler(PlaybackProgressSlider_PointerPressed));
+                PlaybackProgressSlider.RemoveHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(PlaybackProgressSlider_PointerReleased));
+                PlaybackProgressSlider.RemoveHandler(UIElement.PointerCaptureLostEvent, new PointerEventHandler(PlaybackProgressSlider_PointerCaptureLost));
+                _playbackSliderPointerHandlersRegistered = false;
+            }
             _playbackOverlayCollapseTimer.Stop();
             DisablePlaybackRefractionEffect();
         }
@@ -776,7 +796,7 @@ namespace 音乐魔盒
             }
             else if (e.PropertyName == nameof(MainViewModel.SelectedNoteLength))
             {
-                SetNoteLengthSelection(_viewModel?.SelectedNoteLength ?? NoteLength.Quarter);
+                EnsureDefaultNoteLengthSelection();
             }
 
             if (!_isApplyingHistory
@@ -1910,10 +1930,10 @@ namespace 音乐魔盒
         {
             return denominator switch
             {
-                8 => "♪",
-                2 => "𝅗𝅥",
-                16 => "♬",
-                _ => "♩"
+                8 => "Eighth",
+                2 => "Half",
+                16 => "16th",
+                _ => "Quarter"
             };
         }
 
@@ -3531,9 +3551,9 @@ namespace 音乐魔盒
                 "ped" => "Ped.",
                 "ped_release" => "*",
                 "ped_line" => "_",
-                ScoreMarkSegno => "𝄋",
-                "tune" => "♮",
-                "stacc" => "•",
+                ScoreMarkSegno => "饾剫",
+                "tune" => "\u266E",
+                "stacc" => "\u2022",
                 _ => code
             };
         }
@@ -5903,9 +5923,6 @@ namespace 音乐魔盒
             bool isEnglish = AppSettingsService.Instance.ResolveLanguageTag().StartsWith("en", StringComparison.OrdinalIgnoreCase);
             if (FileMenu != null) FileMenu.Title = LocalizationService.Translate("editor.menu.file");
             if (FileNewMenuItem != null) FileNewMenuItem.Text = LocalizationService.Translate("editor.menu.new");
-            if (FileOpenMenuItem != null) FileOpenMenuItem.Text = LocalizationService.Translate("editor.menu.open");
-            if (FileSaveMenuItem != null) FileSaveMenuItem.Text = LocalizationService.Translate("editor.menu.save");
-            if (FileSaveAsMenuItem != null) FileSaveAsMenuItem.Text = LocalizationService.Translate("editor.menu.save_as");
             if (FileImportMusicXmlMenuItem != null) FileImportMusicXmlMenuItem.Text = LocalizationService.Translate("editor.menu.import_musicxml");
             if (FileExportMusicXmlMenuItem != null) FileExportMusicXmlMenuItem.Text = LocalizationService.Translate("editor.menu.export_musicxml");
             if (FilePrintMenuItem != null) FilePrintMenuItem.Text = LocalizationService.Translate("editor.menu.print");
@@ -5920,11 +5937,11 @@ namespace 音乐魔盒
             if (UndoButton != null) ToolTipService.SetToolTip(UndoButton, LocalizationService.Translate("editor.toolbar.undo"));
             if (RedoButton != null) ToolTipService.SetToolTip(RedoButton, LocalizationService.Translate("editor.toolbar.redo"));
             if (ExpressionMarkButton != null) ExpressionMarkButton.Content = LocalizationService.Translate("editor.toolbar.expressions");
-            if (ScoreMarkButton != null) ScoreMarkButton.Content = isEnglish ? "Score Marks" : "谱面记号";
+            if (ScoreMarkButton != null) ScoreMarkButton.Content = isEnglish ? "Score Marks" : "\u8c31\u9762\u8bb0\u53f7";
             if (PedalMarkButton != null) PedalMarkButton.Content = LocalizationService.Translate("editor.toolbar.pedal");
             if (SlurToolButton != null) SlurToolButton.Content = LocalizationService.Translate("editor.toolbar.slur");
             if (NoteLengthLabelText != null) NoteLengthLabelText.Text = LocalizationService.Translate("editor.toolbar.duration");
-            if (NoteTypeButton != null) NoteTypeButton.Content = "···";
+            if (NoteTypeButton != null) NoteTypeButton.Content = "...";
             if (NoteTypeButton != null) ToolTipService.SetToolTip(NoteTypeButton, LocalizationService.Translate("editor.toolbar.note_type"));
             if (PlayMidiButton != null) ToolTipService.SetToolTip(PlayMidiButton, LocalizationService.Translate("editor.toolbar.play"));
             if (PauseMidiButton != null) ToolTipService.SetToolTip(PauseMidiButton, LocalizationService.Translate("editor.toolbar.pause"));
@@ -5948,6 +5965,8 @@ namespace 音乐魔盒
                 DurationModeToggleSwitch.OnContent = string.Empty;
             }
             UpdateDurationModeStateText();
+            EnsureContextMenu();
+            UpdateContextMenuLocalization(isEnglish);
 
             if (NoteLengthButtons != null)
             {
@@ -5975,15 +5994,15 @@ namespace 音乐魔盒
             if (StaccatissimoMenuItem != null) StaccatissimoMenuItem.Text = LocalizationService.Translate("editor.note_type.staccatissimo");
             if (AccentMenuItem != null) AccentMenuItem.Text = LocalizationService.Translate("editor.note_type.accent");
             if (AugmentationDotMenuItem != null) AugmentationDotMenuItem.Text = LocalizationService.Translate("editor.note_type.dot");
-            if (OrnamentSubMenuItem != null) OrnamentSubMenuItem.Text = isEnglish ? "Ornaments" : "装饰音";
-            if (OrnamentNoneMenuItem != null) OrnamentNoneMenuItem.Text = isEnglish ? "None" : "无";
-            if (OrnamentTrillMenuItem != null) OrnamentTrillMenuItem.Text = isEnglish ? "Trill" : "颤音";
-            if (OrnamentUpperMordentMenuItem != null) OrnamentUpperMordentMenuItem.Text = isEnglish ? "Upper Mordent" : "上波音";
-            if (OrnamentLowerMordentMenuItem != null) OrnamentLowerMordentMenuItem.Text = isEnglish ? "Lower Mordent" : "下波音";
-            if (OrnamentTurnMenuItem != null) OrnamentTurnMenuItem.Text = isEnglish ? "Turn" : "回音";
-            if (OrnamentInvertedTurnMenuItem != null) OrnamentInvertedTurnMenuItem.Text = isEnglish ? "Inverted Turn" : "逆回音";
-            if (OrnamentAppoggiaturaMenuItem != null) OrnamentAppoggiaturaMenuItem.Text = isEnglish ? "Appoggiatura" : "倚音";
-            if (OrnamentAcciaccaturaMenuItem != null) OrnamentAcciaccaturaMenuItem.Text = isEnglish ? "Acciaccatura" : "短倚音";
+            if (OrnamentSubMenuItem != null) OrnamentSubMenuItem.Text = isEnglish ? "Ornaments" : "\u88c5\u9970\u97f3";
+            if (OrnamentNoneMenuItem != null) OrnamentNoneMenuItem.Text = isEnglish ? "None" : "\u65e0";
+            if (OrnamentTrillMenuItem != null) OrnamentTrillMenuItem.Text = isEnglish ? "Trill" : "\u98a4\u97f3";
+            if (OrnamentUpperMordentMenuItem != null) OrnamentUpperMordentMenuItem.Text = isEnglish ? "Upper Mordent" : "\u4e0a\u6ce2\u97f3";
+            if (OrnamentLowerMordentMenuItem != null) OrnamentLowerMordentMenuItem.Text = isEnglish ? "Lower Mordent" : "\u4e0b\u6ce2\u97f3";
+            if (OrnamentTurnMenuItem != null) OrnamentTurnMenuItem.Text = isEnglish ? "Turn" : "\u56de\u97f3";
+            if (OrnamentInvertedTurnMenuItem != null) OrnamentInvertedTurnMenuItem.Text = isEnglish ? "Inverted Turn" : "\u9006\u56de\u97f3";
+            if (OrnamentAppoggiaturaMenuItem != null) OrnamentAppoggiaturaMenuItem.Text = isEnglish ? "Appoggiatura" : "\u501a\u97f3";
+            if (OrnamentAcciaccaturaMenuItem != null) OrnamentAcciaccaturaMenuItem.Text = isEnglish ? "Acciaccatura" : "\u77ed\u501a\u97f3";
 
             if (ExpressionMarkButton?.Flyout is MenuFlyout expressionFlyout)
             {
@@ -6027,20 +6046,29 @@ namespace 音乐魔盒
                     string code = NormalizeExpressionCode(entry.Tag?.ToString());
                     entry.Text = code switch
                     {
-                        "score_gclef" => isEnglish ? "Treble Clef" : "高音谱号",
-                        "score_fclef" => isEnglish ? "Bass Clef" : "低音谱号",
-                        "score_final_barline" => isEnglish ? "Final Barline" : "终止线",
-                        "score_repeat_barline" => isEnglish ? "Repeat Barline" : "反复记号",
-                        "score_segno" => isEnglish ? "Segno" : "回到标记",
+                        "score_gclef" => isEnglish ? "Treble Clef" : "\u9ad8\u97f3\u8c31\u53f7",
+                        "score_fclef" => isEnglish ? "Bass Clef" : "\u4f4e\u97f3\u8c31\u53f7",
+                        "score_final_barline" => isEnglish ? "Final Barline" : "\u7ec8\u6b62\u7ebf",
+                        "score_repeat_barline" => isEnglish ? "Repeat Barline" : "\u53cd\u590d\u8bb0\u53f7",
+                        "score_segno" => isEnglish ? "Segno" : "\u56de\u5230\u6807\u8bb0",
                         "ottava" => LocalizationService.Translate("editor.expression.ottava"),
-                        "score_ending_1" => isEnglish ? "1st Ending" : "第一结尾",
-                        "score_ending_2" => isEnglish ? "2nd Ending" : "第二结尾",
+                        "score_ending_1" => isEnglish ? "1st Ending" : "\u7b2c\u4e00\u7ed3\u5c3e",
+                        "score_ending_2" => isEnglish ? "2nd Ending" : "\u7b2c\u4e8c\u7ed3\u5c3e",
                         _ => entry.Text
                     };
                 }
             }
         }
 
+        private void EnsureDefaultNoteLengthSelection()
+        {
+            if (_viewModel == null)
+            {
+                return;
+            }
+
+            SetNoteLengthSelection(_viewModel.SelectedNoteLength);
+        }
         private void SwitchToNoNoteLengthIfNeeded()
         {
             // Keep current note length; do not force-switch to "None".
@@ -6161,7 +6189,7 @@ namespace 音乐魔盒
                                     if (TryExpandSystemByPullingEndBarline(systemIndex, _measurePanelBarlineX))
                                     {
                                         handledEndBoundary = true;
-                                        _viewModel?.SetStatus("已向左拉出一条新小节线");
+                                        _viewModel?.SetStatus("\u5df2\u5411\u5de6\u62c9\u51fa\u4e00\u6761\u65b0\u5c0f\u8282\u7ebf");
                                     }
                                 }
                             }
@@ -6175,20 +6203,20 @@ namespace 音乐魔盒
                                 if (draggedNearFinal && TryShrinkSystemByOneEmptyMeasure(systemIndex))
                                 {
                                     handledEndBoundary = true;
-                                    _viewModel?.SetStatus("已删除本行末尾空白小节");
+                                    _viewModel?.SetStatus("\u5df2\u5220\u9664\u672c\u884c\u672b\u5c3e\u7a7a\u767d\u5c0f\u8282");
                                 }
                             }
                         }
 
                         if (!handledEndBoundary)
                         {
-                            _viewModel?.SetStatus("已调整小节线位置（直接拖拽小节线即可调整）");
+                            _viewModel?.SetStatus("\u5df2\u8c03\u6574\u5c0f\u8282\u7ebf\u4f4d\u7f6e\uff08\u76f4\u63a5\u62d6\u62fd\u5c0f\u8282\u7ebf\u5373\u53ef\u8c03\u6574\uff09");
                         }
                         MarkProjectChanged();
                     }
                     catch (Exception ex)
                     {
-                        _viewModel?.SetStatus($"拖拽小节线失败: {ex.Message}");
+                        _viewModel?.SetStatus($"鎷栨嫿灏忚妭绾垮け璐? {ex.Message}");
                     }
                 }
                 else if (measureIndex >= 0 && systemIndex >= 0)
@@ -6232,28 +6260,28 @@ namespace 音乐魔盒
             _contextMenu = new MenuFlyout();
             _contextCopy = new MenuFlyoutItem
             {
-                Text = "复制",
+                Text = "\u590d\u5236",
                 Icon = new FontIcon { Glyph = "\uE8C8", FontSize = 11 }
             };
             _contextCopy.Click += (_, __) => CopySelection();
 
             _contextCut = new MenuFlyoutItem
             {
-                Text = "剪切",
+                Text = "\u526a\u5207",
                 Icon = new FontIcon { Glyph = "\uE8C6", FontSize = 11 }
             };
             _contextCut.Click += (_, __) => CutSelection();
 
             _contextPaste = new MenuFlyoutItem
             {
-                Text = "粘贴",
+                Text = "\u7c98\u8d34",
                 Icon = new FontIcon { Glyph = "\uE77F", FontSize = 11 }
             };
             _contextPaste.Click += (_, __) => PasteSelection(_lastPointerCanvasPoint);
 
             _contextDelete = new MenuFlyoutItem
             {
-                Text = "删除",
+                Text = "\u5220\u9664",
                 Icon = new FontIcon
                 {
                     Glyph = "\uE74D",
@@ -6268,6 +6296,14 @@ namespace 音乐魔盒
             _contextMenu.Items.Add(_contextPaste);
             _contextMenu.Items.Add(new MenuFlyoutSeparator());
             _contextMenu.Items.Add(_contextDelete);
+        }
+
+        private void UpdateContextMenuLocalization(bool isEnglish)
+        {
+            if (_contextCopy != null) _contextCopy.Text = isEnglish ? "Copy" : "\u590d\u5236";
+            if (_contextCut != null) _contextCut.Text = isEnglish ? "Cut" : "\u526a\u5207";
+            if (_contextPaste != null) _contextPaste.Text = isEnglish ? "Paste" : "\u7c98\u8d34";
+            if (_contextDelete != null) _contextDelete.Text = isEnglish ? "Delete" : "\u5220\u9664";
         }
 
         private bool HasClipboardSelection()
@@ -6515,7 +6551,7 @@ namespace 音乐魔盒
 
                     if (OttavaDirectionButton?.Content is TextBlock block)
                     {
-                        block.Text = IsOttavaUp(ottavaMark) ? "↑8" : "↓8";
+                        block.Text = IsOttavaUp(ottavaMark) ? "鈫?" : "鈫?";
                     }
 
                     Canvas.SetLeft(OttavaEditPanel, Math.Clamp(targetX, 0d, maxX));
@@ -6552,7 +6588,7 @@ namespace 音乐魔盒
 
                     if (RepeatDirectionButton?.Content is TextBlock repeatText)
                     {
-                        repeatText.Text = IsStartRepeatBarline(repeatMark) ? "↤" : "↦";
+                        repeatText.Text = IsStartRepeatBarline(repeatMark) ? "\u2192:" : ":\u2190";
                     }
 
                     Canvas.SetLeft(RepeatEditPanel, Math.Clamp(targetX, 0d, maxX));
@@ -9243,7 +9279,7 @@ namespace 音乐魔盒
             if (bravuraItem == null)
             {
                 _musicFontAvailable = false;
-                _musicFontStatus = "未找到 Bravura 字体菜单项。";
+                _musicFontStatus = "\u672a\u627e\u5230 Bravura \u5b57\u4f53\u83dc\u5355\u9879\u3002";
                 return;
             }
 
@@ -9265,7 +9301,7 @@ namespace 音乐魔盒
 
             if (!string.Equals(familyName, ForcedMusicFontFamily, StringComparison.OrdinalIgnoreCase))
             {
-                _viewModel?.SetStatus("当前版本已锁定使用 Bravura。");
+                _viewModel?.SetStatus("\u5f53\u524d\u7248\u672c\u5df2\u9501\u5b9a\u4f7f\u7528 Bravura\u3002");
                 InitializeMusicFontSelection();
                 return;
             }
@@ -9287,21 +9323,21 @@ namespace 音乐魔盒
                 if (!TryResolveFont(fileName, familyName, out var isSmufl))
                 {
                     _musicFontAvailable = false;
-                    _musicFontStatus = $"字体未安装：{familyName}（请右键字体文件→安装后重启）";
+                    _musicFontStatus = $"\u5b57\u4f53\u672a\u5b89\u88c5\uff1a{familyName}\uff08\u8bf7\u53f3\u952e\u5b57\u4f53\u6587\u4ef6 -> \u5b89\u88c5\u540e\u91cd\u542f\uff09";
                     return;
                 }
 
                 if (!isSmufl)
                 {
                     _musicFontAvailable = false;
-                    _musicFontStatus = $"字体不是 SMuFL：{familyName}";
+                    _musicFontStatus = $"\u5b57\u4f53\u4e0d\u662f SMuFL\uff1a{familyName}";
                     return;
                 }
 
                 if (!TryCreateFontFace(fileName, familyName, out var fontSet, out var fontFace))
                 {
                     _musicFontAvailable = false;
-                    _musicFontStatus = $"字体加载失败：{familyName}";
+                    _musicFontStatus = $"\u5b57\u4f53\u52a0\u8f7d\u5931\u8d25\uff1a{familyName}";
                     return;
                 }
 
@@ -9736,7 +9772,7 @@ namespace 音乐魔盒
                 SetKeySignatureSelection(_viewModel.KeySignatureFifths);
                 SetTempoSelection(_viewModel.Bpm);
                 SetSnapSelection(_viewModel.SnapDivision);
-                SetNoteLengthSelection(_viewModel.SelectedNoteLength);
+                EnsureDefaultNoteLengthSelection();
             }
             finally
             {
@@ -9887,7 +9923,7 @@ namespace 音乐魔盒
             };
 
             UpdateContextMenuState();
-            _viewModel.SetStatus("已复制选中内容");
+            _viewModel.SetStatus("宸插鍒堕€変腑鍐呭");
         }
 
         private void CutSelection()
@@ -9899,7 +9935,7 @@ namespace 音乐魔盒
 
             CopySelection();
             DeleteSelected();
-            _viewModel.SetStatus("已剪切选中内容");
+            _viewModel.SetStatus("宸插壀鍒囬€変腑鍐呭");
         }
 
         private void PasteSelection(Point? anchorPoint)
@@ -9973,7 +10009,7 @@ namespace 音乐魔盒
             SyncSlurSlopeControlFromSelection();
             StaffCanvas.Invalidate();
             UpdateNoteStepPanel();
-            _viewModel.SetStatus("已粘贴");
+            _viewModel.SetStatus("\u5df2\u7c98\u8d34");
         }
 
         private void CopyKey_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
@@ -10357,7 +10393,7 @@ namespace 音乐魔盒
             if (DateTimeOffset.UtcNow - _pendingInsertionAnchorTimestampUtc > InsertionAnchorMaxAge)
             {
                 ClearPendingInsertionAnchor();
-                _viewModel.SetStatus("插入锚点已过期，请先点击目标位置。");
+                _viewModel.SetStatus("\u63d2\u5165\u951a\u70b9\u5df2\u8fc7\u671f\uff0c\u8bf7\u5148\u70b9\u51fb\u76ee\u6807\u4f4d\u7f6e\u3002");
                 return false;
             }
 
@@ -10377,7 +10413,7 @@ namespace 音乐魔盒
                 if (!TryHitMeasureBarline(anchorPoint, out _, out _, out _, out float barlineX, out _))
                 {
                     ClearPendingInsertionAnchor();
-                    _viewModel.SetStatus("该谱面记号需要先点击目标小节线。");
+                    _viewModel.SetStatus("\u8be5\u8c31\u9762\u8bb0\u53f7\u9700\u8981\u5148\u70b9\u51fb\u76ee\u6807\u5c0f\u8282\u7ebf\u3002");
                     return false;
                 }
 
@@ -10673,6 +10709,7 @@ namespace 音乐魔盒
 
             try
             {
+                EnsureDefaultNoteLengthSelection();
                 if (_isPlaybackRunning)
                 {
                     StopPlaybackInternal(resetPosition: false);
@@ -10681,10 +10718,11 @@ namespace 音乐魔盒
                 await EnsureMidiSynthAsync();
                 BuildPlaybackEvents();
                 StartPlaybackFromTick(0);
+                _viewModel.SelectedNoteLength = NoteLength.None;
             }
             catch (Exception ex)
             {
-                _viewModel.SetStatus($"播放失败: {ex.Message}");
+                _viewModel.SetStatus($"鎾斁澶辫触: {ex.Message}");
             }
         }
 
@@ -11314,7 +11352,7 @@ namespace 音乐魔盒
             return sustainedEnd;
         }
 
-        private void StartPlaybackFromTick(int tick)
+        private void StartPlaybackFromTick(int tick, bool resumeActiveNotes = true)
         {
             if (_playbackTotalTicks <= 0 || _midiSynth == null) return;
 
@@ -11328,11 +11366,14 @@ namespace 音乐魔盒
                 _playbackEventIndex++;
             }
 
-            foreach (var span in _playbackNoteSpans)
+            if (resumeActiveNotes)
             {
-                if (span.StartTick <= tick && tick < span.EndTick)
+                foreach (var span in _playbackNoteSpans)
                 {
-                    SendMidiNoteOn(span.Midi, span.Velocity);
+                    if (span.StartTick <= tick && tick < span.EndTick)
+                    {
+                        SendMidiNoteOn(span.Midi, span.Velocity);
+                    }
                 }
             }
 
@@ -11350,6 +11391,7 @@ namespace 音乐魔盒
             }
             _playbackTimer?.Start();
             UpdatePlaybackProgressBar();
+            CenterPlaybackInViewport(force: true);
             StaffCanvas.Invalidate();
         }
 
@@ -11402,6 +11444,58 @@ namespace 音乐魔盒
             return Math.Clamp(bestPlaybackTick, 0, Math.Max(0, _playbackTotalTicks));
         }
 
+        private bool TryGetPlaybackViewportAnchor(int playbackTick, out Point anchor)
+        {
+            anchor = default;
+            if (ScoreScrollViewer?.Content is not UIElement scrollContent || StaffCanvas == null)
+            {
+                return false;
+            }
+
+            if (StaffCanvas.ActualWidth <= 1d || StaffCanvas.ActualHeight <= 1d)
+            {
+                return false;
+            }
+
+            double sourceTick = GetSourceTickForPlaybackCursor(playbackTick);
+            int cursorSourceTick = Math.Max(0, (int)Math.Round(sourceTick));
+            int systemIndex = GetSystemIndexForTick(cursorSourceTick);
+            float anchorX = GetNoteX(sourceTick);
+            float anchorY = (GetSystemTrebleTop(systemIndex) + GetSystemBassBottom(systemIndex)) * 0.5f;
+
+            GeneralTransform transform = StaffCanvas.TransformToVisual(scrollContent);
+            Point canvasOrigin = transform.TransformPoint(new Point(0d, 0d));
+            anchor = new Point(canvasOrigin.X + anchorX, canvasOrigin.Y + anchorY);
+            return true;
+        }
+
+        private void CenterPlaybackInViewport(bool force)
+        {
+            if (ScoreScrollViewer == null || !TryGetPlaybackViewportAnchor(_playbackCurrentTick, out Point anchor))
+            {
+                return;
+            }
+
+            double viewportWidth = ScoreScrollViewer.ViewportWidth > 1d ? ScoreScrollViewer.ViewportWidth : ScoreScrollViewer.ActualWidth;
+            double viewportHeight = ScoreScrollViewer.ViewportHeight > 1d ? ScoreScrollViewer.ViewportHeight : ScoreScrollViewer.ActualHeight;
+            if (viewportWidth <= 1d || viewportHeight <= 1d)
+            {
+                return;
+            }
+
+            double targetHorizontal = Math.Clamp(anchor.X - viewportWidth * 0.5d, 0d, Math.Max(0d, ScoreScrollViewer.ScrollableWidth));
+            double targetVertical = Math.Clamp(anchor.Y - viewportHeight * 0.5d, 0d, Math.Max(0d, ScoreScrollViewer.ScrollableHeight));
+
+            if (!force
+                && Math.Abs(ScoreScrollViewer.HorizontalOffset - targetHorizontal) < 8d
+                && Math.Abs(ScoreScrollViewer.VerticalOffset - targetVertical) < 8d)
+            {
+                return;
+            }
+
+            ScoreScrollViewer.ChangeView(targetHorizontal, targetVertical, null, true);
+        }
+
         private void SeekPlaybackToTick(int seekTick, bool keepRunningIfWasRunning)
         {
             int clamped = Math.Clamp(seekTick, 0, Math.Max(0, _playbackTotalTicks));
@@ -11410,7 +11504,7 @@ namespace 音乐魔盒
 
             if (wasRunning || wasPaused)
             {
-                StartPlaybackFromTick(clamped);
+                StartPlaybackFromTick(clamped, resumeActiveNotes: false);
                 if (!wasRunning && wasPaused)
                 {
                     _isPlaybackRunning = false;
@@ -11427,6 +11521,7 @@ namespace 音乐魔盒
                 }
 
                 UpdatePlaybackProgressBar();
+                CenterPlaybackInViewport(force: true);
                 StaffCanvas.Invalidate();
                 return;
             }
@@ -11435,6 +11530,7 @@ namespace 音乐魔盒
             _playbackCurrentTick = clamped;
             _playbackEventIndex = FindPlaybackEventIndex(clamped);
             UpdatePlaybackProgressBar();
+            CenterPlaybackInViewport(force: true);
             StaffCanvas.Invalidate();
         }
 
@@ -11493,6 +11589,7 @@ namespace 音乐魔盒
             }
 
             UpdatePlaybackProgressBar();
+            CenterPlaybackInViewport(force: false);
             StaffCanvas.Invalidate();
         }
 
@@ -11531,13 +11628,19 @@ namespace 音乐魔盒
                     _syncingPlaybackSlider = false;
                 }
             }
-            // While dragging, keep slider thumb fully controlled by pointer, no automatic rewrites.
 
             if (PlaybackProgressText != null)
             {
                 PlaybackProgressText.Text = $"{FormatPlaybackTime(currentSeconds)} / {FormatPlaybackTime(totalSeconds)}";
             }
 
+            UpdatePlaybackControlToolTips();
+            UpdatePlaybackVolumeToolTip();
+        }
+
+        private void UpdatePlaybackControlToolTips()
+        {
+            bool isEnglish = AppSettingsService.Instance.ResolveLanguageTag().StartsWith("en", StringComparison.OrdinalIgnoreCase);
             if (PlaybackOverlayPlayPauseButton != null
                 && PlaybackOverlayPlayPauseIcon != null
                 && PlaybackOverlayStopButton != null)
@@ -11545,29 +11648,41 @@ namespace 音乐魔盒
                 if (_isPlaybackRunning)
                 {
                     PlaybackOverlayPlayPauseIcon.Glyph = "\uF8AE";
-                    ToolTipService.SetToolTip(PlaybackOverlayPlayPauseButton, "暂停");
+                    ToolTipService.SetToolTip(PlaybackOverlayPlayPauseButton, isEnglish ? "Pause" : "鏆傚仠");
                 }
                 else if (_isPlaybackPaused)
                 {
                     PlaybackOverlayPlayPauseIcon.Glyph = "\uF5B0";
-                    ToolTipService.SetToolTip(PlaybackOverlayPlayPauseButton, "继续");
+                    ToolTipService.SetToolTip(PlaybackOverlayPlayPauseButton, isEnglish ? "Resume" : "缁х画");
                 }
                 else
                 {
                     PlaybackOverlayPlayPauseIcon.Glyph = "\uF5B0";
-                    ToolTipService.SetToolTip(PlaybackOverlayPlayPauseButton, "播放");
+                    ToolTipService.SetToolTip(PlaybackOverlayPlayPauseButton, isEnglish ? "Play" : "鎾斁");
                 }
 
-                ToolTipService.SetToolTip(PlaybackOverlayStopButton, "停止");
+                ToolTipService.SetToolTip(PlaybackOverlayStopButton, isEnglish ? "Stop" : "鍋滄");
                 PlaybackOverlayStopButton.IsEnabled = _isPlaybackRunning || _isPlaybackPaused;
-            }
-
-            if (PlaybackOverlayVolumeButton != null)
-            {
-                ToolTipService.SetToolTip(PlaybackOverlayVolumeButton, $"音量 {(int)Math.Round(_playbackVolume * 100d)}%");
             }
         }
 
+        private int GetPlaybackVolumePercentage()
+        {
+            return (int)Math.Round(Math.Clamp(_playbackVolume, 0d, 1d) * 100d);
+        }
+
+        private void UpdatePlaybackVolumeToolTip()
+        {
+            if (PlaybackOverlayVolumeButton == null)
+            {
+                return;
+            }
+
+            bool isEnglish = AppSettingsService.Instance.ResolveLanguageTag().StartsWith("en", StringComparison.OrdinalIgnoreCase);
+            int percent = GetPlaybackVolumePercentage();
+            ToolTipService.SetToolTip(PlaybackOverlayVolumeButton, isEnglish ? $"Volume {percent}%" : $"\u97f3\u91cf {percent}%");
+            if (PlaybackVolumeValueText != null) PlaybackVolumeValueText.Text = percent.ToString();
+        }
         private void PlaybackOverlayPlayPauseButton_Click(object sender, RoutedEventArgs e)
         {
             if (_isPlaybackRunning)
@@ -11685,7 +11800,7 @@ namespace 音乐魔盒
                 return;
             }
 
-            double targetScale = expanded ? 1.0d : 0.72d;
+            double targetScale = expanded ? 1.0d : 0.78d;
             // Preserve the currently displayed scale before stopping any existing storyboard.
             // Storyboard.Stop() resets animated properties to base values, which would kill expand animation.
             double currentScaleX = PlaybackOverlayScaleTransform.ScaleX;
@@ -11726,7 +11841,7 @@ namespace 音乐魔盒
                     Grid.SetColumnSpan(PlaybackProgressSlider, 1);
                     PlaybackProgressSlider.HorizontalAlignment = HorizontalAlignment.Stretch;
                     PlaybackProgressSlider.Width = double.NaN;
-                    PlaybackProgressSlider.Margin = new Thickness(2, -1, 2, 0);
+                    PlaybackProgressSlider.Margin = new Thickness(4, 2, 4, 2);
                 }
                 else
                 {
@@ -11734,7 +11849,7 @@ namespace 音乐魔盒
                     Grid.SetColumnSpan(PlaybackProgressSlider, 5);
                     PlaybackProgressSlider.HorizontalAlignment = HorizontalAlignment.Stretch;
                     PlaybackProgressSlider.Width = double.NaN;
-                    PlaybackProgressSlider.Margin = new Thickness(2, -1, 2, 0);
+                    PlaybackProgressSlider.Margin = new Thickness(3, 1, 3, 1);
                 }
             }
 
@@ -11907,51 +12022,54 @@ namespace 音乐魔盒
                 return;
             }
 
-            double expandedWidth = Math.Clamp(viewportWidth * 0.40d, 280d, 720d);
-            expandedWidth = Math.Min(expandedWidth, Math.Max(320d, viewportWidth - 26d));
-            double targetWidth = expandedWidth;
+            double expandedWidth = Math.Clamp(viewportWidth * 0.44d, 320d, 720d);
+            expandedWidth = Math.Min(expandedWidth, Math.Max(360d, viewportWidth - 24d));
+            double collapsedWidth = Math.Clamp(viewportWidth * 0.32d, 230d, 380d);
+            collapsedWidth = Math.Min(collapsedWidth, Math.Max(240d, viewportWidth - 60d));
+            double targetWidth = _isPlaybackOverlayExpanded ? expandedWidth : collapsedWidth;
             PlaybackOverlay.Width = targetWidth;
             double sliderMinWidth = _isPlaybackOverlayExpanded
-                ? Math.Clamp(targetWidth * 0.50d, 140d, 680d)
-                : Math.Clamp(targetWidth * 0.88d, 140d, 680d);
+                ? Math.Clamp(targetWidth * 0.58d, 190d, 470d)
+                : Math.Clamp(targetWidth * 0.80d, 180d, 300d);
             PlaybackProgressSlider.MinWidth = sliderMinWidth;
 
-            // Keep the controller close to bottom with gentle adaptive offset.
             double bottomOffset = viewportHeight > 1d
                 ? Math.Clamp(viewportHeight * 0.013d, 14d, 24d)
                 : 16d;
             PlaybackOverlay.Margin = new Thickness(0d, 0d, 0d, bottomOffset);
 
             double scale = viewportHeight > 1d
-                ? Math.Clamp(viewportHeight / 900d, 0.95d, 1.28d)
+                ? Math.Clamp(viewportHeight / 900d, 0.95d, 1.24d)
                 : 1d;
             if (_isPlaybackOverlayExpanded)
             {
                 PlaybackOverlay.Padding = new Thickness(
-                    Math.Clamp(10d * scale, 9d, 14d),
-                    Math.Clamp(7d * scale, 6d, 10d),
-                    Math.Clamp(10d * scale, 9d, 14d),
-                    Math.Clamp(7d * scale, 6d, 10d));
-                PlaybackOverlay.CornerRadius = new CornerRadius(Math.Clamp(18d * scale, 15d, 24d));
+                    Math.Clamp(12d * scale, 10d, 14d),
+                    Math.Clamp(10d * scale, 9d, 12d),
+                    Math.Clamp(12d * scale, 10d, 14d),
+                    Math.Clamp(10d * scale, 9d, 12d));
+                PlaybackOverlay.CornerRadius = new CornerRadius(Math.Clamp(28d * scale, 24d, 34d));
+                PlaybackOverlay.MinHeight = Math.Clamp(56d * scale, 52d, 64d);
             }
             else
             {
                 PlaybackOverlay.Padding = new Thickness(
-                    Math.Clamp(3d * scale, 2d, 5d),
-                    Math.Clamp(3.5d * scale, 3d, 6d),
-                    Math.Clamp(3d * scale, 2d, 5d),
-                    Math.Clamp(3.5d * scale, 3d, 6d));
-                PlaybackOverlay.CornerRadius = new CornerRadius(Math.Clamp(14d * scale, 12d, 18d));
+                    Math.Clamp(8d * scale, 7d, 10d),
+                    Math.Clamp(7d * scale, 6d, 9d),
+                    Math.Clamp(8d * scale, 7d, 10d),
+                    Math.Clamp(7d * scale, 6d, 9d));
+                PlaybackOverlay.CornerRadius = new CornerRadius(Math.Clamp(24d * scale, 20d, 30d));
+                PlaybackOverlay.MinHeight = Math.Clamp(42d * scale, 40d, 48d);
             }
 
             if (PlaybackProgressText != null)
             {
-                PlaybackProgressText.FontSize = Math.Clamp(11.5d * scale, 11d, 14d);
+                PlaybackProgressText.FontSize = Math.Clamp(11.2d * scale, 10.5d, 13d);
             }
 
             PlaybackProgressSlider.Height = _isPlaybackOverlayExpanded
-                ? Math.Clamp(28d * scale, 26d, 34d)
-                : Math.Clamp(26d * scale, 24d, 32d);
+                ? Math.Clamp(32d * scale, 30d, 36d)
+                : Math.Clamp(30d * scale, 28d, 34d);
 
             if (PlaybackOverlayPlayPauseButton != null)
             {
@@ -11987,13 +12105,18 @@ namespace 音乐魔盒
             {
                 PlaybackOverlayRefraction.CornerRadius = PlaybackOverlay.CornerRadius;
             }
-
         }
 
         private void PlaybackProgressSlider_PointerPressed(object sender, PointerRoutedEventArgs e)
         {
             CancelPlaybackOverlayCollapseDelay();
             _isDraggingPlaybackSlider = true;
+            _resumePlaybackAfterSliderDrag = _isPlaybackRunning;
+            if (_resumePlaybackAfterSliderDrag)
+            {
+                _playbackTimer?.Stop();
+                StopAllActivePlaybackNotes();
+            }
             _isPlaybackOverlayExpanded = true;
             UpdatePlaybackOverlayLayout();
             UpdatePlaybackOverlayScale(expanded: true, animate: true);
@@ -12009,10 +12132,10 @@ namespace 音乐魔盒
 
             double ticksPerSecond = GetPlaybackTicksPerSecondForDisplay();
             int seekTick = Math.Clamp((int)Math.Round(PlaybackProgressSlider.Value * ticksPerSecond), 0, Math.Max(0, _playbackTotalTicks));
-            bool keepRunning = _isPlaybackRunning;
-            SeekPlaybackToTick(seekTick, keepRunningIfWasRunning: keepRunning);
-            PlaybackProgressSlider.ReleasePointerCaptures();
+            bool keepRunning = _resumePlaybackAfterSliderDrag;
             _isDraggingPlaybackSlider = false;
+            _resumePlaybackAfterSliderDrag = false;
+            SeekPlaybackToTick(seekTick, keepRunningIfWasRunning: keepRunning);
             if (!_isPlaybackOverlayPointerOver)
             {
                 StartPlaybackOverlayCollapseDelay();
@@ -12026,10 +12149,11 @@ namespace 音乐魔盒
             if (PlaybackProgressSlider == null) return;
             double ticksPerSecond = GetPlaybackTicksPerSecondForDisplay();
             int seekTick = Math.Clamp((int)Math.Round(PlaybackProgressSlider.Value * ticksPerSecond), 0, Math.Max(0, _playbackTotalTicks));
-            bool keepRunning = _isPlaybackRunning;
-            SeekPlaybackToTick(seekTick, keepRunningIfWasRunning: keepRunning);
-            PlaybackProgressSlider.ReleasePointerCapture(e.Pointer);
+            bool keepRunning = _resumePlaybackAfterSliderDrag;
             _isDraggingPlaybackSlider = false;
+            _resumePlaybackAfterSliderDrag = false;
+            PlaybackProgressSlider.ReleasePointerCapture(e.Pointer);
+            SeekPlaybackToTick(seekTick, keepRunningIfWasRunning: keepRunning);
             if (!_isPlaybackOverlayPointerOver)
             {
                 StartPlaybackOverlayCollapseDelay();
@@ -12045,9 +12169,6 @@ namespace 音乐魔盒
 
             if (!_isDraggingPlaybackSlider)
             {
-                // Fallback path: some slider interactions can fire ValueChanged without a stable drag pointer sequence.
-                // Seek immediately to avoid the thumb snapping back during playback.
-                SeekPlaybackToTick(newTick, keepRunningIfWasRunning: _isPlaybackRunning);
                 return;
             }
 
@@ -12081,11 +12202,8 @@ namespace 音乐魔盒
 
         private void PlaybackVolumeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
-            _playbackVolume = Math.Clamp(e.NewValue / 100d, 0d, 1.6d);
-            if (PlaybackOverlayVolumeButton != null)
-            {
-                ToolTipService.SetToolTip(PlaybackOverlayVolumeButton, $"音量 {(int)Math.Round(_playbackVolume * 100d)}%");
-            }
+            _playbackVolume = Math.Clamp(e.NewValue / 100d, 0d, 1d);
+            UpdatePlaybackVolumeToolTip();
         }
 
         private static string FormatPlaybackTime(double seconds)
@@ -12255,7 +12373,7 @@ namespace 音乐魔盒
             {
                 item.IsChecked = false;
             }
-            _viewModel?.SetStatus("区域选择已改为默认拖拽触发（按住鼠标拖动即可）");
+            _viewModel?.SetStatus("\u533a\u57df\u9009\u62e9\u5df2\u6539\u4e3a\u9ed8\u8ba4\u62d6\u62fd\u89e6\u53d1\uff08\u6309\u4f4f\u9f20\u6807\u62d6\u52a8\u5373\u53ef\uff09\u3002");
             StaffCanvas.Invalidate();
             SwitchToNoNoteLengthIfNeeded();
         }
@@ -12368,7 +12486,7 @@ namespace 音乐魔盒
                     break;
                 case "area_select":
                     _isSelectingRect = false;
-                    _viewModel?.SetStatus("区域选择已改为默认拖拽触发");
+                    _viewModel?.SetStatus("\u533a\u57df\u9009\u62e9\u5df2\u6539\u4e3a\u9ed8\u8ba4\u62d6\u62fd\u89e6\u53d1\u3002");
                     StaffCanvas.Invalidate();
                     break;
             }
@@ -12440,7 +12558,7 @@ namespace 音乐魔盒
             }
             catch (Exception ex)
             {
-                viewModel.SetStatus($"打开失败: {ex.Message}");
+                viewModel.SetStatus($"鎵撳紑澶辫触: {ex.Message}");
             }
         }
 
@@ -12493,7 +12611,7 @@ namespace 音乐魔盒
             }
             catch (Exception ex)
             {
-                viewModel.SetStatus($"导入失败: {ex.Message}");
+                viewModel.SetStatus($"瀵煎叆澶辫触: {ex.Message}");
             }
         }
 
@@ -12522,7 +12640,7 @@ namespace 音乐魔盒
             int contentMeasureCount = GetContentMeasureCount(GetMeasureTicks());
             int measureCountByRows = Math.Max(1, _systemMeasureCounts.Sum());
             _manualMeasureCount = Math.Max(contentMeasureCount, measureCountByRows);
-            _viewModel?.SetStatus($"已增加额外谱表行: {_manualAdditionalSystems}");
+            _viewModel?.SetStatus($"宸插鍔犻澶栬氨琛ㄨ: {_manualAdditionalSystems}");
             PushHistorySnapshot();
             SwitchToNoNoteLengthIfNeeded();
         }
@@ -12538,7 +12656,7 @@ namespace 音乐魔盒
             if (_viewModel == null) return;
             if (_isPreparingPrintPreview)
             {
-                _viewModel.SetStatus("正在准备打印，请稍候...");
+                _viewModel.SetStatus("姝ｅ湪鍑嗗鎵撳嵃锛岃绋嶅€?..");
                 return;
             }
 
@@ -12546,18 +12664,18 @@ namespace 音乐魔盒
             {
                 if (App.MainWindow == null) return;
                 _isPreparingPrintPreview = true;
-                ShowPrintBusyOverlay("正在准备打印预览...");
+                ShowPrintBusyOverlay("姝ｅ湪鍑嗗鎵撳嵃棰勮...");
                 await System.Threading.Tasks.Task.Delay(50);
                 EnsurePrintManager();
                 await PreparePrintPageAsync();
                 HidePrintBusyOverlay();
                 IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
                 await PrintManagerInterop.ShowPrintUIForWindowAsync(hwnd);
-                _viewModel.SetStatus("已打开系统打印选项");
+                _viewModel.SetStatus("宸叉墦寮€绯荤粺鎵撳嵃閫夐」");
             }
             catch (Exception ex)
             {
-                _viewModel.SetStatus($"打开打印选项失败: {ex.Message}");
+                _viewModel.SetStatus($"鎵撳紑鎵撳嵃閫夐」澶辫触: {ex.Message}");
             }
             finally
             {
@@ -12570,7 +12688,7 @@ namespace 音乐魔盒
         {
             if (PrintBusyTitleText != null)
             {
-                PrintBusyTitleText.Text = string.IsNullOrWhiteSpace(title) ? "正在准备打印预览..." : title;
+                PrintBusyTitleText.Text = string.IsNullOrWhiteSpace(title) ? "姝ｅ湪鍑嗗鎵撳嵃棰勮..." : title;
             }
 
             if (PrintBusyProgressBar != null)
@@ -12921,7 +13039,7 @@ namespace 音乐魔盒
             }
             catch (Exception ex)
             {
-                _viewModel?.SetStatus($"打印预览生成失败: {ex.Message}");
+                _viewModel?.SetStatus($"鎵撳嵃棰勮鐢熸垚澶辫触: {ex.Message}");
                 _pendingPrintPages.Clear();
                 _pendingPrintPages.Add(new Grid
                 {
@@ -13037,7 +13155,7 @@ namespace 音乐魔盒
 
         private void PrintManager_PrintTaskRequested(PrintManager sender, PrintTaskRequestedEventArgs args)
         {
-            args.Request.CreatePrintTask("音乐魔盒", sourceArgs =>
+            args.Request.CreatePrintTask("闊充箰榄旂洅", sourceArgs =>
             {
                 if (_printDocumentSource != null)
                 {
@@ -13226,7 +13344,7 @@ namespace 音乐魔盒
             else
             {
                 int boundary = GetNearestMeasureBoundaryIndexForTick(insertTick);
-                _viewModel.SetStatus($"已在第{Math.Max(1, boundary + 1)}小节起始处插入拍号 {numerator}/{denominator}");
+                _viewModel.SetStatus($"\u5df2\u5728\u7b2c {Math.Max(1, boundary + 1)} \u5c0f\u8282\u8d77\u59cb\u5904\u63d2\u5165\u62cd\u53f7 {numerator}/{denominator}");
             }
             MarkProjectChanged();
             StaffCanvas.Invalidate();
@@ -13248,7 +13366,7 @@ namespace 音乐魔盒
                 else
                 {
                     int boundary = GetNearestMeasureBoundaryIndexForTick(insertTick);
-                    _viewModel.SetStatus($"已在第{Math.Max(1, boundary + 1)}小节起始处插入调号");
+                    _viewModel.SetStatus($"\u5df2\u5728\u7b2c {Math.Max(1, boundary + 1)} \u5c0f\u8282\u8d77\u59cb\u5904\u63d2\u5165\u8c03\u53f7");
                 }
                 MarkProjectChanged();
                 StaffCanvas.Invalidate();
@@ -13301,7 +13419,7 @@ namespace 音乐魔盒
                 _autoMeasuresPerSystem = GetDefaultMeasuresPerSystemForTimeSignature(_viewModel?.TimeSigNumerator ?? 4, _viewModel?.TimeSigDenominator ?? 4);
                 _systemMeasureCounts.Clear();
                 _barlineOffsets.Clear();
-                _viewModel?.SetStatus("每行小节数已设为自动");
+                _viewModel?.SetStatus("姣忚灏忚妭鏁板凡璁句负鑷姩");
             }
             else if (int.TryParse(tag, out int perSystem))
             {
@@ -13309,7 +13427,7 @@ namespace 音乐魔盒
                 int measureTicks = GetMeasureTicks();
                 int desiredTotal = GetFixedModeTotalMeasureCount(measureTicks, _displayMeasuresPerSystemOverride);
                 EnsureFixedSystemMeasureCounts(_displayMeasuresPerSystemOverride, desiredTotal);
-                _viewModel?.SetStatus($"每行小节数已设为 {_displayMeasuresPerSystemOverride}");
+                _viewModel?.SetStatus($"姣忚灏忚妭鏁板凡璁句负 {_displayMeasuresPerSystemOverride}");
             }
             else
             {
@@ -13332,8 +13450,8 @@ namespace 音乐魔盒
             _barlineOffsets.Clear();
             HideMeasureEditPanel();
             _viewModel?.SetStatus(_allowAutoMeasureRatioAdjust
-                ? "已开启自动调整比例"
-                : "已关闭自动调整比例");
+                ? "\u5df2\u5f00\u542f\u81ea\u52a8\u8c03\u6574\u6bd4\u4f8b"
+                : "\u5df2\u5173\u95ed\u81ea\u52a8\u8c03\u6574\u6bd4\u4f8b");
             StaffCanvas.Invalidate();
         }
 
@@ -13451,7 +13569,10 @@ namespace 音乐魔盒
             }
 
             bool restMode = _isRestInputMode;
-            DurationModeStateText.Text = restMode ? "休止符" : "音符";
+            bool isEnglish = AppSettingsService.Instance.ResolveLanguageTag().StartsWith("en", StringComparison.OrdinalIgnoreCase);
+            DurationModeStateText.Text = restMode
+                ? (isEnglish ? "Rest" : LocalizationService.Translate("editor.duration_mode.rest"))
+                : (isEnglish ? "Note" : LocalizationService.Translate("editor.duration_mode.note"));
             DurationModeStateText.Opacity = restMode ? 0.95 : 0.88;
         }
 
@@ -13511,6 +13632,10 @@ namespace 音乐魔盒
         }
     }
 }
+
+
+
+
 
 
 

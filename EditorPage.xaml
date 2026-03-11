@@ -110,9 +110,9 @@
                                         <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Label" Storyboard.TargetProperty="Foreground">
                                             <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource SystemControlHighlightAccentBrush}"/>
                                         </ObjectAnimationUsingKeyFrames>
-                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Label" Storyboard.TargetProperty="FontWeight">
-                                            <DiscreteObjectKeyFrame KeyTime="0" Value="SemiBold"/>
-                                        </ObjectAnimationUsingKeyFrames>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Label" Storyboard.TargetProperty="FontWeight">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="Normal"/>
+                                            </ObjectAnimationUsingKeyFrames>
                                         <ObjectAnimationUsingKeyFrames Storyboard.TargetName="Label" Storyboard.TargetProperty="TextDecorations">
                                             <DiscreteObjectKeyFrame KeyTime="0" Value="Underline"/>
                                         </ObjectAnimationUsingKeyFrames>
@@ -228,16 +228,12 @@
                  IsHitTestVisible="False">
             <MenuBarItem x:Name="FileMenu" Title="文件" Visibility="Collapsed">
                 <MenuFlyoutItem x:Name="FileNewMenuItem" Text="新建" Click="NewMenuItem_Click"/>
-                <MenuFlyoutItem x:Name="FileOpenMenuItem" Text="打开" Click="OpenMenuItem_Click"/>
-                <MenuFlyoutItem x:Name="FileSaveMenuItem" Text="保存" Click="SaveMenuItem_Click"/>
-                <MenuFlyoutItem x:Name="FileSaveAsMenuItem" Text="另存为" Click="SaveAsMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutItem x:Name="FileImportMusicXmlMenuItem" Text="导入 MusicXML" Click="ImportMusicXmlMenuItem_Click"/>
                 <MenuFlyoutItem x:Name="FileExportMusicXmlMenuItem" Text="导出 MusicXML" Click="ExportMusicXmlMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
                 <MenuFlyoutItem x:Name="FilePrintMenuItem" Text="打印..." Click="PrintMenuItem_Click"/>
-            </MenuBarItem>
-            <MenuBarItem x:Name="TimeSignatureMenu" Title="拍号" Visibility="Collapsed">
+            </MenuBarItem><MenuBarItem x:Name="TimeSignatureMenu" Title="拍号" Visibility="Collapsed">
                 <RadioMenuFlyoutItem Text="2/4" Tag="2/4" GroupName="TimeSignature" Click="TimeSignatureMenuItem_Click"/>
                 <RadioMenuFlyoutItem Text="3/4" Tag="3/4" GroupName="TimeSignature" Click="TimeSignatureMenuItem_Click"/>
                 <RadioMenuFlyoutItem Text="4/4" Tag="4/4" GroupName="TimeSignature" Click="TimeSignatureMenuItem_Click"/>
@@ -419,46 +415,50 @@
                                        VerticalAlignment="Center"
                                        FontWeight="SemiBold"
                                        Margin="2,0,4,0"/>
-                                <StackPanel x:Name="NoteLengthButtons" Orientation="Horizontal" Spacing="0">
+                                <StackPanel x:Name="NoteLengthButtons" Orientation="Horizontal" Spacing="4">
                                     <RadioButton Style="{StaticResource SegmentedRadioButtonStyle}"
                                                  Content="无"
                                                  Tag="None"
                                                  GroupName="NoteLength"
-                                                 CornerRadius="6,0,0,6"
+                                                 CornerRadius="8"
                                                  Checked="NoteLengthButton_Checked"/>
                                     <RadioButton Style="{StaticResource SegmentedRadioButtonStyle}"
                                                  Content="全音符"
                                                  Tag="Whole"
                                                  GroupName="NoteLength"
+                                                 CornerRadius="8"
                                                  Checked="NoteLengthButton_Checked"/>
                                     <RadioButton Style="{StaticResource SegmentedRadioButtonStyle}"
                                                  Content="二分"
                                                  Tag="Half"
                                                  GroupName="NoteLength"
+                                                 CornerRadius="8"
                                                  Checked="NoteLengthButton_Checked"/>
                                     <RadioButton Style="{StaticResource SegmentedRadioButtonStyle}"
                                                   Content="四分"
                                                   Tag="Quarter"
                                                   GroupName="NoteLength"
+                                                  CornerRadius="8"
                                                   Checked="NoteLengthButton_Checked"/>
                                     <RadioButton Style="{StaticResource SegmentedRadioButtonStyle}"
                                                   Content="八分"
                                                   Tag="Eighth"
                                                   GroupName="NoteLength"
+                                                  CornerRadius="8"
                                                   Checked="NoteLengthButton_Checked"/>
                                      <RadioButton Style="{StaticResource SegmentedRadioButtonStyle}"
                                                    Content="十六分"
                                                    Tag="Sixteenth"
                                                    GroupName="NoteLength"
                                                    Padding="11,6"
-                                                   CornerRadius="0"
+                                                   CornerRadius="8"
                                                    Checked="NoteLengthButton_Checked"/>
                                       <RadioButton Style="{StaticResource SegmentedRadioButtonStyle}"
                                                    Content="三十二分"
                                                    Tag="ThirtySecond"
                                                    GroupName="NoteLength"
                                                    Padding="11,6"
-                                                   CornerRadius="0"
+                                                   CornerRadius="8"
                                                    Checked="NoteLengthButton_Checked"/>
                                       <Border BorderBrush="{ThemeResource SystemControlForegroundBaseLowBrush}" BorderThickness="0" Margin="3,0,0,0">
                                           <Button x:Name="NoteTypeButton"
@@ -466,6 +466,7 @@
                                                   MinWidth="38"
                                                   Padding="8,0"
                                                   Height="26"
+                                                  CornerRadius="8"
                                                   Background="Transparent"
                                                   BorderThickness="0"
                                                   FontSize="16"
@@ -581,7 +582,7 @@
                           SizeChanged="ScoreScrollViewer_SizeChanged"
                           VerticalAlignment="Stretch"
                           Background="Transparent"
-                          CornerRadius="0"
+                          CornerRadius="8"
                           BorderThickness="0"
                           BorderBrush="Transparent"
                           Padding="0">
@@ -794,7 +795,7 @@
                     Background="{ThemeResource PlaybackOverlayAcrylicBrush}"
                     BorderBrush="Transparent"
                     BorderThickness="0"
-                    CornerRadius="18"
+                    CornerRadius="24"
                     Translation="0,0,24"
                     RenderTransformOrigin="0.5,1"
                     Shadow="{StaticResource ToolbarShadow}"
@@ -827,7 +828,7 @@
                             HorizontalAlignment="Stretch"
                             VerticalAlignment="Stretch"
                             Background="#00FFFFFF"
-                            CornerRadius="18"
+                            CornerRadius="24"
                             Opacity="1.00"
                             BorderBrush="Transparent"
                             BorderThickness="0"
@@ -835,7 +836,7 @@
                     <TextBlock x:Name="PlaybackProgressText"
                                Grid.Column="0"
                                VerticalAlignment="Center"
-                               Margin="4,-2,3,1"
+                               Margin="4,0,3,0"
                                RenderTransformOrigin="0.5,0.5"
                                FontSize="12"
                                Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
@@ -848,27 +849,25 @@
                     </TextBlock>
                     <Slider x:Name="PlaybackProgressSlider"
                             Grid.Column="1"
-                            Height="24"
-                            Margin="2,-1,2,0"
-                            Padding="10,0,10,0"
+                            Height="32"
+                            Margin="4,2,4,2"
+                            Padding="8,0,8,0"
                             Minimum="0"
                             Maximum="1"
                             Value="0"
                             SmallChange="0.05"
                             StepFrequency="0.001"
-                            MinWidth="240"
+                            MinWidth="220"
                             HorizontalAlignment="Stretch"
                             VerticalAlignment="Center"
-                            ValueChanged="PlaybackProgressSlider_ValueChanged"
-                            PointerPressed="PlaybackProgressSlider_PointerPressed"
-                            PointerReleased="PlaybackProgressSlider_PointerReleased"
-                            PointerCaptureLost="PlaybackProgressSlider_PointerCaptureLost"/>
+                            ValueChanged="PlaybackProgressSlider_ValueChanged"/>
                     <Button x:Name="PlaybackOverlayPlayPauseButton"
                             Grid.Column="2"
                             Width="32"
                             Height="32"
                             Margin="0"
                             Padding="0"
+                            VerticalAlignment="Center"
                             Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
                             BorderBrush="Transparent"
                             BorderThickness="0"
@@ -888,6 +887,7 @@
                             Height="32"
                             Margin="0"
                             Padding="0"
+                            VerticalAlignment="Center"
                             Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
                             BorderBrush="Transparent"
                             BorderThickness="0"
@@ -905,30 +905,50 @@
                             Margin="0"
                             Padding="0"
                             Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
+                            VerticalAlignment="Center"
                             BorderBrush="Transparent"
                             BorderThickness="0"
                             Background="Transparent"
                             CornerRadius="16">
                         <Button.Flyout>
                             <Flyout Placement="TopEdgeAlignedRight">
-                                <Border Width="188"
-                                        Padding="10,8"
-                                        Background="{ThemeResource PlaybackOverlayAcrylicBrush}"
-                                        BorderBrush="Transparent"
-                                        BorderThickness="0"
-                                        CornerRadius="28">
+                                <Grid MinWidth="232"
+                                      ColumnSpacing="8"
+                                      Padding="0" Margin="-8,-6,-10,-8"
+                                      VerticalAlignment="Center">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <FontIcon Grid.Column="0"
+                                              Glyph="&#xE767;"
+                                              FontFamily="Segoe Fluent Icons"
+                                              FontSize="15"
+                                              VerticalAlignment="Center"/>
                                     <Slider x:Name="PlaybackVolumeSlider"
-                                            Width="168"
+                                            Grid.Column="1"
                                             Minimum="0"
-                                            Maximum="160"
-                                            Value="128"
-                                            SmallChange="4"
+                                            Maximum="100"
+                                            Value="80"
+                                            SmallChange="2"
                                             StepFrequency="1"
+                                            Height="32"
+                                            MinWidth="156"
+                                            VerticalAlignment="Center"
                                             ValueChanged="PlaybackVolumeSlider_ValueChanged"/>
-                                </Border>
+                                    <TextBlock x:Name="PlaybackVolumeValueText"
+                                               Grid.Column="2"
+                                               MinWidth="24"
+                                               VerticalAlignment="Center"
+                                               Text="80"
+                                               FontSize="14"/>
+                                </Grid>
                             </Flyout>
                         </Button.Flyout>
-                        <SymbolIcon Symbol="Volume"/>
+                        <FontIcon Glyph="&#xE767;"
+                                  FontFamily="Segoe Fluent Icons"
+                                  FontSize="15"/>
                     </Button>
                 </Grid>
             </Border>
@@ -978,6 +998,16 @@
         </Grid.KeyboardAccelerators>
     </Grid>
 </Page>
+
+
+
+
+
+
+
+
+
+
 
 
 

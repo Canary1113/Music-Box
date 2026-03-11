@@ -32,12 +32,12 @@
             <Grid Padding="48,24,48,24">
                 <StackPanel Spacing="12">
                     <TextBlock x:Name="PageTitleText"
-                               Text="设置"
+                               Text="Settings"
                                FontSize="24"
                                FontWeight="SemiBold"/>
 
                     <TextBlock x:Name="PersonalizationTitleText"
-                               Text="个性化"
+                               Text="Personalization"
                                Style="{ThemeResource SubtitleTextBlockStyle}"
                                FontSize="14"/>
 
@@ -66,13 +66,13 @@
                                           VerticalAlignment="Center"/>
 
                                 <StackPanel Grid.Column="1" Spacing="2">
-                                    <TextBlock x:Name="ThemeTitleText" Text="主题"/>
-                                    <TextBlock x:Name="ThemeDescText" Text="选择应用的外观主题" Style="{StaticResource SettingDescStyle}"/>
+                                    <TextBlock x:Name="ThemeTitleText" Text="Theme"/>
+                                    <TextBlock x:Name="ThemeDescText" Text="Choose app appearance theme" Style="{StaticResource SettingDescStyle}"/>
                                 </StackPanel>
 
                                 <TextBlock x:Name="ThemeSummaryText"
                                            Grid.Column="2"
-                                           Text="使用系统设置"
+                                           Text="Use system setting"
                                            VerticalAlignment="Center"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </Grid>
@@ -82,19 +82,19 @@
                             <StackPanel Spacing="8" Margin="48,10,0,10" HorizontalAlignment="Stretch">
                                 <RadioButton x:Name="ThemeSystemRadio"
                                              GroupName="ThemeGroup"
-                                             Content="使用系统设置"
+                                             Content="Use system setting"
                                              HorizontalAlignment="Left"
                                              Checked="ThemeRadio_Checked"/>
 
                                 <RadioButton x:Name="ThemeLightRadio"
                                              GroupName="ThemeGroup"
-                                             Content="浅色"
+                                             Content="Light"
                                              HorizontalAlignment="Left"
                                              Checked="ThemeRadio_Checked"/>
 
                                 <RadioButton x:Name="ThemeDarkRadio"
                                              GroupName="ThemeGroup"
-                                             Content="深色"
+                                             Content="Dark"
                                              HorizontalAlignment="Left"
                                              Checked="ThemeRadio_Checked"/>
                             </StackPanel>
@@ -114,8 +114,8 @@
                                       VerticalAlignment="Center"/>
 
                             <StackPanel Grid.Column="1" Spacing="2">
-                                <TextBlock x:Name="LanguageTitleText" Text="语言"/>
-                                <TextBlock x:Name="LanguageDescText" Text="切换界面显示语言" Style="{StaticResource SettingDescStyle}"/>
+                                <TextBlock x:Name="LanguageTitleText" Text="Language"/>
+                                <TextBlock x:Name="LanguageDescText" Text="Change display language" Style="{StaticResource SettingDescStyle}"/>
                             </StackPanel>
 
                             <StackPanel Grid.Column="2" HorizontalAlignment="Right" Spacing="4">
@@ -123,8 +123,8 @@
                                           MinWidth="140"
                                           HorizontalAlignment="Right"
                                           SelectionChanged="LanguageComboBox_SelectionChanged">
-                                    <ComboBoxItem Tag="system" Content="跟随系统"/>
-                                    <ComboBoxItem Tag="zh-Hans" Content="简体中文"/>
+                                    <ComboBoxItem Tag="system" Content="Use system setting"/>
+                                    <ComboBoxItem Tag="zh-Hans" Content="Chinese (Simplified)"/>
                                     <ComboBoxItem Tag="en-US" Content="English"/>
                                 </ComboBox>
                                 <TextBlock x:Name="LanguageStatusText"
@@ -136,10 +136,40 @@
                     </Border>
 
                     <TextBlock x:Name="AboutSectionTitleText"
-                               Text="软件信息"
+                               Text="About"
                                Style="{ThemeResource SubtitleTextBlockStyle}"
                                FontSize="14"
                                Margin="0,10,0,0"/>
+
+                    <Border Style="{StaticResource SettingCardBorderStyle}" CornerRadius="5">
+                        <Grid Style="{StaticResource SettingHeaderGridStyle}" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <FontIcon FontFamily="Segoe MDL2 Assets"
+                                      Glyph="&#xE7FC;"
+                                      VerticalAlignment="Center"/>
+
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock x:Name="LabsTitleText" Text="Experimental Features"/>
+                                <TextBlock x:Name="LabsDescText"
+                                           Text="Show unfinished features such as the Recognize page"
+                                           Style="{StaticResource SettingDescStyle}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <ToggleSwitch x:Name="ExperimentalFeaturesToggleSwitch"
+                                          Grid.Column="2"
+                                          Header=""
+                                          Margin="0,0,-14,0"
+                                          HorizontalAlignment="Right"
+                                          VerticalAlignment="Center"
+                                          Toggled="ExperimentalFeaturesToggleSwitch_Toggled"/>
+                        </Grid>
+                    </Border>
 
                     <Expander x:Name="AboutExpander"
                               HorizontalAlignment="Stretch"
@@ -166,9 +196,9 @@
                                           Glyph="&#xE946;"
                                           VerticalAlignment="Center"/>
 
-                                <TextBlock x:Name="AboutTitleText"
+                                <TextBlock x:Name="AboutHeaderText"
                                            Grid.Column="1"
-                                           Text="软件信息"
+                                           Text="Music Box"
                                            VerticalAlignment="Center"/>
                             </Grid>
                         </Expander.Header>
@@ -183,81 +213,65 @@
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
-                                <TextBlock x:Name="AboutNameLabelText"
-                                           Grid.Row="0"
-                                           Grid.Column="0"
-                                           Text="软件名"
-                                           FontSize="13"
-                                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
-                                <TextBlock x:Name="AboutNameValueText"
-                                           Grid.Row="0"
-                                           Grid.Column="1"
-                                           Text="音乐魔盒"
-                                           FontSize="13"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-
                                 <TextBlock x:Name="AboutVersionLabelText"
-                                           Grid.Row="1"
+                                           Grid.Row="0"
                                            Grid.Column="0"
-                                           Text="版本号"
+                                           Text="Version"
                                            FontSize="13"
                                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
                                 <TextBlock x:Name="AboutVersionValueText"
-                                           Grid.Row="1"
+                                           Grid.Row="0"
                                            Grid.Column="1"
                                            Text="--"
                                            FontSize="13"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
 
                                 <TextBlock x:Name="AboutBuildLabelText"
-                                           Grid.Row="2"
+                                           Grid.Row="1"
                                            Grid.Column="0"
-                                           Text="构建时间"
+                                           Text="Build Number"
                                            FontSize="13"
                                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
                                 <TextBlock x:Name="AboutBuildValueText"
-                                           Grid.Row="2"
+                                           Grid.Row="1"
                                            Grid.Column="1"
                                            Text="--"
                                            FontSize="13"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
 
                                 <TextBlock x:Name="AboutAuthorLabelText"
-                                           Grid.Row="3"
+                                           Grid.Row="2"
                                            Grid.Column="0"
-                                           Text="作者"
+                                           Text="Author"
                                            FontSize="13"
                                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
                                 <TextBlock x:Name="AboutAuthorValueText"
-                                           Grid.Row="3"
+                                           Grid.Row="2"
                                            Grid.Column="1"
-                                           Text="蜇人鱼"
+                                           Text="Rylan"
                                            FontSize="13"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-
-                                <TextBlock x:Name="AboutEmailLabelText"
-                                           Grid.Row="4"
-                                           Grid.Column="0"
-                                           Text="邮箱"
-                                           FontSize="13"
-                                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
-                                <TextBlock x:Name="AboutEmailValueText"
-                                           Grid.Row="4"
-                                           Grid.Column="1"
-                                           Text="y-zheren1@outlook.com"
-                                           FontSize="13"
-                                           TextWrapping="Wrap"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </Grid>
                         </Expander.Content>
                     </Expander>
+
+                    <StackPanel Spacing="4" Margin="0,6,0,0">
+                        <TextBlock x:Name="WarningTitleText"
+                                   Text="⚠️ Work in Progress"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"/>
+                        <TextBlock x:Name="WarningBodyText"
+                                   Text="This project is currently under active development and some features may be incomplete or unstable."
+                                   Style="{StaticResource SettingDescStyle}"
+                                   TextWrapping="WrapWholeWords"/>
+                    </StackPanel>
                 </StackPanel>
             </Grid>
         </ScrollViewer>
     </Grid>
 </Page>
+
+
 

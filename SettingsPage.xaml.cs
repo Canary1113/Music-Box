@@ -3,7 +3,6 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using System;
 using System.Diagnostics;
-using System.IO;
 using 音乐魔盒.Services;
 using 音乐魔盒.ViewModels;
 
@@ -56,6 +55,7 @@ namespace 音乐魔盒
         private void Settings_SettingsChanged(object? sender, EventArgs e)
         {
             SyncControls();
+            ApplyLocalizedText();
         }
 
         private void SyncControls()
@@ -63,18 +63,20 @@ namespace 音乐魔盒
             _syncing = true;
             try
             {
-                var preference = _settings.ThemePreference switch
+                AppThemePreference preference = _settings.ThemePreference switch
                 {
                     AppThemePreference.Light => AppThemePreference.Light,
                     AppThemePreference.Dark => AppThemePreference.Dark,
                     _ => AppThemePreference.System
                 };
+
                 ThemeSystemRadio.IsChecked = preference == AppThemePreference.System;
                 ThemeLightRadio.IsChecked = preference == AppThemePreference.Light;
                 ThemeDarkRadio.IsChecked = preference == AppThemePreference.Dark;
+                ExperimentalFeaturesToggleSwitch.IsOn = _settings.ExperimentalFeaturesEnabled;
 
                 string targetLang = _settings.LanguageTag;
-                foreach (var obj in LanguageComboBox.Items)
+                foreach (object obj in LanguageComboBox.Items)
                 {
                     if (obj is ComboBoxItem item
                         && string.Equals(item.Tag?.ToString(), targetLang, StringComparison.OrdinalIgnoreCase))
@@ -93,67 +95,80 @@ namespace 音乐魔盒
 
         private void ApplyLocalizedText()
         {
-            PageTitleText.Text = LocalizationService.Translate("settings.page_title");
-            PersonalizationTitleText.Text = LocalizationService.Translate("settings.section.personalization");
-            ThemeTitleText.Text = LocalizationService.Translate("settings.theme");
-            LanguageTitleText.Text = LocalizationService.Translate("settings.language");
-            AboutSectionTitleText.Text = LocalizationService.Translate("settings.section.about");
-            AboutTitleText.Text = LocalizationService.Translate("settings.section.about");
-            AboutNameLabelText.Text = LocalizationService.Translate("settings.about.name");
-            AboutVersionLabelText.Text = LocalizationService.Translate("settings.about.version");
-            AboutBuildLabelText.Text = LocalizationService.Translate("settings.about.build");
-            AboutAuthorLabelText.Text = LocalizationService.Translate("settings.about.author");
-            AboutEmailLabelText.Text = LocalizationService.Translate("settings.about.email");
+            bool isEnglish = IsEnglishUi();
+            AppBuildInfo buildInfo = AppBuildInfoService.GetCurrent();
 
-            ThemeSystemRadio.Content = LocalizationService.Translate("settings.theme.system");
-            ThemeLightRadio.Content = LocalizationService.Translate("settings.theme.light");
-            ThemeDarkRadio.Content = LocalizationService.Translate("settings.theme.dark");
-            bool isEnglish = _settings.ResolveLanguageTag().StartsWith("en", StringComparison.OrdinalIgnoreCase);
-            ThemeDescText.Text = isEnglish ? "Choose app appearance theme" : "选择应用的外观主题";
-            LanguageDescText.Text = isEnglish ? "Change display language" : "切换界面显示语言";
+            PageTitleText.Text = isEnglish ? "Settings" : "\u8bbe\u7f6e";
+            PersonalizationTitleText.Text = isEnglish ? "Personalization" : "\u4e2a\u6027\u5316";
+            ThemeTitleText.Text = isEnglish ? "Theme" : "\u4e3b\u9898";
+            ThemeDescText.Text = isEnglish ? "Choose app appearance theme" : "\u9009\u62e9\u5e94\u7528\u7684\u5916\u89c2\u4e3b\u9898";
+            ThemeSystemRadio.Content = isEnglish ? "Use system setting" : "\u8ddf\u968f\u7cfb\u7edf";
+            ThemeLightRadio.Content = isEnglish ? "Light" : "\u6d45\u8272";
+            ThemeDarkRadio.Content = isEnglish ? "Dark" : "\u6df1\u8272";
+            UpdateThemeSummaryText(isEnglish);
 
-            foreach (var obj in LanguageComboBox.Items)
+            LanguageTitleText.Text = isEnglish ? "Language" : "\u8bed\u8a00";
+            LanguageDescText.Text = isEnglish ? "Change display language" : "\u5207\u6362\u754c\u9762\u663e\u793a\u8bed\u8a00";
+            AboutSectionTitleText.Text = isEnglish ? "About" : "\u5173\u4e8e";
+
+            LabsTitleText.Text = isEnglish ? "Experimental Features" : "\u5b9e\u9a8c\u5ba4\u529f\u80fd";
+            LabsDescText.Text = isEnglish
+                ? "Show unfinished features such as the Recognize page"
+                : "\u663e\u793a\u4ecd\u5728\u5f00\u53d1\u4e2d\u7684\u529f\u80fd\uff0c\u4f8b\u5982\u8bc6\u522b\u9875";
+            ExperimentalFeaturesToggleSwitch.OnContent = isEnglish ? "On" : "\u5f00";
+            ExperimentalFeaturesToggleSwitch.OffContent = isEnglish ? "Off" : "\u5173";
+
+            foreach (object obj in LanguageComboBox.Items)
             {
-                if (obj is not ComboBoxItem item) continue;
+                if (obj is not ComboBoxItem item)
+                {
+                    continue;
+                }
+
                 string tag = item.Tag?.ToString() ?? string.Empty;
                 item.Content = tag switch
                 {
-                    "system" => LocalizationService.Translate("settings.language.system"),
-                    "zh-Hans" => LocalizationService.Translate("settings.language.zh"),
-                    "en-US" => LocalizationService.Translate("settings.language.en"),
+                    "system" => isEnglish ? "Use system setting" : "\u8ddf\u968f\u7cfb\u7edf",
+                    "zh-Hans" => isEnglish ? "Chinese (Simplified)" : "\u7b80\u4f53\u4e2d\u6587",
+                    "en-US" => "English",
                     _ => tag
                 };
             }
 
-            AboutNameValueText.Text = LocalizationService.Translate("settings.about.name");
-            AboutVersionValueText.Text = GetVersionString();
-            AboutBuildValueText.Text = GetBuildDateString();
-            AboutAuthorValueText.Text = "蜇人鱼";
-            AboutEmailValueText.Text = "y-zheren1@outlook.com";
+            AboutHeaderText.Text = isEnglish ? "Music Box" : "\u97f3\u4e50\u9b54\u76d2\uff08Music Box\uff09";
+            AboutVersionLabelText.Text = isEnglish ? "Version" : "\u7248\u672c\u53f7";
+            AboutBuildLabelText.Text = isEnglish ? "Build Number" : "\u6784\u5efa\u53f7";
+            AboutAuthorLabelText.Text = isEnglish ? "Author" : "\u4f5c\u8005";
+            AboutVersionValueText.Text = buildInfo.VersionDisplay;
+            AboutBuildValueText.Text = buildInfo.BuildNumber;
+            AboutAuthorValueText.Text = "Rylan";
+
+            WarningTitleText.Text = "⚠️ Work in Progress";
+            WarningBodyText.Text = "This project is currently under active development and some features may be incomplete or unstable.";
         }
 
-        private static string GetVersionString()
+        private void UpdateThemeSummaryText(bool isEnglish)
         {
-            return "26H2";
+            ThemeSummaryText.Text = _settings.ThemePreference switch
+            {
+                AppThemePreference.Light => isEnglish ? "Light" : "\u6d45\u8272",
+                AppThemePreference.Dark => isEnglish ? "Dark" : "\u6df1\u8272",
+                _ => isEnglish ? "Use system setting" : "\u8ddf\u968f\u7cfb\u7edf"
+            };
         }
 
-        private static string GetBuildDateString()
+        private bool IsEnglishUi()
         {
-            try
-            {
-                string assemblyPath = typeof(SettingsPage).Assembly.Location;
-                DateTime date = File.GetLastWriteTime(assemblyPath);
-                return date.ToString("yyyy-MM-dd HH:mm");
-            }
-            catch
-            {
-                return "--";
-            }
+            return _settings.ResolveLanguageTag().StartsWith("en", StringComparison.OrdinalIgnoreCase);
         }
 
         private void ThemeRadio_Checked(object sender, RoutedEventArgs e)
         {
-            if (_syncing) return;
+            if (_syncing)
+            {
+                return;
+            }
+
             if (ThemeLightRadio.IsChecked == true)
             {
                 _settings.ThemePreference = AppThemePreference.Light;
@@ -168,10 +183,28 @@ namespace 音乐魔盒
             }
         }
 
+        private void ExperimentalFeaturesToggleSwitch_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_syncing)
+            {
+                return;
+            }
+
+            _settings.ExperimentalFeaturesEnabled = ExperimentalFeaturesToggleSwitch.IsOn;
+        }
+
         private async void LanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (_syncing) return;
-            if (LanguageComboBox.SelectedItem is not ComboBoxItem item) return;
+            if (_syncing)
+            {
+                return;
+            }
+
+            if (LanguageComboBox.SelectedItem is not ComboBoxItem item)
+            {
+                return;
+            }
+
             string tag = item.Tag?.ToString() ?? "system";
             if (string.Equals(tag, _settings.LanguageTag, StringComparison.OrdinalIgnoreCase))
             {
@@ -197,13 +230,16 @@ namespace 音乐魔盒
                 return true;
             }
 
+            bool isEnglish = IsEnglishUi();
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = LocalizationService.Translate("settings.restart.title"),
-                Content = LocalizationService.Translate("settings.restart.content"),
-                PrimaryButtonText = LocalizationService.Translate("settings.restart.confirm"),
-                CloseButtonText = LocalizationService.Translate("settings.restart.cancel"),
+                Title = isEnglish ? "Restart Required" : "\u9700\u8981\u91cd\u542f",
+                Content = isEnglish
+                    ? "Changing display language requires a restart. Unsaved changes may be lost. Restart now?"
+                    : "\u4fee\u6539\u754c\u9762\u8bed\u8a00\u9700\u8981\u91cd\u542f\u5e94\u7528\uff0c\u672a\u4fdd\u5b58\u5185\u5bb9\u53ef\u80fd\u4e22\u5931\u3002\u73b0\u5728\u91cd\u542f\u5417\uff1f",
+                PrimaryButtonText = isEnglish ? "Restart now" : "\u7acb\u5373\u91cd\u542f",
+                CloseButtonText = isEnglish ? "Later" : "\u7a0d\u540e",
                 DefaultButton = ContentDialogButton.Close
             };
 
@@ -216,7 +252,7 @@ namespace 音乐魔盒
             _syncing = true;
             try
             {
-                foreach (var obj in LanguageComboBox.Items)
+                foreach (object obj in LanguageComboBox.Items)
                 {
                     if (obj is ComboBoxItem item
                         && string.Equals(item.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase))
@@ -254,3 +290,4 @@ namespace 音乐魔盒
         }
     }
 }
+

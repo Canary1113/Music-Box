@@ -54,9 +54,6 @@
                              Visibility="Collapsed">
                         <MenuBarItem x:Name="EditorFileMenu" Title="文件">
                             <MenuFlyoutItem Text="新建" Tag="new" Click="EditorTitleFileMenuItem_Click"/>
-                            <MenuFlyoutItem Text="打开" Tag="open" Click="EditorTitleFileMenuItem_Click"/>
-                            <MenuFlyoutItem Text="保存" Tag="save" Click="EditorTitleFileMenuItem_Click"/>
-                            <MenuFlyoutItem Text="另存为" Tag="saveas" Click="EditorTitleFileMenuItem_Click"/>
                             <MenuFlyoutSeparator/>
                             <MenuFlyoutItem Text="导入 MusicXML" Tag="import_musicxml" Click="EditorTitleFileMenuItem_Click"/>
                             <MenuFlyoutItem Text="导出 MusicXML" Tag="export_musicxml" Click="EditorTitleFileMenuItem_Click"/>
@@ -162,45 +159,45 @@
                         IsSettingsVisible="False"
                         IsPaneToggleButtonVisible="False"
                         PaneDisplayMode="Left"
-                        OpenPaneLength="74"
-                        CompactPaneLength="74"
+                        OpenPaneLength="88"
+                        CompactPaneLength="88"
                         SelectionChanged="MainNavigation_SelectionChanged">
             <NavigationView.Resources>
                 <Style x:Key="CompactNavItemStyle" TargetType="NavigationViewItem">
-                    <Setter Property="Height" Value="62"/>
-                    <Setter Property="Width" Value="74"/>
+                    <Setter Property="Height" Value="72"/>
+                    <Setter Property="Width" Value="88"/>
                     <Setter Property="Padding" Value="0"/>
-                    <Setter Property="Margin" Value="0,3"/>
+                    <Setter Property="Margin" Value="0,4"/>
                     <Setter Property="HorizontalContentAlignment" Value="Center"/>
                 </Style>
             </NavigationView.Resources>
 
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="NavEditor" Tag="editor" Style="{StaticResource CompactNavItemStyle}">
-                    <StackPanel Spacing="3" Width="72" HorizontalAlignment="Center" Margin="1,0,1,0">
+                    <StackPanel Spacing="4" Width="82" HorizontalAlignment="Center" Margin="3,0,3,0">
                         <FontIcon Glyph="&#xE70F;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="NavEditorText" Text="编辑" FontSize="7" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" TextAlignment="Center"/>
+                        <TextBlock x:Name="NavEditorText" Text="编辑" FontSize="10.5" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
                     </StackPanel>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavConvert" Tag="convert" Style="{StaticResource CompactNavItemStyle}">
-                    <StackPanel Spacing="3" Width="72" HorizontalAlignment="Center" Margin="1,0,1,0">
+                    <StackPanel Spacing="4" Width="82" HorizontalAlignment="Center" Margin="3,0,3,0">
                         <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="NavConvertText" Text="转换" FontSize="7" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" TextAlignment="Center"/>
+                        <TextBlock x:Name="NavConvertText" Text="转换" FontSize="10.5" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
                     </StackPanel>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavRecognize" Tag="recognize" Style="{StaticResource CompactNavItemStyle}">
-                    <StackPanel Spacing="3" Width="72" HorizontalAlignment="Center" Margin="1,0,1,0">
+                    <StackPanel Spacing="4" Width="82" HorizontalAlignment="Center" Margin="3,0,3,0">
                         <FontIcon Glyph="&#xE720;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="NavRecognizeText" Text="识别" FontSize="7" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" TextAlignment="Center"/>
+                        <TextBlock x:Name="NavRecognizeText" Text="识别" FontSize="10.5" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
                     </StackPanel>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>
                 <NavigationViewItem x:Name="NavSettings" Tag="settings" Style="{StaticResource CompactNavItemStyle}">
-                    <StackPanel Spacing="3" Width="72" HorizontalAlignment="Center" Margin="1,0,1,0">
+                    <StackPanel Spacing="4" Width="82" HorizontalAlignment="Center" Margin="3,0,3,0">
                         <FontIcon Glyph="&#xE713;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="NavSettingsText" Text="设置" FontSize="7" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" TextAlignment="Center"/>
+                        <TextBlock x:Name="NavSettingsText" Text="设置" FontSize="10.5" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
                     </StackPanel>
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
@@ -209,5 +206,6 @@
         </NavigationView>
     </Grid>
 </Window>
+
 
 
