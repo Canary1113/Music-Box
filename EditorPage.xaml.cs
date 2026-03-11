@@ -971,7 +971,10 @@ namespace 音乐魔盒
             _ornamentHitTargets.Clear();
             _clefHitTargets.Clear();
 
-            DrawScoreHeader(ds, topMargin);
+            if (!compactForPrintLayout)
+            {
+                DrawScoreHeader(ds, topMargin);
+            }
 
             for (int systemIndex = 0; systemIndex < systemCount; systemIndex++)
             {
@@ -12664,7 +12667,7 @@ namespace 音乐魔盒
             {
                 if (App.MainWindow == null) return;
                 _isPreparingPrintPreview = true;
-                ShowPrintBusyOverlay("姝ｅ湪鍑嗗鎵撳嵃棰勮...");
+                ShowPrintBusyOverlay();
                 await System.Threading.Tasks.Task.Delay(50);
                 EnsurePrintManager();
                 await PreparePrintPageAsync();
@@ -12684,13 +12687,8 @@ namespace 音乐魔盒
             }
         }
 
-        private void ShowPrintBusyOverlay(string title)
+        private void ShowPrintBusyOverlay()
         {
-            if (PrintBusyTitleText != null)
-            {
-                PrintBusyTitleText.Text = string.IsNullOrWhiteSpace(title) ? "姝ｅ湪鍑嗗鎵撳嵃棰勮..." : title;
-            }
-
             if (PrintBusyProgressBar != null)
             {
                 PrintBusyProgressBar.IsIndeterminate = true;
@@ -13155,7 +13153,7 @@ namespace 音乐魔盒
 
         private void PrintManager_PrintTaskRequested(PrintManager sender, PrintTaskRequestedEventArgs args)
         {
-            args.Request.CreatePrintTask("闊充箰榄旂洅", sourceArgs =>
+            args.Request.CreatePrintTask(" ", sourceArgs =>
             {
                 if (_printDocumentSource != null)
                 {

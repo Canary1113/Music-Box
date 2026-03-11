@@ -2,6 +2,12 @@
 
 Music Box is a WinUI 3 desktop application for creating, editing, and converting music scores.
 
+## Warning
+
+⚠️ This project is a work in progress.
+
+Features may be incomplete, behavior may change, and some parts of the app may still be unstable. Please expect rough edges while development is ongoing.
+
 ## Main Pages
 
 ### Editor Page
@@ -42,3 +48,4 @@ Basic workflow:
 
 - The application supports both Chinese and English UI.
 - Some features are still under active development and may change.
+- Export, conversion, and editing behavior should be treated as evolving rather than final. 🎵

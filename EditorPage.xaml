@@ -970,11 +970,7 @@
                         CornerRadius="16"
                         Translation="0,0,16"
                         Shadow="{StaticResource ToolbarShadow}">
-                    <StackPanel Spacing="10">
-                        <TextBlock x:Name="PrintBusyTitleText"
-                                   Text="正在准备打印预览..."
-                                   FontSize="16"
-                                   FontWeight="SemiBold"/>
+                    <StackPanel Spacing="0">
                         <ProgressBar x:Name="PrintBusyProgressBar"
                                      Height="6"
                                      IsIndeterminate="True"

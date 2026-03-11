@@ -16,18 +16,22 @@ namespace 音乐魔盒.Services
 
     public static class AppBuildInfoService
     {
-        public const string VersionDisplay = "26H2";
-        public const string VersionCode = "262001";
+        public const string DefaultVersionDisplay = "26H2";
+        public const string DefaultVersionCode = "262001";
 
         public static AppBuildInfo GetCurrent()
         {
             string? repoRoot = TryFindRepoRoot();
+            string versionDisplay = DefaultVersionDisplay;
+            string versionCode = DefaultVersionCode;
             string commitDate = GetFallbackCommitDate();
             string commitCount = "0";
             string commitHash = string.Empty;
+            string branchName = string.Empty;
 
             if (!string.IsNullOrWhiteSpace(repoRoot))
             {
+                branchName = RunGit(repoRoot, "rev-parse", "--abbrev-ref", "HEAD") ?? string.Empty;
                 commitDate = RunGit(repoRoot, "log", "-1", "--date=format:%m%d", "--format=%cd") ?? commitDate;
                 commitCount = RunGit(repoRoot, "rev-list", "--count", "HEAD") ?? commitCount;
                 commitHash = RunGit(repoRoot, "rev-parse", "--short=8", "HEAD") ?? string.Empty;
@@ -35,12 +39,19 @@ namespace 音乐魔盒.Services
 
             commitDate = NormalizeCommitDate(commitDate);
             commitCount = NormalizeCommitCount(commitCount);
-            string buildNumber = $"{VersionCode}.{commitDate}{commitCount}";
+            string buildNumber = $"{versionCode}.{commitDate}{commitCount}";
+
+            if (TryParseBranchVersion(branchName, out string branchVersionDisplay, out string branchVersionCode, out string branchBuildNumber))
+            {
+                versionDisplay = branchVersionDisplay;
+                versionCode = branchVersionCode;
+                buildNumber = branchBuildNumber;
+            }
 
             return new AppBuildInfo
             {
-                VersionDisplay = VersionDisplay,
-                VersionCode = VersionCode,
+                VersionDisplay = versionDisplay,
+                VersionCode = versionCode,
                 BuildNumber = buildNumber,
                 CommitHash = commitHash
             };
@@ -166,6 +177,40 @@ namespace 音乐魔盒.Services
         {
             string digits = new string((raw ?? string.Empty).Where(char.IsDigit).ToArray());
             return string.IsNullOrWhiteSpace(digits) ? "0" : digits;
+        }
+
+        private static bool TryParseBranchVersion(string branchName, out string versionDisplay, out string versionCode, out string buildNumber)
+        {
+            versionDisplay = string.Empty;
+            versionCode = string.Empty;
+            buildNumber = string.Empty;
+
+            string normalized = (branchName ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+            if (string.IsNullOrWhiteSpace(normalized) || string.Equals(normalized, "HEAD", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string[] parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length < 2)
+            {
+                return false;
+            }
+
+            string displayCandidate = parts[0];
+            string buildCandidate = parts[^1];
+            string codeCandidate = buildCandidate.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? string.Empty;
+            string versionDigits = new string(codeCandidate.Where(char.IsDigit).ToArray());
+
+            if (string.IsNullOrWhiteSpace(displayCandidate) || string.IsNullOrWhiteSpace(versionDigits) || !buildCandidate.Contains('.'))
+            {
+                return false;
+            }
+
+            versionDisplay = displayCandidate;
+            versionCode = versionDigits;
+            buildNumber = buildCandidate;
+            return true;
         }
     }
 }

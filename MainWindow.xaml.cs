@@ -316,7 +316,7 @@ namespace 音乐魔盒
             if (WindowTitleText != null) WindowTitleText.Text = LocalizationService.Translate("window.title");
             if (NavEditorText != null) NavEditorText.Text = isEnglish ? "Editor" : "\u7f16\u8f91";
             if (NavConvertText != null) NavConvertText.Text = isEnglish ? "Convert" : "\u8f6c\u6362";
-            if (NavRecognizeText != null) NavRecognizeText.Text = isEnglish ? "Recognize" : "\u8bc6\u522b";
+            if (NavRecognizeText != null) NavRecognizeText.Text = isEnglish ? "Detect" : "\u8bc6\u522b";
             if (NavSettingsText != null) NavSettingsText.Text = isEnglish ? "Settings" : "\u8bbe\u7f6e";
 
             if (ConvertImportMenu != null) ConvertImportMenu.Title = isEnglish ? "Import" : "\u5bfc\u5165";

@@ -101,7 +101,7 @@
                         </Expander.Content>
                     </Expander>
 
-                    <Border Style="{StaticResource SettingCardBorderStyle}" CornerRadius="5">
+                    <Border Style="{StaticResource SettingCardBorderStyle}" CornerRadius="5" Padding="16,10,0,10">
                         <Grid Style="{StaticResource SettingHeaderGridStyle}" HorizontalAlignment="Stretch">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
@@ -164,7 +164,7 @@
                             <ToggleSwitch x:Name="ExperimentalFeaturesToggleSwitch"
                                           Grid.Column="2"
                                           Header=""
-                                          Margin="0,0,-14,0"
+                                          Margin="0,0,-18,0"
                                           HorizontalAlignment="Right"
                                           VerticalAlignment="Center"
                                           Toggled="ExperimentalFeaturesToggleSwitch_Toggled"/>
@@ -257,14 +257,18 @@
                         </Expander.Content>
                     </Expander>
 
-                    <StackPanel Spacing="4" Margin="0,6,0,0">
+                    <StackPanel Spacing="4" Margin="0,6,0,0" HorizontalAlignment="Stretch">
                         <TextBlock x:Name="WarningTitleText"
                                    Text="⚠️ Work in Progress"
                                    FontSize="14"
-                                   FontWeight="SemiBold"/>
+                                   FontWeight="SemiBold"
+                                   HorizontalAlignment="Center"
+                                   TextAlignment="Center"/>
                         <TextBlock x:Name="WarningBodyText"
                                    Text="This project is currently under active development and some features may be incomplete or unstable."
                                    Style="{StaticResource SettingDescStyle}"
+                                   HorizontalAlignment="Center"
+                                   TextAlignment="Center"
                                    TextWrapping="WrapWholeWords"/>
                     </StackPanel>
                 </StackPanel>

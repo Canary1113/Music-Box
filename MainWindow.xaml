@@ -188,7 +188,7 @@
                 <NavigationViewItem x:Name="NavRecognize" Tag="recognize" Style="{StaticResource CompactNavItemStyle}">
                     <StackPanel Spacing="4" Width="82" HorizontalAlignment="Center" Margin="3,0,3,0">
                         <FontIcon Glyph="&#xE720;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="NavRecognizeText" Text="识别" FontSize="10.5" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
+                        <TextBlock x:Name="NavRecognizeText" Text="Detect" FontSize="10.5" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
                     </StackPanel>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
