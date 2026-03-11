@@ -8,6 +8,10 @@ Music Box is a WinUI 3 desktop application for creating, editing, and converting
 
 Features may be incomplete, behavior may change, and some parts of the app may still be unstable. Please expect rough edges while development is ongoing.
 
+## Minimum System Requirement
+
+- Windows 11
+
 ## Main Pages
 
 ### Editor Page

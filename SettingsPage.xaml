@@ -101,7 +101,7 @@
                         </Expander.Content>
                     </Expander>
 
-                    <Border Style="{StaticResource SettingCardBorderStyle}" CornerRadius="5" Padding="16,10,0,10">
+                    <Border Style="{StaticResource SettingCardBorderStyle}" CornerRadius="5">
                         <Grid Style="{StaticResource SettingHeaderGridStyle}" HorizontalAlignment="Stretch">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
@@ -118,7 +118,7 @@
                                 <TextBlock x:Name="LanguageDescText" Text="Change display language" Style="{StaticResource SettingDescStyle}"/>
                             </StackPanel>
 
-                            <StackPanel Grid.Column="2" HorizontalAlignment="Right" Spacing="4">
+                            <StackPanel Grid.Column="2" HorizontalAlignment="Right" Spacing="4" Margin="0,0,10,0">
                                 <ComboBox x:Name="LanguageComboBox"
                                           MinWidth="140"
                                           HorizontalAlignment="Right"
@@ -164,7 +164,7 @@
                             <ToggleSwitch x:Name="ExperimentalFeaturesToggleSwitch"
                                           Grid.Column="2"
                                           Header=""
-                                          Margin="0,0,-18,0"
+                                          Margin="0,0,-28,0"
                                           HorizontalAlignment="Right"
                                           VerticalAlignment="Center"
                                           Toggled="ExperimentalFeaturesToggleSwitch_Toggled"/>
