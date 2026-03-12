@@ -198,7 +198,7 @@
 
                                 <TextBlock x:Name="AboutHeaderText"
                                            Grid.Column="1"
-                                           Text="Music Box"
+                                           Text="MusicBox"
                                            VerticalAlignment="Center"/>
                             </Grid>
                         </Expander.Header>

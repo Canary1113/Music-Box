@@ -1,6 +1,6 @@
-﻿# Music Box
+﻿# MusicBox
 
-Music Box is a WinUI 3 desktop application for creating, editing, and converting music scores.
+MusicBox is a WinUI 3 desktop application for creating, editing, and converting music scores.
 
 ## Download
 
@@ -10,7 +10,7 @@ Users should download the app from the repository `Releases` page.
 - `v*` releases: versioned builds such as `v0.1.0`
 - download `MusicBox-win-x64-*.zip`
 - extract it to a normal folder
-- run `音乐魔盒.exe`
+- run `MusicBox.exe`
 
 If Windows shows a SmartScreen warning, click `More info`, then `Run anyway`.
 
@@ -29,7 +29,7 @@ Features may be incomplete, behavior may change, and some parts of the app may s
 - Windows 11
 - x64
 
-![Music Box Screenshot](Assets/readme-screenshot.png)
+![MusicBox Screenshot](Assets/readme-screenshot.png)
 
 ## Main Pages
 

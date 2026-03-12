@@ -88,7 +88,7 @@ namespace 音乐魔盒.Services
             },
             ["en-US"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["window.title"] = "Music Box",
+                ["window.title"] = "MusicBox",
                 ["nav.editor"] = "Editor",
                 ["nav.convert"] = "Convert",
                 ["nav.recognize"] = "Recognize",
@@ -104,7 +104,7 @@ namespace 音乐魔盒.Services
                 ["settings.language.zh"] = "Chinese (Simplified)",
                 ["settings.language.en"] = "English",
                 ["settings.section.about"] = "About",
-                ["settings.about.name"] = "Music Box",
+                ["settings.about.name"] = "MusicBox",
                 ["settings.about.version"] = "Version",
                 ["settings.about.build"] = "Build",
                 ["settings.about.author"] = "Author",

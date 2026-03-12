@@ -32,14 +32,14 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             $releaseTag = $env:GITHUB_REF_NAME
             $version = $env:GITHUB_REF_NAME.TrimStart('v')
-            $title = "Music Box $releaseTag"
+            $title = "MusicBox $releaseTag"
             $prerelease = 'false'
             $notes = 'true'
           }
           else {
             $releaseTag = 'latest'
             $version = 'latest'
-            $title = 'Music Box Latest'
+            $title = 'MusicBox Latest'
             $prerelease = 'true'
             $notes = 'false'
           }
@@ -53,10 +53,10 @@ jobs:
           "hash_name=MusicBox-win-x64-$version.zip.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Restore
-        run: dotnet restore '.\Music Box.csproj'
+        run: dotnet restore '.\MusicBox.csproj'
 
       - name: Publish unpackaged x64 build
-        run: dotnet publish '.\Music Box.csproj' -c Release -r win-x64 -p:Platform=x64 -p:WindowsPackageType=None -p:PublishReadyToRun=false --no-restore
+        run: dotnet publish '.\MusicBox.csproj' -c Release -r win-x64 -p:Platform=x64 -p:WindowsPackageType=None -p:PublishReadyToRun=false --no-restore
 
       - name: Package zip
         shell: pwsh

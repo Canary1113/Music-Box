@@ -33,12 +33,12 @@ New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
 Copy-Item -Path (Join-Path $publishFull '*') -Destination $stageDir -Recurse -Force
 
 @"
-Music Box
+MusicBox
 =========
 
 Quick start:
 1. Extract this zip.
-2. Run 音乐魔盒.exe.
+2. Run MusicBox.exe.
 3. If Windows shows a SmartScreen warning, click More info, then Run anyway.
 
 Notes:

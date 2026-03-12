@@ -1,9 +1,9 @@
 ﻿{
   "profiles": {
-    "Music Box (Package)": {
+    "MusicBox (Package)": {
       "commandName": "MsixPackage"
     },
-    "Music Box (Unpackaged)": {
+    "MusicBox (Unpackaged)": {
       "commandName": "Project"
     }
   }

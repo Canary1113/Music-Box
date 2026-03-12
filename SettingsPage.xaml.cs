@@ -135,7 +135,7 @@ namespace 音乐魔盒
                 };
             }
 
-            AboutHeaderText.Text = isEnglish ? "Music Box" : "\u97f3\u4e50\u9b54\u76d2\uff08Music Box\uff09";
+            AboutHeaderText.Text = isEnglish ? "MusicBox" : "\u97f3\u4e50\u9b54\u76d2\uff08MusicBox\uff09";
             AboutVersionLabelText.Text = isEnglish ? "Version" : "\u7248\u672c\u53f7";
             AboutBuildLabelText.Text = isEnglish ? "Build Number" : "\u6784\u5efa\u53f7";
             AboutAuthorLabelText.Text = isEnglish ? "Author" : "\u4f5c\u8005";
