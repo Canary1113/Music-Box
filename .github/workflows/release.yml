@@ -1,0 +1,109 @@
+﻿name: Build Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.ref_type == 'tag' || github.ref_name == github.event.repository.default_branch
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Compute release metadata
+        id: meta
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $releaseTag = $env:GITHUB_REF_NAME
+            $version = $env:GITHUB_REF_NAME.TrimStart('v')
+            $title = "Music Box $releaseTag"
+            $prerelease = 'false'
+            $notes = 'true'
+          }
+          else {
+            $releaseTag = 'latest'
+            $version = 'latest'
+            $title = 'Music Box Latest'
+            $prerelease = 'true'
+            $notes = 'false'
+          }
+
+          "release_tag=$releaseTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "title=$title" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "prerelease=$prerelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "notes=$notes" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "asset_name=MusicBox-win-x64-$version.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "hash_name=MusicBox-win-x64-$version.zip.sha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Restore
+        run: dotnet restore '.\Music Box.csproj'
+
+      - name: Publish unpackaged x64 build
+        run: dotnet publish '.\Music Box.csproj' -c Release -r win-x64 -p:Platform=x64 -p:WindowsPackageType=None -p:PublishReadyToRun=false --no-restore
+
+      - name: Package zip
+        shell: pwsh
+        run: .\scripts\package-release.ps1 -Version '${{ steps.meta.outputs.version }}'
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: music-box-win-x64-${{ steps.meta.outputs.version }}
+          path: |
+            release\${{ steps.meta.outputs.asset_name }}
+            release\${{ steps.meta.outputs.hash_name }}
+
+      - name: Publish GitHub release assets
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Join-Path $PWD 'release\${{ steps.meta.outputs.asset_name }}'
+          $hash = Join-Path $PWD 'release\${{ steps.meta.outputs.hash_name }}'
+          $tag = '${{ steps.meta.outputs.release_tag }}'
+          $title = '${{ steps.meta.outputs.title }}'
+          $isPrerelease = '${{ steps.meta.outputs.prerelease }}' -eq 'true'
+          $generateNotes = '${{ steps.meta.outputs.notes }}' -eq 'true'
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zip $hash --clobber
+            gh release edit $tag --title $title
+            if ($isPrerelease) {
+              gh release edit $tag --prerelease
+            }
+            else {
+              gh release edit $tag --latest
+            }
+          }
+          else {
+            $args = @('release', 'create', $tag, $zip, $hash, '--title', $title)
+            if ($generateNotes) {
+              $args += '--generate-notes'
+            }
+            else {
+              $args += '--notes'
+              $args += 'Latest development build from the default branch.'
+            }
+            if ($isPrerelease) {
+              $args += '--prerelease'
+            }
+            & gh @args
+          }

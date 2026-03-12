@@ -3,7 +3,9 @@ bin/
 obj/
 artifacts/
 artifacts2/
+msix-output/
 build_verify/
+release/
 
 # Local .NET CLI state
 .dotnet/
@@ -30,3 +32,5 @@ xamlcompiler_*.txt
 *.csproj.user
 temp-audio-runner/
 
+# Signing secrets
+msix-output/*.pfx
