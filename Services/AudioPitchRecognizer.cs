@@ -5,7 +5,7 @@ using System.Linq;
 using NAudio.Dsp;
 using NAudio.Wave;
 
-namespace 音乐魔盒.Services
+namespace MusicBox.Services
 {
     public sealed class DetectedAudioNote
     {

@@ -2,7 +2,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace 音乐魔盒.ViewModels
+namespace MusicBox.ViewModels
 {
     public abstract class ObservableObject : INotifyPropertyChanged
     {

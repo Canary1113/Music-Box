@@ -1,6 +1,6 @@
-using System;
+ï»¿using System;
 
-namespace ÒôÀÖÄ§ºĞ.Models
+namespace MusicBox.Models
 {
     public sealed class TimeSignature
     {

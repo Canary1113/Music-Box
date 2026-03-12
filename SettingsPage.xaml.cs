@@ -3,10 +3,10 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using System;
 using System.Diagnostics;
-using 音乐魔盒.Services;
-using 音乐魔盒.ViewModels;
+using MusicBox.Services;
+using MusicBox.ViewModels;
 
-namespace 音乐魔盒
+namespace MusicBox
 {
     public sealed partial class SettingsPage : Page
     {

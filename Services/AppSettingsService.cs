@@ -6,9 +6,9 @@ using System.Linq;
 using System.Text.Json;
 using Windows.Storage;
 using Windows.System.UserProfile;
-using 音乐魔盒.ViewModels;
+using MusicBox.ViewModels;
 
-namespace 音乐魔盒.Services
+namespace MusicBox.Services
 {
     public enum AppThemePreference
     {

@@ -1,4 +1,4 @@
-﻿namespace 音乐魔盒.Models
+﻿namespace MusicBox.Models
 {
     public sealed class TimeSignatureChange
     {

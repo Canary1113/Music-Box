@@ -1,4 +1,4 @@
-namespace ÒôÀÖÄ§ºĞ.Models
+ï»¿namespace MusicBox.Models
 {
     public enum KeyMode
     {

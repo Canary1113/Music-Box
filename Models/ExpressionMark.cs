@@ -1,6 +1,6 @@
 ﻿using System.Text.Json.Serialization;
 
-namespace 音乐魔盒.Models
+namespace MusicBox.Models
 {
     public sealed class ExpressionMark
     {

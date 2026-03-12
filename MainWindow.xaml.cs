@@ -6,10 +6,10 @@ using Microsoft.UI.Windowing;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using 音乐魔盒.Services;
-using 音乐魔盒.ViewModels;
+using MusicBox.Services;
+using MusicBox.ViewModels;
 
-namespace 音乐魔盒
+namespace MusicBox
 {
     public sealed partial class MainWindow : Window
     {

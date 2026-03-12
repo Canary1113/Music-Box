@@ -2,9 +2,9 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using 音乐魔盒.Models;
+using MusicBox.Models;
 
-namespace 音乐魔盒.Services
+namespace MusicBox.Services
 {
     public sealed class ProjectStorage
     {

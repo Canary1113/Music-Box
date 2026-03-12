@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace 音乐魔盒.Models
+namespace MusicBox.Models
 {
     public sealed class ScoreProject
     {

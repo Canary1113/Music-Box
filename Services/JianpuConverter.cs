@@ -1,11 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text;
-using 音乐魔盒.Models;
+using MusicBox.Models;
 
-namespace 音乐魔盒.Services
+namespace MusicBox.Services
 {
     public sealed class JianpuConverter
     {

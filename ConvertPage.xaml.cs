@@ -13,11 +13,11 @@ using Windows.Foundation;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.UI;
-using 音乐魔盒.Models;
-using 音乐魔盒.Services;
-using 音乐魔盒.ViewModels;
+using MusicBox.Models;
+using MusicBox.Services;
+using MusicBox.ViewModels;
 
-namespace 音乐魔盒
+namespace MusicBox
 {
     public sealed partial class ConvertPage : Page
     {

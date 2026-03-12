@@ -1,6 +1,6 @@
 ﻿using Microsoft.UI.Xaml.Controls;
 
-namespace 音乐魔盒
+namespace MusicBox
 {
     public sealed partial class ShellContentHost : UserControl
     {

@@ -4,7 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 
-namespace 音乐魔盒.Services
+namespace MusicBox.Services
 {
     public sealed class AppBuildInfo
     {

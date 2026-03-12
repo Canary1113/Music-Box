@@ -29,11 +29,11 @@ using Windows.Storage.Streams;
 using Windows.System;
 using Windows.UI;
 using Windows.UI.Text;
-using 音乐魔盒.Models;
-using 音乐魔盒.Services;
-using 音乐魔盒.ViewModels;
+using MusicBox.Models;
+using MusicBox.Services;
+using MusicBox.ViewModels;
 
-namespace 音乐魔盒
+namespace MusicBox
 {
     public sealed partial class EditorPage : Page
     {

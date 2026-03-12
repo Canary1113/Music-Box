@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace 音乐魔盒.Services
+namespace MusicBox.Services
 {
     public static class PitchUtils
     {

@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Windows.Input;
 
-namespace 音乐魔盒.ViewModels
+namespace MusicBox.ViewModels
 {
     public sealed class RelayCommand : ICommand
     {

@@ -6,9 +6,9 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
-using 音乐魔盒.Models;
+using MusicBox.Models;
 
-namespace 音乐魔盒.Services
+namespace MusicBox.Services
 {
     public sealed class MusicXmlImporter
     {

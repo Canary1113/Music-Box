@@ -1,9 +1,9 @@
 ﻿using System;
 using System.IO;
-using 音乐魔盒.Models;
-using 音乐魔盒.Services;
+using MusicBox.Models;
+using MusicBox.Services;
 
-namespace 音乐魔盒.ViewModels
+namespace MusicBox.ViewModels
 {
     public sealed class MainViewModel : ObservableObject
     {
