@@ -1,9 +1,9 @@
 ﻿{
   "profiles": {
-    "音乐魔盒 (Package)": {
+    "Music Box (Package)": {
       "commandName": "MsixPackage"
     },
-    "音乐魔盒 (Unpackaged)": {
+    "Music Box (Unpackaged)": {
       "commandName": "Project"
     }
   }

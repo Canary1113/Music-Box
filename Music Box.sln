@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.5.2.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "音乐魔盒", "音乐魔盒.csproj", "{5D8CDFBB-5E76-108D-B024-7C34C3623115}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Music Box", "Music Box.csproj", "{5D8CDFBB-5E76-108D-B024-7C34C3623115}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
