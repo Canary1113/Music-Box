@@ -15,12 +15,18 @@ namespace MusicBox
     {
         public MainViewModel ViewModel { get; } = new();
         private readonly AppSettingsService _settings = AppSettingsService.Instance;
+        private NavigationViewItem? NavCompose;
+        private TextBlock? NavComposeText;
+        private RadioMenuFlyoutItem? ConvertStaffToGuitarTabMenuItem;
+        private MenuFlyoutItem? ConvertExportGuitarTabMenuItem;
 
         public MainWindow()
         {
+            DebugTrace.Write("MainWindow.ctor begin");
             InitializeComponent();
             TryConfigureCustomTitleBar();
             TrySetWindowIcon();
+            CreateDynamicNavigationAndConvertMenuItems();
 
             RootGrid.DataContext = ViewModel;
             TryApplyBackdrop();
@@ -34,6 +40,7 @@ namespace MusicBox
 
             MainNavigation.SelectedItem = NavEditor;
             NavigateTo("editor");
+            DebugTrace.Write("MainWindow.ctor end");
         }
 
         private void MainWindow_Closed(object sender, WindowEventArgs args)
@@ -46,6 +53,7 @@ namespace MusicBox
         {
             if (args.SelectedItemContainer?.Tag is string tag)
             {
+                DebugTrace.Write($"MainNavigation.SelectionChanged: {tag}");
                 NavigateTo(tag);
             }
         }
@@ -53,6 +61,7 @@ namespace MusicBox
         private void NavigateTo(string tag)
         {
             string normalized = tag?.Trim().ToLowerInvariant() ?? string.Empty;
+            DebugTrace.Write($"NavigateTo begin: {normalized}");
             if (string.Equals(normalized, "recognize", StringComparison.OrdinalIgnoreCase)
                 && !_settings.ExperimentalFeaturesEnabled)
             {
@@ -63,6 +72,7 @@ namespace MusicBox
             {
                 "editor" => typeof(EditorPage),
                 "convert" => typeof(ConvertPage),
+                "compose" => typeof(ComposeWorkbenchPage),
                 "recognize" => typeof(RecognizePage),
                 "settings" => typeof(SettingsPage),
                 _ => null
@@ -70,8 +80,28 @@ namespace MusicBox
 
             if (target != null)
             {
-                ContentHost.MainFrame.Navigate(target, ViewModel);
-                UpdateTitleMenuVisibility(normalized);
+                try
+                {
+                    DebugTrace.Write($"Frame.Navigate start: {target.FullName}");
+                    ContentHost.MainFrame.Navigate(target, ViewModel);
+                    DebugTrace.Write($"Frame.Navigate returned: {target.FullName}");
+                    UpdateTitleMenuVisibility(normalized);
+                }
+                catch (Exception ex)
+                {
+                    DebugTrace.Write($"NavigateTo catch: {ex}");
+                    ViewModel.SetStatus($"页面打开失败: {ex.Message}");
+                    if (!string.Equals(normalized, "editor", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ContentHost.MainFrame.Navigate(typeof(EditorPage), ViewModel);
+                        UpdateTitleMenuVisibility("editor");
+                        MainNavigation.SelectedItem = NavEditor;
+                    }
+                }
+            }
+            else
+            {
+                DebugTrace.Write($"NavigateTo ignored: {normalized}");
             }
         }
 
@@ -88,6 +118,7 @@ namespace MusicBox
             {
                 "editor" => NavEditor,
                 "convert" => NavConvert,
+                "compose" => NavCompose,
                 "recognize" => NavRecognize,
                 "settings" => NavSettings,
                 _ => null
@@ -114,6 +145,95 @@ namespace MusicBox
         private ConvertPage? GetCurrentConvertPage()
         {
             return ContentHost.MainFrame.Content as ConvertPage;
+        }
+
+        public void NavigateToConvertAndImportEditor()
+        {
+            NavigateToPage("convert");
+            GetCurrentConvertPage()?.HandleTitleBarImportCommand("import_editor");
+        }
+
+        private void CreateDynamicNavigationAndConvertMenuItems()
+        {
+            if (MainNavigation == null)
+            {
+                return;
+            }
+
+            if (NavCompose == null)
+            {
+                NavComposeText = new TextBlock
+                {
+                    Text = "创作",
+                    FontSize = 10.5,
+                    FontWeight = Microsoft.UI.Text.FontWeights.Normal,
+                    MaxLines = 2,
+                    TextWrapping = TextWrapping.Wrap,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    TextAlignment = TextAlignment.Center
+                };
+
+                var composePanel = new StackPanel
+                {
+                    Spacing = 4,
+                    Width = 82,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(3, 0, 3, 0)
+                };
+                composePanel.Children.Add(new FontIcon
+                {
+                    Glyph = "✎",
+                    FontFamily = new FontFamily("Segoe UI Symbol"),
+                    FontSize = 18,
+                    HorizontalAlignment = HorizontalAlignment.Center
+                });
+                composePanel.Children.Add(NavComposeText);
+
+                NavCompose = new NavigationViewItem
+                {
+                    Tag = "compose",
+                    Content = composePanel
+                };
+
+                if (MainNavigation.Resources.TryGetValue("CompactNavItemStyle", out object style)
+                    && style is Style compactNavItemStyle)
+                {
+                    NavCompose.Style = compactNavItemStyle;
+                }
+
+                int insertIndex = MainNavigation.MenuItems.IndexOf(NavRecognize);
+                if (insertIndex >= 0)
+                {
+                    MainNavigation.MenuItems.Insert(insertIndex, NavCompose);
+                }
+                else
+                {
+                    MainNavigation.MenuItems.Add(NavCompose);
+                }
+            }
+
+            if (ConvertFormatMenu != null && ConvertStaffToGuitarTabMenuItem == null)
+            {
+                ConvertStaffToGuitarTabMenuItem = new RadioMenuFlyoutItem
+                {
+                    Text = "五线谱 → 吉他谱",
+                    Tag = "staff_to_guitar_tab",
+                    GroupName = "ConvertFormat"
+                };
+                ConvertStaffToGuitarTabMenuItem.Click += ConvertTitleFormatMenuItem_Click;
+                ConvertFormatMenu.Items.Add(ConvertStaffToGuitarTabMenuItem);
+            }
+
+            if (ConvertExportMenu != null && ConvertExportGuitarTabMenuItem == null)
+            {
+                ConvertExportGuitarTabMenuItem = new MenuFlyoutItem
+                {
+                    Text = "吉他谱 TXT",
+                    Tag = "export_guitar_tab_txt"
+                };
+                ConvertExportGuitarTabMenuItem.Click += ConvertTitleExportMenuItem_Click;
+                ConvertExportMenu.Items.Add(ConvertExportGuitarTabMenuItem);
+            }
         }
 
         private void UpdateTitleMenuVisibility(string activeTag)
@@ -254,13 +374,27 @@ namespace MusicBox
 
         private void ConvertTitleFormatMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not MenuFlyoutItem item)
+            if (sender is not MenuFlyoutItemBase item)
             {
                 return;
             }
 
             string command = item.Tag?.ToString() ?? string.Empty;
             GetCurrentConvertPage()?.HandleTitleBarFormatCommand(command);
+        }
+
+        public void SyncConvertFormatSelection(string activeFormat)
+        {
+            bool isGuitar = string.Equals(activeFormat, "guitar", StringComparison.OrdinalIgnoreCase);
+            if (ConvertStaffToJianpuMenuItem != null)
+            {
+                ConvertStaffToJianpuMenuItem.IsChecked = !isGuitar;
+            }
+
+            if (ConvertStaffToGuitarTabMenuItem != null)
+            {
+                ConvertStaffToGuitarTabMenuItem.IsChecked = isGuitar;
+            }
         }
 
         private void ConvertTitleExportMenuItem_Click(object sender, RoutedEventArgs e)
@@ -316,6 +450,7 @@ namespace MusicBox
             if (WindowTitleText != null) WindowTitleText.Text = LocalizationService.Translate("window.title");
             if (NavEditorText != null) NavEditorText.Text = isEnglish ? "Editor" : "\u7f16\u8f91";
             if (NavConvertText != null) NavConvertText.Text = isEnglish ? "Convert" : "\u8f6c\u6362";
+            if (NavComposeText != null) NavComposeText.Text = isEnglish ? "Compose" : "\u521b\u4f5c";
             if (NavRecognizeText != null) NavRecognizeText.Text = isEnglish ? "Detect" : "\u8bc6\u522b";
             if (NavSettingsText != null) NavSettingsText.Text = isEnglish ? "Settings" : "\u8bbe\u7f6e";
 
@@ -325,8 +460,10 @@ namespace MusicBox
             if (ConvertImportFromEditorMenuItem != null) ConvertImportFromEditorMenuItem.Text = isEnglish ? "Import From Editor" : "\u7f16\u8f91\u9875\u5bfc\u5165";
             if (ConvertImportFromFileMenuItem != null) ConvertImportFromFileMenuItem.Text = isEnglish ? "Import From File" : "\u4ece\u6587\u4ef6\u5bfc\u5165";
             if (ConvertStaffToJianpuMenuItem != null) ConvertStaffToJianpuMenuItem.Text = isEnglish ? "Staff -> Jianpu" : "\u4e94\u7ebf\u8c31 \u2192 \u7b80\u8c31";
+            if (ConvertStaffToGuitarTabMenuItem != null) ConvertStaffToGuitarTabMenuItem.Text = isEnglish ? "Staff -> Guitar Tab" : "\u4e94\u7ebf\u8c31 \u2192 \u5409\u4ed6\u8c31";
             if (ConvertExportPdfMenuItem != null) ConvertExportPdfMenuItem.Text = "PDF";
             if (ConvertExportMusicXmlMenuItem != null) ConvertExportMusicXmlMenuItem.Text = "MusicXML";
+            if (ConvertExportGuitarTabMenuItem != null) ConvertExportGuitarTabMenuItem.Text = isEnglish ? "Guitar Tab TXT" : "\u5409\u4ed6\u8c31 TXT";
 
             if (EditorFileMenu != null) EditorFileMenu.Title = isEnglish ? "File" : "\u6587\u4ef6";
             if (EditorTimeMenu != null) EditorTimeMenu.Title = isEnglish ? "Time" : "\u62cd\u53f7";
@@ -547,3 +684,14 @@ namespace MusicBox
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+

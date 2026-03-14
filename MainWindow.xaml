@@ -142,7 +142,7 @@
                             <MenuFlyoutItem x:Name="ConvertImportFromFileMenuItem" Text="从文件导入" Tag="import_file" Click="ConvertTitleImportMenuItem_Click"/>
                         </MenuBarItem>
                         <MenuBarItem x:Name="ConvertFormatMenu" Title="格式转换">
-                            <MenuFlyoutItem x:Name="ConvertStaffToJianpuMenuItem" Text="五线谱 → 简谱" Tag="staff_to_jianpu" Click="ConvertTitleFormatMenuItem_Click"/>
+                            <RadioMenuFlyoutItem x:Name="ConvertStaffToJianpuMenuItem" Text="五线谱 → 简谱" Tag="staff_to_jianpu" GroupName="ConvertFormat" IsChecked="True" Click="ConvertTitleFormatMenuItem_Click"/>
                         </MenuBarItem>
                         <MenuBarItem x:Name="ConvertExportMenu" Title="导出">
                             <MenuFlyoutItem x:Name="ConvertExportPdfMenuItem" Text="PDF" Tag="export_pdf" Click="ConvertTitleExportMenuItem_Click"/>

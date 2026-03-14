@@ -25,11 +25,19 @@ namespace MusicBox
 
         private MainViewModel? _viewModel;
         private readonly JianpuConverter _jianpuConverter = new();
+        private readonly GuitarTabConverter _guitarTabConverter = new();
         private readonly MusicXmlExporter _musicXmlExporter = new();
         private JianpuConverter.NativePreviewModel? _nativePreview;
+        private TabPreviewModel? _guitarPreview;
         private string _latestPreviewHtml = string.Empty;
+        private string _latestGuitarTabText = string.Empty;
         private bool _previewLoaded;
         private ScoreProject? _sourceProject;
+        private Border? _jianpuPreviewHost;
+        private Border? _guitarTabPreviewHost;
+        private ScrollViewer? _guitarPreviewScrollViewer;
+        private CanvasControl? _guitarTabCanvas;
+        private string _activeFormat = "jianpu";
 
         private readonly CanvasTextFormat _titleFormat = new()
         {
@@ -123,10 +131,28 @@ namespace MusicBox
 
         private const float ChordRowStep = 19.5f;
         private const float ChordDotSpacing = 4.2f;
+        private readonly CanvasTextFormat _guitarStringFormat = new()
+        {
+            FontFamily = "Consolas",
+            FontSize = 18f,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            HorizontalAlignment = CanvasHorizontalAlignment.Right,
+            VerticalAlignment = CanvasVerticalAlignment.Center
+        };
+
+        private readonly CanvasTextFormat _guitarFretFormat = new()
+        {
+            FontFamily = "Consolas",
+            FontSize = 18f,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            HorizontalAlignment = CanvasHorizontalAlignment.Center,
+            VerticalAlignment = CanvasVerticalAlignment.Center
+        };
 
         public ConvertPage()
         {
             InitializeComponent();
+            BuildDynamicPreviewSurface();
             NavigationCacheMode = NavigationCacheMode.Required;
             Loaded += ConvertPage_Loaded;
             ActualThemeChanged += ConvertPage_ActualThemeChanged;
@@ -159,7 +185,10 @@ namespace MusicBox
             if (_sourceProject != null && _nativePreview != null)
             {
                 UpdateCanvasSize();
+                UpdateGuitarCanvasSize();
                 JianpuCanvas?.Invalidate();
+                _guitarTabCanvas?.Invalidate();
+                ApplyPreviewMode();
                 return;
             }
 
@@ -169,6 +198,91 @@ namespace MusicBox
         private async void ConvertPage_ActualThemeChanged(FrameworkElement sender, object args)
         {
             await RefreshPreviewAsync();
+        }
+
+        private void BuildDynamicPreviewSurface()
+        {
+            if (RootGrid == null || RootGrid.Children.Count == 0 || _jianpuPreviewHost != null)
+            {
+                return;
+            }
+
+            _jianpuPreviewHost = RootGrid.Children[0] as Border;
+            if (_jianpuPreviewHost == null)
+            {
+                return;
+            }
+
+            _guitarTabCanvas = new CanvasControl
+            {
+                Width = 1400,
+                Height = 900,
+                VerticalAlignment = VerticalAlignment.Top,
+                ClearColor = Color.FromArgb(0, 0, 0, 0)
+            };
+            _guitarTabCanvas.Draw += GuitarTabCanvas_Draw;
+
+            _guitarPreviewScrollViewer = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Background = null,
+                Padding = new Thickness(0)
+            };
+            _guitarPreviewScrollViewer.SizeChanged += PreviewScrollViewer_SizeChanged;
+            _guitarPreviewScrollViewer.Content = new Grid
+            {
+                Margin = new Thickness(-2, 0, -2, -2),
+                Background = null,
+                Children =
+                {
+                    _guitarTabCanvas
+                }
+            };
+
+            _guitarTabPreviewHost = new Border
+            {
+                Margin = new Thickness(0),
+                Padding = new Thickness(0),
+                CornerRadius = new CornerRadius(5),
+                Background = null,
+                BorderBrush = null,
+                BorderThickness = new Thickness(0),
+                Translation = new System.Numerics.Vector3(0, 0, 16),
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Visibility = Visibility.Collapsed,
+                Child = _guitarPreviewScrollViewer
+            };
+
+            RootGrid.Children.Insert(1, _guitarTabPreviewHost);
+            ApplyPreviewMode();
+        }
+
+        private void ApplyPreviewMode()
+        {
+            bool showGuitar = string.Equals(_activeFormat, "guitar", StringComparison.OrdinalIgnoreCase);
+
+            if (_jianpuPreviewHost != null)
+            {
+                _jianpuPreviewHost.Visibility = showGuitar ? Visibility.Collapsed : Visibility.Visible;
+            }
+
+            if (_guitarTabPreviewHost != null)
+            {
+                _guitarTabPreviewHost.Visibility = showGuitar ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            if (showGuitar)
+            {
+                UpdateGuitarCanvasSize();
+                _guitarTabCanvas?.Invalidate();
+            }
+
+            if (App.MainWindow is MainWindow window)
+            {
+                window.SyncConvertFormatSelection(_activeFormat);
+            }
         }
 
         public void HandleTitleBarImportCommand(string command)
@@ -189,10 +303,17 @@ namespace MusicBox
         public void HandleTitleBarFormatCommand(string command)
         {
             string normalized = command?.Trim().ToLowerInvariant() ?? string.Empty;
-            if (normalized == "staff_to_jianpu")
+            if (normalized == "staff_to_guitar_tab")
             {
+                _activeFormat = "guitar";
+                ApplyPreviewMode();
                 _ = RefreshPreviewAsync();
+                return;
             }
+
+            _activeFormat = "jianpu";
+            ApplyPreviewMode();
+            _ = RefreshPreviewAsync();
         }
 
         public void HandleTitleBarExportCommand(string command)
@@ -207,6 +328,12 @@ namespace MusicBox
             if (normalized == "export_musicxml")
             {
                 _ = ExportSourceToMusicXmlAsync();
+                return;
+            }
+
+            if (normalized == "export_guitar_tab_txt")
+            {
+                _ = ExportGuitarTabAsync();
             }
         }
 
@@ -270,40 +397,51 @@ namespace MusicBox
             {
                 _previewLoaded = false;
                 _nativePreview = null;
+                _guitarPreview = null;
                 _latestPreviewHtml = string.Empty;
+                _latestGuitarTabText = string.Empty;
                 JianpuCanvas?.Invalidate();
+                _guitarTabCanvas?.Invalidate();
                 SavePageStateToCache();
-                SetStatus(Loc("\u8bf7\u5148\u5728\u201c\u5bfc\u5165\u201d\u83dc\u5355\u91cc\u9009\u62e9\u201c\u7f16\u8f91\u9875\u5bfc\u5165\u201d\u6216\u201c\u4ece\u6587\u4ef6\u5bfc\u5165\u201d\u3002", "Choose Import -> From Editor or From File first."));
+                SetStatus(Loc("请先在“导入”菜单里选择“编辑页导入”或“从文件导入”。", "Choose Import -> From Editor or From File first."));
                 return;
             }
 
             if (_viewModel == null)
             {
-                SetStatus(Loc("\u672a\u627e\u5230\u5de5\u7a0b\u6570\u636e\u3002", "Project data not found."));
+                SetStatus(Loc("未找到工程数据。", "Project data not found."));
                 return;
             }
 
             try
             {
-                SetStatus(Loc("\u6b63\u5728\u8f6c\u6362\u7b80\u8c31...", "Converting to jianpu..."));
+                SetStatus(Loc("正在转换简谱与吉他谱...", "Converting to jianpu and guitar tab..."));
                 bool darkTheme = ActualTheme == ElementTheme.Dark;
-                _latestPreviewHtml = _jianpuConverter.BuildPreviewHtml(_sourceProject, darkTheme);
-
                 float viewportWidth = (float)Math.Max(760d, (PreviewScrollViewer?.ActualWidth ?? RootGrid?.ActualWidth ?? 1200d) - 92d);
+
+                _latestPreviewHtml = _jianpuConverter.BuildPreviewHtml(_sourceProject, darkTheme);
+                _latestGuitarTabText = _guitarTabConverter.BuildAsciiTab(_sourceProject);
                 _nativePreview = _jianpuConverter.BuildNativePreviewModel(_sourceProject, viewportWidth);
+                _guitarPreview = _guitarTabConverter.BuildPreviewModel(_sourceProject, viewportWidth);
                 _previewLoaded = true;
+
                 UpdateCanvasSize();
-                JianpuCanvas.Invalidate();
+                UpdateGuitarCanvasSize();
+                JianpuCanvas?.Invalidate();
+                _guitarTabCanvas?.Invalidate();
                 SavePageStateToCache();
-                SetStatus(Loc("\u7b80\u8c31\u9884\u89c8\u5df2\u66f4\u65b0\uff08\u539f\u751f\u6e32\u67d3\uff09\u3002", "Jianpu preview updated (native rendering)."));
+                SetStatus(Loc("简谱与吉他谱预览已更新。", "Jianpu and guitar tab previews updated."));
             }
             catch (Exception ex)
             {
                 _previewLoaded = false;
                 _nativePreview = null;
+                _guitarPreview = null;
+                _latestGuitarTabText = string.Empty;
                 JianpuCanvas?.Invalidate();
+                _guitarTabCanvas?.Invalidate();
                 SavePageStateToCache();
-                SetStatus($"{Loc("杞崲澶辫触", "Conversion failed")}: {ex.Message}");
+                SetStatus($"{Loc("转换失败", "Conversion failed")}: {ex.Message}");
             }
 
             await Task.CompletedTask;
@@ -379,7 +517,9 @@ namespace MusicBox
         private void PreviewScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             UpdateCanvasSize();
+            UpdateGuitarCanvasSize();
             JianpuCanvas?.Invalidate();
+            _guitarTabCanvas?.Invalidate();
         }
 
         private void UpdateCanvasSize()
@@ -398,6 +538,128 @@ namespace MusicBox
             JianpuCanvas.Height = targetHeight;
         }
 
+
+        private void UpdateGuitarCanvasSize()
+        {
+            if (_guitarTabCanvas == null)
+            {
+                return;
+            }
+
+            float viewportWidth = (float)Math.Max(760d, _guitarPreviewScrollViewer?.ActualWidth ?? RootGrid?.ActualWidth ?? 1200d);
+            float viewportHeight = (float)Math.Max(560d, _guitarPreviewScrollViewer?.ActualHeight ?? RootGrid?.ActualHeight ?? 720d);
+            float targetWidth = Math.Max(viewportWidth - 4f, _guitarPreview?.ContentWidth ?? 960f);
+            float targetHeight = Math.Max(viewportHeight - 4f, EstimateGuitarContentHeight());
+
+            _guitarTabCanvas.Width = targetWidth;
+            _guitarTabCanvas.Height = targetHeight;
+        }
+
+        private void GuitarTabCanvas_Draw(CanvasControl sender, CanvasDrawEventArgs args)
+        {
+            var ds = args.DrawingSession;
+            Color ink = GetInkColor();
+            Color subInk = Color.FromArgb((byte)(ink.A == 255 ? 190 : ink.A), ink.R, ink.G, ink.B);
+            Color stringLine = ActualTheme == ElementTheme.Dark
+                ? Color.FromArgb(255, 190, 190, 190)
+                : Color.FromArgb(255, 70, 70, 70);
+            Color fretFill = ActualTheme == ElementTheme.Dark
+                ? Color.FromArgb(255, 28, 28, 28)
+                : Color.FromArgb(255, 250, 250, 250);
+
+            if (_guitarPreview == null || _guitarPreview.Systems.Count == 0)
+            {
+                float emptyCanvasWidth = (float)Math.Max(200d, _guitarTabCanvas?.ActualWidth ?? 0d);
+                float emptyCanvasHeight = (float)Math.Max(160d, _guitarTabCanvas?.ActualHeight ?? 0d);
+                var centeredStatusFormat = new CanvasTextFormat
+                {
+                    FontFamily = _statusFormat.FontFamily,
+                    FontSize = _statusFormat.FontSize,
+                    FontWeight = _statusFormat.FontWeight,
+                    HorizontalAlignment = CanvasHorizontalAlignment.Center,
+                    VerticalAlignment = CanvasVerticalAlignment.Center
+                };
+                ds.DrawText(Loc("当前工程没有可转换的吉他谱音符。", "No guitar tab notes in current project."), 0f, 0f, emptyCanvasWidth, emptyCanvasHeight, subInk, centeredStatusFormat);
+                return;
+            }
+
+            float canvasWidth = (float)Math.Max(200d, _guitarTabCanvas?.ActualWidth ?? 0d);
+            float left = 30f;
+            float stringsLeft = 86f;
+            float systemTop = 214f;
+            const float lineGap = 24f;
+            const float measureGap = 18f;
+            string[] labels = { "e", "B", "G", "D", "A", "E" };
+
+            ds.DrawText(_guitarPreview.Title, 0f, 62f, canvasWidth, 60f, ink, _titleFormat);
+            ds.DrawText($"TAB   {_guitarPreview.MeterText}   {_guitarPreview.Bpm} BPM", stringsLeft, 154f, subInk, _metaFormat);
+
+            foreach (TabSystem system in _guitarPreview.Systems)
+            {
+                float stringsTop = systemTop + 20f;
+                float stringsBottom = stringsTop + lineGap * (labels.Length - 1);
+
+                ds.DrawText(system.StartMeasureNumber.ToString(), left, systemTop - 6f, ink, _measureNumberFormat);
+                for (int stringIndex = 0; stringIndex < labels.Length; stringIndex++)
+                {
+                    float y = stringsTop + stringIndex * lineGap;
+                    ds.DrawText(labels[stringIndex], left, y - 12f, 40f, 24f, subInk, _guitarStringFormat);
+                }
+
+                float measureX = stringsLeft;
+                for (int measureIndex = 0; measureIndex < system.Measures.Count; measureIndex++)
+                {
+                    TabMeasure measure = system.Measures[measureIndex];
+                    float innerLeft = measureX + 8f;
+                    float innerRight = measureX + measure.Width - 8f;
+
+                    for (int stringIndex = 0; stringIndex < labels.Length; stringIndex++)
+                    {
+                        float y = stringsTop + stringIndex * lineGap;
+                        ds.DrawLine(measureX, y, measureX + measure.Width, y, stringLine, 1f);
+                    }
+
+                    ds.DrawLine(measureX, stringsTop, measureX, stringsBottom, stringLine, 1.2f);
+                    ds.DrawLine(measureX + measure.Width, stringsTop, measureX + measure.Width, stringsBottom, stringLine, 1.2f);
+
+                    foreach (TabPlacement placement in measure.Placements)
+                    {
+                        float x = innerLeft + (innerRight - innerLeft) * (placement.TickInMeasure / (float)Math.Max(1, measure.MeasureTicks));
+                        foreach (TabPosition position in placement.Positions)
+                        {
+                            string fretText = position.Fret.ToString();
+                            float y = stringsTop + position.StringIndex * lineGap;
+                            float textWidth = MeasureGlyphWidth(ds, fretText, _guitarFretFormat);
+                            float maskWidth = Math.Max(16f, textWidth + 10f);
+                            float maskHeight = 18f;
+                            float maskLeft = x - maskWidth * 0.5f;
+                            float maskTop = y - maskHeight * 0.5f;
+                            ds.FillRectangle(maskLeft, maskTop, maskWidth, maskHeight, fretFill);
+                            ds.DrawText(fretText, maskLeft, maskTop - 1f, maskWidth, maskHeight, ink, _guitarFretFormat);
+                        }
+                    }
+
+                    measureX += measure.Width + measureGap;
+                }
+
+                systemTop += 214f;
+            }
+
+            if (!_previewLoaded)
+            {
+                ds.DrawText(Loc("正在准备吉他谱预览...", "Preparing guitar tab preview..."), left, systemTop + 8f, subInk, _statusFormat);
+            }
+        }
+
+        private float EstimateGuitarContentHeight()
+        {
+            if (_guitarPreview == null)
+            {
+                return 720f;
+            }
+
+            return Math.Max(720f, 214f + _guitarPreview.Systems.Count * 214f + 40f);
+        }
         private void JianpuCanvas_Draw(CanvasControl sender, CanvasDrawEventArgs args)
         {
             Color ink = GetInkColor();
@@ -1193,7 +1455,7 @@ namespace MusicBox
 
             try
             {
-                string suggested = GetSuggestedExportName("musicxml");
+                string suggested = GetSuggestedExportName("musicxml", "MusicXML");
                 string? path = await PickSavePathAsync(".musicxml", "MusicXML \u4e50\u8c31", suggested);
                 if (string.IsNullOrWhiteSpace(path))
                 {
@@ -1209,6 +1471,41 @@ namespace MusicBox
                 SetStatus($"{Loc("\u5bfc\u51fa\u5931\u8d25", "Export failed")}: {ex.Message}");
             }
         }
+
+        private async Task ExportGuitarTabAsync()
+        {
+            if (_sourceProject == null)
+            {
+                SetStatus(Loc("\u8bf7\u5148\u5bfc\u5165\u5de5\u7a0b\uff0c\u518d\u5bfc\u51fa\u5409\u4ed6\u8c31\u3002", "Import a score before exporting guitar tab."));
+                return;
+            }
+
+            try
+            {
+                await RefreshPreviewAsync();
+                if (string.IsNullOrWhiteSpace(_latestGuitarTabText))
+                {
+                    SetStatus(Loc("\u5409\u4ed6\u8c31\u9884\u89c8\u5c1a\u672a\u5c31\u7eea\u3002", "Guitar tab preview is not ready."));
+                    return;
+                }
+
+                string suggested = GetSuggestedExportName("txt", "\u5409\u4ed6\u8c31");
+                string? path = await PickSavePathAsync(".txt", "Guitar Tab Text", suggested);
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    SetStatus(Loc("\u5df2\u53d6\u6d88\u5bfc\u51fa\u3002", "Export canceled."));
+                    return;
+                }
+
+                await File.WriteAllTextAsync(path, _latestGuitarTabText);
+                SetStatus($"{Loc("\u5df2\u5bfc\u51fa\u5409\u4ed6\u8c31", "Guitar tab exported")}: {path}");
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"{Loc("\u5bfc\u51fa\u5931\u8d25", "Export failed")}: {ex.Message}");
+            }
+        }
+
         private async Task ExportPreviewToPdfAsync()
         {
             if (_viewModel == null)
@@ -1227,7 +1524,7 @@ namespace MusicBox
                     return;
                 }
 
-                string suggested = GetSuggestedExportName("pdf");
+                string suggested = GetSuggestedExportName("pdf", "\u7b80\u8c31");
                 string? path = await PickSavePathAsync(".pdf", "PDF \u6587\u6863", suggested);
                 if (string.IsNullOrWhiteSpace(path))
                 {
@@ -1333,7 +1630,7 @@ namespace MusicBox
             return file?.Path;
         }
 
-        private string GetSuggestedExportName(string extension)
+        private string GetSuggestedExportName(string extension, string suffix)
         {
             string title = _viewModel?.Title ?? string.Empty;
             if (string.IsNullOrWhiteSpace(title))
@@ -1346,8 +1643,14 @@ namespace MusicBox
                 title = title.Replace(invalid, '_');
             }
 
+            string safeSuffix = string.IsNullOrWhiteSpace(suffix) ? "export" : suffix;
+            foreach (char invalid in Path.GetInvalidFileNameChars())
+            {
+                safeSuffix = safeSuffix.Replace(invalid, '_');
+            }
+
             string normalizedExtension = extension.StartsWith('.') ? extension : $".{extension}";
-            return $"{title}-\u7b80\u8c31{normalizedExtension}";
+            return $"{title}-{safeSuffix}{normalizedExtension}";
         }
 
         private void RestorePageStateFromCache()
@@ -1359,8 +1662,12 @@ namespace MusicBox
 
             _sourceProject = s_cache.SourceProject != null ? CloneProject(s_cache.SourceProject) : null;
             _latestPreviewHtml = s_cache.LatestPreviewHtml ?? string.Empty;
+            _latestGuitarTabText = s_cache.LatestGuitarTabText ?? string.Empty;
+            _activeFormat = string.Equals(s_cache.ActiveFormat, "guitar", StringComparison.OrdinalIgnoreCase) ? "guitar" : "jianpu";
             _previewLoaded = false;
             _nativePreview = null;
+            _guitarPreview = null;
+            ApplyPreviewMode();
         }
 
         private void SavePageStateToCache()
@@ -1369,6 +1676,8 @@ namespace MusicBox
             {
                 SourceProject = _sourceProject != null ? CloneProject(_sourceProject) : null,
                 LatestPreviewHtml = _latestPreviewHtml,
+                LatestGuitarTabText = _latestGuitarTabText,
+                ActiveFormat = _activeFormat,
                 PreviewLoaded = _previewLoaded
             };
         }
@@ -1399,10 +1708,33 @@ namespace MusicBox
         {
             public ScoreProject? SourceProject { get; set; }
             public string? LatestPreviewHtml { get; set; }
+            public string? LatestGuitarTabText { get; set; }
+            public string? ActiveFormat { get; set; }
             public bool PreviewLoaded { get; set; }
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
