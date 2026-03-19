@@ -9,6 +9,8 @@ namespace MusicBox.Services
     {
         private static readonly int[] MajorScale = { 0, 2, 4, 5, 7, 9, 11 };
         private static readonly int[] MinorScale = { 0, 2, 3, 5, 7, 8, 10 };
+        private static readonly string[] SharpNames = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        private static readonly string[] FlatNames = { "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B" };
         private static readonly DurationSpec[] DurationCandidates =
         {
             new(NoteLengthUtils.ToTicks(NoteLength.Whole, 480), NoteLengthUtils.ToTicks(NoteLength.Whole, 480), 0),
@@ -69,59 +71,82 @@ namespace MusicBox.Services
                 UpdatedAt = DateTimeOffset.Now
             };
 
+            string keyLabel = BuildKeyLabel(request.KeyFifths, request.Mode);
             var chordNames = new List<string>(measures);
-            List<int>? motifA = null;
-            List<int>? motifB = null;
-            int previousDegree = mood.StartDegree;
+            var melodyState = new MelodyState(mood.StartDegree);
+            int? previousBassMidi = null;
+            int[]? previousHarmony = null;
+            int? previousMelodyMidi = null;
 
             for (int measure = 0; measure < measures; measure++)
             {
-                int chordDegree = progression[measure];
                 int startTick = measure * ticksPerMeasure;
+                int chordDegree = progression[measure];
                 MeasureRole role = ResolveRole(measure, measures);
-                chordNames.Add(BuildChordName(tonicPitchClass, scale, chordDegree, request.Mode));
+                ChordPlan chordPlan = BuildChordPlan(chordDegree, role, request.Mode, mood, variant, random);
+                chordNames.Add(chordPlan.Name);
 
-                if (request.IncludeBass)
-                {
-                    AddBass(project, startTick, ticksPerMeasure, unitTicks, bassAnchor, tonicPitchClass, scale, chordDegree, variant);
-                }
+                int bassMidi = request.IncludeBass
+                    ? AddBass(project, startTick, ticksPerMeasure, unitTicks, bassAnchor, tonicPitchClass, scale, chordPlan, previousBassMidi, mood, variant)
+                    : bassAnchor;
 
-                AddHarmony(project, startTick, ticksPerMeasure, unitTicks, tonicPitchClass, scale, chordDegree, style, mood, variant);
+                int[] harmonyVoicing = AddHarmony(
+                    project,
+                    startTick,
+                    ticksPerMeasure,
+                    unitTicks,
+                    tonicPitchClass,
+                    scale,
+                    chordPlan,
+                    style,
+                    mood,
+                    variant,
+                    bassMidi,
+                    previousBassMidi,
+                    previousHarmony);
 
                 int[] rhythm = PickRhythm(style, mood, variant, role, measureUnits);
-                List<int> degrees = role switch
-                {
-                    MeasureRole.Opening or MeasureRole.Return => motifA = BuildDegrees(rhythm.Length, previousDegree, chordDegree, style, mood, variant, role, random),
-                    MeasureRole.Answer when motifA != null => VaryDegrees(motifA, chordDegree, style, mood, variant, role, random),
-                    MeasureRole.Contrast or MeasureRole.Climax => motifB = BuildDegrees(rhythm.Length, previousDegree + 1, chordDegree, style, mood, variant, role, random),
-                    MeasureRole.Cadence or MeasureRole.FinalCadence when motifB != null => BuildCadenceDegrees(motifB, chordDegree, style, mood, variant),
-                    _ => BuildDegrees(rhythm.Length, previousDegree, chordDegree, style, mood, variant, role, random)
-                };
+                List<int> melodyDegrees = BuildMeasureDegrees(rhythm.Length, chordPlan, role, mood, style, variant, melodyState, random);
 
                 int cursor = startTick;
                 for (int index = 0; index < rhythm.Length; index++)
                 {
                     int durationTicks = rhythm[index] * unitTicks;
-                    int degree = degrees[Math.Min(index, degrees.Count - 1)];
-                    int midi = ClampToRange(GetScaleMidi(tonicPitchClass, melodyAnchor, scale, degree), style.MinMidi + variant.RangeFloorOffset, style.MaxMidi + variant.RangeCeilingOffset);
+                    int degree = melodyDegrees[Math.Min(index, melodyDegrees.Count - 1)];
+                    int midi = ClampToRange(
+                        GetScaleMidi(tonicPitchClass, melodyAnchor, scale, degree),
+                        style.MinMidi + variant.RangeFloorOffset,
+                        style.MaxMidi + variant.RangeCeilingOffset);
+
+                    midi = ResolveMelodyCollisionWithBass(previousMelodyMidi, previousBassMidi, midi, bassMidi, tonicPitchClass, scale, chordPlan, style, variant);
+
                     NoteEvent note = CreateNote(midi, cursor, durationTicks, ppq, 1, true);
                     ApplyMelodyExpression(note, index, rhythm.Length, role, mood, variant);
                     project.Notes.Add(note);
-                    previousDegree = degree;
+                    previousMelodyMidi = midi;
                     cursor += durationTicks;
                 }
+
+                previousBassMidi = bassMidi;
+                previousHarmony = harmonyVoicing;
             }
 
             AddExpressionMarks(project, mood, variant, measures, ticksPerMeasure);
-            project.Notes = project.Notes.OrderBy(note => note.StartTick).ThenBy(note => note.Voice).ThenByDescending(note => note.Midi).ToList();
-            string summary = $"{variant.DisplayName} · {variant.Description} · {style.DisplayName} · {mood.DisplayName}";
-            return new SmartComposeResult(project, string.Join("  |  ", chordNames), summary, seed);
+            project.Notes = project.Notes
+                .OrderBy(note => note.StartTick)
+                .ThenBy(note => note.Voice)
+                .ThenByDescending(note => note.Midi)
+                .ToList();
+
+            string summary = $"{variant.DisplayName} | {style.DisplayName} | {mood.DisplayName} | {keyLabel}";
+            string chordProgression = $"[{keyLabel}] " + string.Join("  |  ", chordNames);
+            return new SmartComposeResult(project, chordProgression, summary, seed);
         }
 
         private static int[] BuildProgression(StyleSpec style, int measures, VariantSpec variant, Random random)
         {
-            int[][] bank = style.Progressions[variant.ProgressionBank % style.Progressions.Length];
-            int[] phrase = bank[(variant.PhraseIndex + random.Next(bank.Length)) % bank.Length];
+            int[][] bank = style.Progressions;
+            int[] phrase = bank[(variant.ProgressionBank + random.Next(bank.Length)) % bank.Length];
             var output = new List<int>(measures);
 
             while (output.Count < measures)
@@ -130,7 +155,12 @@ namespace MusicBox.Services
                 output.AddRange(remaining >= phrase.Length ? phrase : phrase.Take(remaining));
             }
 
-            output[^1] = style.FinalDegree;
+            if (measures >= 2)
+            {
+                output[^2] = variant.Texture == VariantTexture.Tension ? 5 : output[^2];
+                output[^1] = 1;
+            }
+
             return output.ToArray();
         }
 
@@ -148,6 +178,7 @@ namespace MusicBox.Services
             {
                 VariantTexture.Anthem => normalized[^1],
                 VariantTexture.Atmosphere => normalized[0],
+                VariantTexture.Tension => normalized[Math.Min(normalized.Count - 1, Math.Max(1, normalized.Count / 2))],
                 _ => normalized[(normalized.Count - 1) / 2]
             };
         }
@@ -159,111 +190,201 @@ namespace MusicBox.Services
             return copy;
         }
 
-        private static List<int> BuildDegrees(int noteCount, int previousDegree, int chordDegree, StyleSpec style, MoodSpec mood, VariantSpec variant, MeasureRole role, Random random)
+        private static ChordPlan BuildChordPlan(int chordDegree, MeasureRole role, KeyMode mode, MoodSpec mood, VariantSpec variant, Random random)
+        {
+            int root = chordDegree - 1;
+            var harmonyDegrees = new List<int> { root, root + 2, root + 4 };
+            string extension = string.Empty;
+
+            bool useAdd9 = mood.UseAdd9 && role is MeasureRole.Opening or MeasureRole.Return or MeasureRole.Climax;
+            bool useMaj7 = mood.UseMaj7 && mode == KeyMode.Major && chordDegree is 1 or 4;
+            bool useSus2 = mood.UseSus2 && role is MeasureRole.Opening or MeasureRole.Return && random.NextDouble() < 0.45;
+            bool useSus4 = mood.UseSus4 && role is MeasureRole.Contrast or MeasureRole.Climax;
+            bool useSeventh = mood.UseSeventh && (chordDegree == 5 || role is MeasureRole.Cadence or MeasureRole.FinalCadence);
+
+            if (useSus2)
+            {
+                harmonyDegrees[1] = root + 1;
+                extension = "sus2";
+            }
+            else if (useSus4)
+            {
+                harmonyDegrees[1] = root + 3;
+                extension = "sus4";
+            }
+
+            if (useMaj7)
+            {
+                harmonyDegrees.Add(root + 6);
+                extension = CombineExtension(extension, "maj7");
+            }
+            else if (useSeventh)
+            {
+                harmonyDegrees.Add(root + 6);
+                extension = CombineExtension(extension, "7");
+            }
+
+            if (useAdd9)
+            {
+                harmonyDegrees.Add(root + 8);
+                extension = CombineExtension(extension, "add9");
+            }
+
+            int[] strongDegrees = harmonyDegrees.Take(3).Distinct().OrderBy(value => value).ToArray();
+            int[] weakDegrees = new[] { root - 1, root, root + 1, root + 2, root + 3, root + 4, root + 5 };
+            int[] cadenceDegrees = role == MeasureRole.FinalCadence
+                ? new[] { 0, 2, 4 }
+                : role == MeasureRole.Cadence
+                    ? new[] { root, root + 2, root + 4, 0, 2, 4 }
+                    : new[] { root, root + 2, root + 4 };
+
+            string chordName = BuildChordName(chordDegree, mode, extension);
+            return new ChordPlan(chordDegree, chordName, strongDegrees, weakDegrees, cadenceDegrees, harmonyDegrees.Distinct().OrderBy(value => value).ToArray());
+        }
+
+        private static List<int> BuildMeasureDegrees(int noteCount, ChordPlan chordPlan, MeasureRole role, MoodSpec mood, StyleSpec style, VariantSpec variant, MelodyState state, Random random)
         {
             var result = new List<int>(noteCount);
-            int chordRoot = chordDegree - 1;
-            int current = previousDegree;
+            int current = state.PreviousDegree;
 
             for (int index = 0; index < noteCount; index++)
             {
-                if (index == 0)
+                bool strongBeat = IsStrongBeat(index, noteCount);
+                int candidate;
+
+                if (index == noteCount - 1)
                 {
-                    current = chordRoot + Pick(role is MeasureRole.Contrast or MeasureRole.Climax ? mood.LiftChoices : mood.OpeningChoices, random) + variant.ContourBias;
+                    candidate = ResolveCadenceDegree(current, chordPlan, role);
                 }
-                else if (index == noteCount - 1)
+                else if (index == 0)
                 {
-                    current = SmoothDegree(current, chordRoot + Pick(role is MeasureRole.Cadence or MeasureRole.FinalCadence ? mood.CadenceChoices : mood.AnswerChoices, random), mood.MaxLeap + Math.Abs(variant.ContourBias));
+                    candidate = ChooseNearest(current, chordPlan.StrongDegrees);
                 }
                 else
                 {
-                    int delta = Pick(role == MeasureRole.Climax ? mood.ClimaxMotion : role == MeasureRole.Contrast ? mood.LiftMotion : mood.CoreMotion, random) + variant.ContourBias;
-                    if (mood.FavorStepwise)
-                    {
-                        delta = Math.Clamp(delta, -1, 1);
-                    }
-
-                    if (variant.Texture == VariantTexture.Atmosphere && random.NextDouble() < 0.45)
-                    {
-                        delta = random.NextDouble() < 0.7 ? 0 : 1;
-                    }
-
-                    if (variant.Texture == VariantTexture.Anthem && index % 2 == 1)
-                    {
-                        delta += 1;
-                    }
-
-                    current = SmoothDegree(current, current + delta, mood.MaxLeap + Math.Abs(variant.ContourBias));
-                    bool strongBeat = index == 0 || index == noteCount / 2 || index == noteCount - 1;
-                    if (index % 2 == 0 || strongBeat)
-                    {
-                        current = RefineDegreeForMood(current, chordRoot, mood, strongBeat);
-                    }
+                    candidate = ChooseInnerDegree(current, chordPlan, strongBeat, mood, variant, state, random);
                 }
 
-                result.Add(Math.Clamp(current, style.MinDegree, style.MaxDegree));
+                candidate = ApplyLeapPolicy(candidate, current, state, mood, strongBeat);
+                candidate = Math.Clamp(candidate, style.MinDegree, style.MaxDegree);
+                result.Add(candidate);
+                current = candidate;
             }
 
+            state.PreviousDegree = current;
             return result;
         }
 
-        private static List<int> VaryDegrees(IReadOnlyList<int> source, int chordDegree, StyleSpec style, MoodSpec mood, VariantSpec variant, MeasureRole role, Random random)
+        private static int ChooseInnerDegree(int current, ChordPlan chordPlan, bool strongBeat, MoodSpec mood, VariantSpec variant, MelodyState state, Random random)
         {
-            int chordRoot = chordDegree - 1;
-            var result = new List<int>(source.Count);
-
-            for (int index = 0; index < source.Count; index++)
+            if (state.ForceContraryStep && state.PreviousDirection != 0)
             {
-                int degree = source[index] + (variant.Texture == VariantTexture.Anthem ? (index % 2 == 0 ? 1 : 0) : random.Next(-1, 2));
-                if (mood.FavorStepwise && index < source.Count - 1)
-                {
-                    degree = SmoothDegree(source[index], degree, 1);
-                }
-
-                if (index % 2 == 0 || index == source.Count - 1)
-                {
-                    degree = RefineDegreeForMood(degree, chordRoot, mood, strongBeat: true);
-                }
-
-                if (index == source.Count - 1)
-                {
-                    degree = SmoothDegree(degree, chordRoot + Pick(role is MeasureRole.Cadence or MeasureRole.FinalCadence ? mood.CadenceChoices : mood.AnswerChoices, random), mood.MaxLeap + Math.Abs(variant.ContourBias));
-                }
-
-                result.Add(Math.Clamp(degree, style.MinDegree, style.MaxDegree));
+                state.ForceContraryStep = false;
+                return current - state.PreviousDirection;
             }
 
-            return result;
+            if (strongBeat)
+            {
+                int contourTarget = current + Pick(mood.StrongMotion, random) + variant.ContourBias;
+                return ChooseNearest(contourTarget, chordPlan.StrongDegrees);
+            }
+
+            int weakTarget = current + Pick(mood.WeakMotion, random);
+            if (mood.FavorStepwise)
+            {
+                weakTarget = current + Math.Clamp(weakTarget - current, -1, 1);
+            }
+
+            if (variant.Texture == VariantTexture.Tension && random.NextDouble() < 0.35)
+            {
+                weakTarget += random.Next(0, 2) == 0 ? -1 : 1;
+            }
+
+            return ChooseNearest(weakTarget, chordPlan.WeakDegrees);
         }
 
-        private static List<int> BuildCadenceDegrees(IReadOnlyList<int> source, int chordDegree, StyleSpec style, MoodSpec mood, VariantSpec variant)
+        private static int ApplyLeapPolicy(int candidate, int current, MelodyState state, MoodSpec mood, bool strongBeat)
         {
-            int chordRoot = chordDegree - 1;
-            var result = source.ToList();
-            if (result.Count == 0)
+            int delta = candidate - current;
+            int absDelta = Math.Abs(delta);
+
+            if (absDelta > mood.MaxLeapDegrees)
             {
-                result.Add(chordRoot);
+                candidate = current + Math.Sign(delta) * mood.MaxLeapDegrees;
+                delta = candidate - current;
+                absDelta = Math.Abs(delta);
             }
 
-            for (int index = Math.Max(0, result.Count - 2); index < result.Count; index++)
+            if (absDelta > 2)
             {
-                result[index] = index == result.Count - 1
-                    ? Math.Clamp(chordRoot + (variant.Texture == VariantTexture.Anthem ? 4 : variant.Texture == VariantTexture.Atmosphere ? 2 : 0), style.MinDegree, style.MaxDegree)
-                    : Math.Clamp(RefineDegreeForMood(result[index] - 1, chordRoot, mood, true), style.MinDegree, style.MaxDegree);
+                if (state.ConsecutiveLargeLeaps >= 1)
+                {
+                    candidate = current + Math.Sign(delta) * 2;
+                    delta = candidate - current;
+                    absDelta = Math.Abs(delta);
+                }
+
+                if (absDelta > 2)
+                {
+                    state.ConsecutiveLargeLeaps++;
+                    state.ForceContraryStep = true;
+                }
+            }
+            else
+            {
+                state.ConsecutiveLargeLeaps = 0;
+                if (!strongBeat)
+                {
+                    candidate = current + Math.Clamp(candidate - current, -1, 1);
+                }
             }
 
-            return result;
+            state.PreviousDirection = Math.Sign(candidate - current);
+            return candidate;
         }
 
-        private static void AddBass(ScoreProject project, int startTick, int ticksPerMeasure, int unitTicks, int bassAnchor, int tonicPitchClass, IReadOnlyList<int> scale, int chordDegree, VariantSpec variant)
+        private static int ResolveCadenceDegree(int current, ChordPlan chordPlan, MeasureRole role)
         {
-            int root = ClosestMidiToTarget(GetScaleMidi(tonicPitchClass, bassAnchor, scale, chordDegree - 1), bassAnchor);
-            int fifth = ClosestMidiToTarget(GetScaleMidi(tonicPitchClass, bassAnchor + 5, scale, chordDegree + 3), bassAnchor + 5);
+            if (role == MeasureRole.FinalCadence)
+            {
+                int[] finalTargets = { 0, 2, 4 };
+                return finalTargets.OrderBy(value => Math.Abs(value - current)).ThenBy(value => value == 0 ? 0 : 1).First();
+            }
 
-            if (variant.Texture == VariantTexture.Atmosphere)
+            return chordPlan.CadenceDegrees.OrderBy(value => Math.Abs(value - current)).First();
+        }
+
+        private static int AddBass(
+            ScoreProject project,
+            int startTick,
+            int ticksPerMeasure,
+            int unitTicks,
+            int bassAnchor,
+            int tonicPitchClass,
+            IReadOnlyList<int> scale,
+            ChordPlan chordPlan,
+            int? previousBassMidi,
+            MoodSpec mood,
+            VariantSpec variant)
+        {
+            int root = ClosestMidiToTarget(GetScaleMidi(tonicPitchClass, bassAnchor, scale, chordPlan.Degree - 1), previousBassMidi ?? bassAnchor);
+            int fifth = ClosestMidiToTarget(GetScaleMidi(tonicPitchClass, bassAnchor + 5, scale, chordPlan.Degree + 3), root + 7);
+            root = ShiftNear(root, previousBassMidi ?? root);
+            fifth = ShiftNear(fifth, root + 7);
+
+            if (variant.Texture == VariantTexture.Atmosphere || mood.PedalFriendly)
             {
                 project.Notes.Add(CreateNote(root, startTick, ticksPerMeasure, 480, 2, false));
-                return;
+                return root;
+            }
+
+            if (variant.Texture == VariantTexture.Tension)
+            {
+                AddBassHit(project, root, startTick, unitTicks * 2, true);
+                AddBassHit(project, fifth, startTick + unitTicks * 3, unitTicks, false);
+                AddBassHit(project, root + 12, startTick + unitTicks * 5, unitTicks, true);
+                AddBassHit(project, fifth, startTick + unitTicks * 6, ticksPerMeasure - unitTicks * 6, false);
+                return root;
             }
 
             if (variant.Texture == VariantTexture.Anthem)
@@ -272,12 +393,13 @@ namespace MusicBox.Services
                 AddBassHit(project, root + 12, startTick + unitTicks * 2, unitTicks * 2, false);
                 AddBassHit(project, fifth, startTick + unitTicks * 4, unitTicks * 2, true);
                 AddBassHit(project, root + 12, startTick + unitTicks * 6, ticksPerMeasure - unitTicks * 6, false);
-                return;
+                return root;
             }
 
             int half = ticksPerMeasure / 2;
             project.Notes.Add(CreateNote(root, startTick, half, 480, 2, false));
             project.Notes.Add(CreateNote(fifth, startTick + half, ticksPerMeasure - half, 480, 2, false));
+            return root;
         }
 
         private static void AddBassHit(ScoreProject project, int midi, int startTick, int durationTicks, bool accent)
@@ -293,10 +415,23 @@ namespace MusicBox.Services
             project.Notes.Add(note);
         }
 
-        private static void AddHarmony(ScoreProject project, int startTick, int ticksPerMeasure, int unitTicks, int tonicPitchClass, IReadOnlyList<int> scale, int chordDegree, StyleSpec style, MoodSpec mood, VariantSpec variant)
+        private static int[] AddHarmony(
+            ScoreProject project,
+            int startTick,
+            int ticksPerMeasure,
+            int unitTicks,
+            int tonicPitchClass,
+            IReadOnlyList<int> scale,
+            ChordPlan chordPlan,
+            StyleSpec style,
+            MoodSpec mood,
+            VariantSpec variant,
+            int bassMidi,
+            int? previousBassMidi,
+            int[]? previousHarmony)
         {
-            int center = style.CenterMidi - 3 + variant.MelodyOffset;
-            int[] voicing = BuildChordVoicing(tonicPitchClass, center, scale, chordDegree, mood, variant);
+            int center = style.CenterMidi - 4 + variant.MelodyOffset;
+            int[] voicing = BuildChordVoicing(tonicPitchClass, center, scale, chordPlan.HarmonyDegrees, mood, bassMidi, previousBassMidi, previousHarmony);
 
             if (variant.Texture == VariantTexture.Atmosphere)
             {
@@ -304,7 +439,26 @@ namespace MusicBox.Services
                 {
                     project.Notes.Add(CreateNote(midi, startTick, ticksPerMeasure, 480, 3, true));
                 }
-                return;
+
+                return voicing;
+            }
+
+            if (variant.Texture == VariantTexture.Tension)
+            {
+                for (int hit = 0; hit < 3; hit++)
+                {
+                    int hitStart = startTick + hit * unitTicks * 2 + (hit == 1 ? unitTicks : 0);
+                    int hitDuration = hit == 2 ? ticksPerMeasure - (hit * unitTicks * 2) : unitTicks * 2;
+                    foreach (int midi in voicing.Take(Math.Min(3, voicing.Length)))
+                    {
+                        NoteEvent note = CreateNote(midi + (hit == 1 ? 12 : 0), hitStart, hitDuration, 480, 3, true);
+                        note.IsAccent = hit != 1;
+                        note.IsStaccato = hit == 1;
+                        project.Notes.Add(note);
+                    }
+                }
+
+                return voicing;
             }
 
             if (variant.Texture == VariantTexture.Anthem)
@@ -313,7 +467,7 @@ namespace MusicBox.Services
                 {
                     int hitStart = startTick + beat * unitTicks * 2;
                     int hitDuration = beat == 3 ? ticksPerMeasure - beat * unitTicks * 2 : unitTicks * 2;
-                    foreach (int midi in voicing.Take(2))
+                    foreach (int midi in voicing.Take(Math.Min(3, voicing.Length)))
                     {
                         NoteEvent note = CreateNote(midi + (beat % 2 == 0 ? 0 : 12), hitStart, hitDuration, 480, 3, true);
                         note.IsAccent = beat is 0 or 2;
@@ -321,44 +475,161 @@ namespace MusicBox.Services
                         project.Notes.Add(note);
                     }
                 }
-                return;
+
+                return voicing;
             }
 
             int half = ticksPerMeasure / 2;
             foreach (int hitStart in new[] { startTick, startTick + half })
             {
+                int duration = hitStart == startTick ? half : ticksPerMeasure - half;
                 foreach (int midi in voicing)
                 {
-                    int duration = hitStart == startTick ? half : ticksPerMeasure - half;
                     project.Notes.Add(CreateNote(midi, hitStart, duration, 480, 3, true));
                 }
             }
+
+            return voicing;
         }
 
-        private static int[] BuildChordVoicing(int tonicPitchClass, int center, IReadOnlyList<int> scale, int chordDegree, MoodSpec mood, VariantSpec variant)
+        private static int[] BuildChordVoicing(
+            int tonicPitchClass,
+            int center,
+            IReadOnlyList<int> scale,
+            IReadOnlyList<int> harmonyDegrees,
+            MoodSpec mood,
+            int bassMidi,
+            int? previousBassMidi,
+            int[]? previousHarmony)
         {
-            int root = ClampToRange(GetScaleMidi(tonicPitchClass, center - 4, scale, chordDegree - 1), 48, 84);
-            int third = ClampToRange(GetScaleMidi(tonicPitchClass, center, scale, chordDegree + 1), 52, 88);
-            int fifth = ClampToRange(GetScaleMidi(tonicPitchClass, center + 5, scale, chordDegree + 3), 55, 92);
+            var resolved = new List<int>(harmonyDegrees.Count);
+            int minGap = mood.Texture == MoodTexture.Tense ? 2 : 4;
 
-            int[] voicing = variant.Texture switch
+            for (int index = 0; index < harmonyDegrees.Count; index++)
             {
-                VariantTexture.Atmosphere => new[] { root, fifth, third + 12 },
-                VariantTexture.Anthem => new[] { root, fifth, root + 12 },
-                _ => new[] { root, third, fifth }
-            };
-
-            Array.Sort(voicing);
-            int minimumGap = mood.TensionLevel >= 2 ? 2 : 4;
-            for (int index = 1; index < voicing.Length; index++)
-            {
-                while (voicing[index] - voicing[index - 1] < minimumGap)
+                int target = center + (index - 1) * 5;
+                int midi = GetScaleMidi(tonicPitchClass, target, scale, harmonyDegrees[index]);
+                if (previousHarmony != null && index < previousHarmony.Length)
                 {
-                    voicing[index] += 12;
+                    midi = ShiftNear(midi, previousHarmony[index]);
+                }
+
+                midi = ShiftAbove(midi, bassMidi + 5 + index * 2);
+                resolved.Add(midi);
+            }
+
+            resolved.Sort();
+            for (int index = 1; index < resolved.Count; index++)
+            {
+                while (resolved[index] - resolved[index - 1] < minGap)
+                {
+                    resolved[index] += 12;
                 }
             }
 
-            return voicing.Select(midi => ClampToRange(midi, 48, 92)).Distinct().ToArray();
+            int[] voicing = resolved
+                .Select(midi => ClampToRange(midi, 48, 92))
+                .Distinct()
+                .OrderBy(midi => midi)
+                .ToArray();
+
+            if (previousHarmony != null && previousBassMidi.HasValue && voicing.Length > 0)
+            {
+                voicing = AvoidOuterParallelPerfects(voicing, previousHarmony, bassMidi, previousBassMidi.Value, tonicPitchClass, scale, harmonyDegrees);
+            }
+
+            return voicing;
+        }
+
+        private static int[] AvoidOuterParallelPerfects(
+            int[] current,
+            int[] previous,
+            int currentBass,
+            int previousBass,
+            int tonicPitchClass,
+            IReadOnlyList<int> scale,
+            IReadOnlyList<int> harmonyDegrees)
+        {
+            if (current.Length == 0 || previous.Length == 0)
+            {
+                return current;
+            }
+
+            int previousTop = previous[^1];
+            int currentTop = current[^1];
+            int topDirection = Math.Sign(currentTop - previousTop);
+            int bassDirection = Math.Sign(currentBass - previousBass);
+            int oldInterval = Math.Abs(previousTop - previousBass) % 12;
+            int newInterval = Math.Abs(currentTop - currentBass) % 12;
+
+            if (topDirection != 0
+                && topDirection == bassDirection
+                && (oldInterval == 0 || oldInterval == 7)
+                && (newInterval == 0 || newInterval == 7))
+            {
+                for (int index = harmonyDegrees.Count - 1; index >= 0; index--)
+                {
+                    int alternative = ClampToRange(
+                        ShiftAbove(GetScaleMidi(tonicPitchClass, currentTop, scale, harmonyDegrees[index]), currentBass + 7),
+                        52,
+                        92);
+
+                    int alternativeInterval = Math.Abs(alternative - currentBass) % 12;
+                    if (alternativeInterval != 0 && alternativeInterval != 7)
+                    {
+                        int[] adjusted = current.ToArray();
+                        adjusted[^1] = alternative;
+                        Array.Sort(adjusted);
+                        return adjusted;
+                    }
+                }
+            }
+
+            return current;
+        }
+
+        private static int ResolveMelodyCollisionWithBass(
+            int? previousMelodyMidi,
+            int? previousBassMidi,
+            int melodyMidi,
+            int bassMidi,
+            int tonicPitchClass,
+            IReadOnlyList<int> scale,
+            ChordPlan chordPlan,
+            StyleSpec style,
+            VariantSpec variant)
+        {
+            if (!previousMelodyMidi.HasValue || !previousBassMidi.HasValue)
+            {
+                return melodyMidi;
+            }
+
+            int oldInterval = Math.Abs(previousMelodyMidi.Value - previousBassMidi.Value) % 12;
+            int newInterval = Math.Abs(melodyMidi - bassMidi) % 12;
+            int melodyDirection = Math.Sign(melodyMidi - previousMelodyMidi.Value);
+            int bassDirection = Math.Sign(bassMidi - previousBassMidi.Value);
+
+            if (melodyDirection != 0
+                && melodyDirection == bassDirection
+                && (oldInterval == 0 || oldInterval == 7)
+                && (newInterval == 0 || newInterval == 7))
+            {
+                foreach (int degree in chordPlan.StrongDegrees.Reverse())
+                {
+                    int alternative = ClampToRange(
+                        GetScaleMidi(tonicPitchClass, melodyMidi, scale, degree),
+                        style.MinMidi + variant.RangeFloorOffset,
+                        style.MaxMidi + variant.RangeCeilingOffset);
+
+                    int alternativeInterval = Math.Abs(alternative - bassMidi) % 12;
+                    if (alternativeInterval != 0 && alternativeInterval != 7)
+                    {
+                        return alternative;
+                    }
+                }
+            }
+
+            return melodyMidi;
         }
 
         private static void ApplyMelodyExpression(NoteEvent note, int index, int count, MeasureRole role, MoodSpec mood, VariantSpec variant)
@@ -378,21 +649,29 @@ namespace MusicBox.Services
                 note.IsStaccato = true;
             }
 
-            if (variant.Texture == VariantTexture.Atmosphere && role == MeasureRole.Climax && index == Math.Max(0, count - 2) && mood.TensionLevel > 0)
+            if (variant.Texture == VariantTexture.Atmosphere && role == MeasureRole.Climax && index == Math.Max(0, count - 2))
             {
                 note.Ornament = NoteOrnament.Appoggiatura;
+            }
+
+            if (variant.Texture == VariantTexture.Tension && index > 0 && index < count - 1)
+            {
+                note.IsAccent = note.IsAccent || index % 2 == 0;
             }
         }
 
         private static void AddExpressionMarks(ScoreProject project, MoodSpec mood, VariantSpec variant, int measures, int ticksPerMeasure)
         {
             int totalTicks = measures * ticksPerMeasure;
-            project.ExpressionMarks.Add(new ExpressionMark { Code = variant.Texture == VariantTexture.Anthem ? "f" : variant.Texture == VariantTexture.Atmosphere ? "p" : "mf", StartTick = 0, StaffStepOffset = 17f });
-            project.ExpressionMarks.Add(new ExpressionMark { Code = variant.Texture == VariantTexture.Anthem ? "cresc" : "cresc_text", StartTick = totalTicks / 3, StaffStepOffset = 17f, SpanBeats = 3.5f });
-            project.ExpressionMarks.Add(new ExpressionMark { Code = "rit", StartTick = Math.Max(0, totalTicks - ticksPerMeasure * 2), StaffStepOffset = 17f, SpanBeats = 2.4f });
-            project.ExpressionMarks.Add(new ExpressionMark { Code = variant.Texture == VariantTexture.Atmosphere ? "pp" : "mp", StartTick = Math.Max(0, totalTicks - ticksPerMeasure), StaffStepOffset = 17f });
+            string openingDynamic = variant.Texture == VariantTexture.Atmosphere ? "p" : variant.Texture == VariantTexture.Tension ? "mf" : "mp";
+            string closingDynamic = variant.Texture == VariantTexture.Atmosphere ? "pp" : variant.Texture == VariantTexture.Tension ? "mp" : "p";
 
-            if (!mood.SustainPedal && !variant.ForcePedal)
+            project.ExpressionMarks.Add(new ExpressionMark { Code = openingDynamic, StartTick = 0, StaffStepOffset = 17f });
+            project.ExpressionMarks.Add(new ExpressionMark { Code = mood.Texture == MoodTexture.Tense ? "cresc" : "cresc_text", StartTick = totalTicks / 3, StaffStepOffset = 17f, SpanBeats = 3.5f });
+            project.ExpressionMarks.Add(new ExpressionMark { Code = "rit", StartTick = Math.Max(0, totalTicks - ticksPerMeasure * 2), StaffStepOffset = 17f, SpanBeats = 2.4f });
+            project.ExpressionMarks.Add(new ExpressionMark { Code = closingDynamic, StartTick = Math.Max(0, totalTicks - ticksPerMeasure), StaffStepOffset = 17f });
+
+            if (!mood.PedalFriendly && !variant.ForcePedal)
             {
                 return;
             }
@@ -449,29 +728,58 @@ namespace MusicBox.Services
             return candidate;
         }
 
-        private static string BuildChordName(int tonicPitchClass, IReadOnlyList<int> scale, int degree, KeyMode mode)
+        private static string BuildChordName(int degree, KeyMode mode, string extension)
         {
-            int index = Mod(degree - 1, scale.Count);
-            int pitchClass = Mod(tonicPitchClass + scale[index], 12);
-            string root = pitchClass switch
-            {
-                0 => "C",
-                1 => "C#",
-                2 => "D",
-                3 => "Eb",
-                4 => "E",
-                5 => "F",
-                6 => "F#",
-                7 => "G",
-                8 => "Ab",
-                9 => "A",
-                10 => "Bb",
-                11 => "B",
-                _ => "C"
-            };
+            string roman = mode == KeyMode.Major
+                ? degree switch
+                {
+                    1 => "I",
+                    2 => "ii",
+                    3 => "iii",
+                    4 => "IV",
+                    5 => "V",
+                    6 => "vi",
+                    7 => "vii°",
+                    _ => "I"
+                }
+                : degree switch
+                {
+                    1 => "i",
+                    2 => "ii°",
+                    3 => "III",
+                    4 => "iv",
+                    5 => "v",
+                    6 => "VI",
+                    7 => "VII",
+                    _ => "i"
+                };
 
-            bool isMinor = mode == KeyMode.Minor ? index is 0 or 3 or 4 : index is 1 or 2 or 5;
-            return isMinor ? $"{root}m" : root;
+            return string.IsNullOrWhiteSpace(extension) ? roman : $"{roman}({extension})";
+        }
+
+        private static string BuildKeyLabel(int fifths, KeyMode mode)
+        {
+            int pitchClass = Mod(fifths * 7 + (mode == KeyMode.Minor ? 9 : 0), 12);
+            string tonic = fifths >= 0 ? SharpNames[pitchClass] : FlatNames[pitchClass];
+            return $"{tonic} {(mode == KeyMode.Minor ? "minor" : "major")}";
+        }
+
+        private static bool IsStrongBeat(int index, int count)
+        {
+            return index == 0 || index == count - 1 || index == count / 2;
+        }
+
+        private static int ChooseNearest(int target, IReadOnlyList<int> options)
+        {
+            return options
+                .OrderBy(value => Math.Abs(value - target))
+                .ThenBy(value => value)
+                .First();
+        }
+
+        private static int Pick(IReadOnlyList<int> values, Random random)
+        {
+            return values[random.Next(values.Count)];
         }
 
         private static int ClosestMidiToTarget(int pitchClass, int targetMidi)
@@ -480,6 +788,34 @@ namespace MusicBox.Services
             int below = baseMidi;
             int above = baseMidi + 12;
             return Math.Abs(below - targetMidi) <= Math.Abs(above - targetMidi) ? below : above;
+        }
+
+        private static int ShiftNear(int midi, int target)
+        {
+            int best = midi;
+            int bestDistance = Math.Abs(midi - target);
+            for (int offset = -24; offset <= 24; offset += 12)
+            {
+                int candidate = midi + offset;
+                int distance = Math.Abs(candidate - target);
+                if (distance < bestDistance)
+                {
+                    best = candidate;
+                    bestDistance = distance;
+                }
+            }
+
+            return best;
+        }
+
+        private static int ShiftAbove(int midi, int minimum)
+        {
+            while (midi <= minimum)
+            {
+                midi += 12;
+            }
+
+            return midi;
         }
 
         private static int ClampToRange(int midi, int minMidi, int maxMidi)
@@ -495,6 +831,16 @@ namespace MusicBox.Services
             }
 
             return Math.Clamp(midi, minMidi, maxMidi);
+        }
+
+        private static string CombineExtension(string current, string next)
+        {
+            if (string.IsNullOrWhiteSpace(current))
+            {
+                return next;
+            }
+
+            return current.Contains(next, StringComparison.OrdinalIgnoreCase) ? current : $"{current},{next}";
         }
 
         private static int ResolveMeasureUnits(TimeSignature timeSignature)
@@ -520,48 +866,6 @@ namespace MusicBox.Services
             };
         }
 
-        private static int Pick(IReadOnlyList<int> values, Random random)
-        {
-            return values[random.Next(values.Count)];
-        }
-
-        private static int RefineDegreeForMood(int degree, int chordRoot, MoodSpec mood, bool strongBeat)
-        {
-            if (mood.TensionLevel >= 2)
-            {
-                return strongBeat ? SnapNearChord(degree, chordRoot) : degree;
-            }
-
-            int[] stableTones = mood.TensionLevel == 0
-                ? new[] { chordRoot, chordRoot + 2, chordRoot + 4 }
-                : new[] { chordRoot, chordRoot + 2, chordRoot + 4, chordRoot + 5 };
-
-            return stableTones.OrderBy(value => Math.Abs(value - degree)).First();
-        }
-
-        private static int SnapNearChord(int degree, int chordRoot)
-        {
-            return new[] { chordRoot, chordRoot + 2, chordRoot + 4, chordRoot + 7 }
-                .OrderBy(value => Math.Abs(value - degree))
-                .First();
-        }
-
-        private static int SmoothDegree(int previous, int target, int maxLeap)
-        {
-            int delta = target - previous;
-            if (delta > maxLeap)
-            {
-                return previous + maxLeap;
-            }
-
-            if (delta < -maxLeap)
-            {
-                return previous - maxLeap;
-            }
-
-            return target;
-        }
-
         private static int FloorDiv(int value, int divisor)
         {
             int quotient = value / divisor;
@@ -580,14 +884,14 @@ namespace MusicBox.Services
             string mood = moodId?.Trim().ToLowerInvariant() ?? "calm";
             return mood switch
             {
-                "positive" => new MoodSpec("积极", 10, 102, 150, 3, 2, new[] { 0, 2, 4 }, new[] { 2, 4, 5 }, new[] { 4, 5, 6 }, new[] { 0, 2, 4 }, new[] { 1, 1, 2, 0 }, new[] { 2, 1, 1, -1 }, new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 } }, false, 0, false),
-                "sad" => new MoodSpec("伤感", -14, 58, 88, -4, 2, new[] { 4, 2, 0 }, new[] { 2, 0, -1 }, new[] { 4, 2, 0 }, new[] { 0, 2 }, new[] { -1, 0, 0, -1 }, new[] { 1, -1, -1 }, new[] { new[] { 4, 4 }, new[] { 2, 2, 4 } }, false, 0, true),
-                "sleep" => new MoodSpec("助眠", -20, 50, 72, -5, 0, new[] { 0, 2 }, new[] { 0, 1 }, new[] { 2, 4 }, new[] { 0, 2 }, new[] { 0, 1, 0 }, new[] { 1, 0, -1 }, new[] { new[] { 6, 2 }, new[] { 8 } }, true, 0, true),
-                "hopeful" => new MoodSpec("希望", 8, 92, 136, 2, 2, new[] { 0, 2, 4 }, new[] { 2, 4, 5 }, new[] { 4, 5, 6 }, new[] { 2, 4 }, new[] { 1, 2, 0, 1 }, new[] { 2, 1, 0 }, new[] { new[] { 2, 2, 4 }, new[] { 4, 4 } }, false, 0, false),
-                "nostalgic" => new MoodSpec("怀旧", -6, 66, 104, -2, 2, new[] { 2, 4, 5 }, new[] { 2, 0, -1 }, new[] { 4, 5, 2 }, new[] { 0, 2 }, new[] { -1, 0, 1, -1 }, new[] { 1, -1, 1 }, new[] { new[] { 4, 4 }, new[] { 6, 2 } }, false, 0, true),
-                "dreamy" => new MoodSpec("梦幻", -10, 68, 100, 1, 2, new[] { 0, 2, 4 }, new[] { 2, 4 }, new[] { 4, 5, 6 }, new[] { 2, 4 }, new[] { 1, 0, 1, -1 }, new[] { 1, 1, -1 }, new[] { new[] { 6, 2 }, new[] { 8 } }, true, 1, true),
-                "tense" => new MoodSpec("紧张", 14, 104, 154, 2, 4, new[] { 4, 5, 6 }, new[] { 2, 4, 6 }, new[] { 6, 5, 4 }, new[] { 2, 4 }, new[] { 2, -1, 2, -2 }, new[] { 2, 1, -2, 3 }, new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 } }, false, 2, false),
-                _ => new MoodSpec("平静", -6, 70, 102, -1, 2, new[] { 0, 2, 4 }, new[] { 2, 4, 5 }, new[] { 2, 4, 5 }, new[] { 0, 2 }, new[] { 0, 1, 0, -1 }, new[] { 1, 0, -1, 1 }, new[] { new[] { 4, 4 }, new[] { 2, 2, 4 } }, false, 0, true)
+                "positive" => new MoodSpec("Positive", 10, 102, 150, 3, 2, 3, new[] { 0, 1, 2 }, new[] { 1, 1, 2, 0 }, MoodTexture.Bright, false, false, false, false, false, false, new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 } }),
+                "sad" => new MoodSpec("Sad", -14, 58, 88, -4, 2, 2, new[] { -1, 0, 1 }, new[] { 1, -1, -1, 0 }, MoodTexture.Gentle, false, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 2, 2, 4 } }),
+                "sleep" => new MoodSpec("Sleep", -20, 50, 72, -5, 0, 2, new[] { 0, 1 }, new[] { 0, 1, 0 }, MoodTexture.Calm, false, false, false, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 } }),
+                "hopeful" => new MoodSpec("Hopeful", 8, 92, 136, 2, 2, 3, new[] { 1, 2, 1 }, new[] { 1, 2, 0, 1 }, MoodTexture.Bright, true, false, false, false, false, false, new[] { new[] { 2, 2, 4 }, new[] { 4, 4 } }),
+                "nostalgic" => new MoodSpec("Nostalgic", -6, 66, 104, -2, 2, 2, new[] { -1, 0, 1 }, new[] { -1, 0, 1, -1 }, MoodTexture.Gentle, true, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 6, 2 } }),
+                "dreamy" => new MoodSpec("Dreamy", -10, 68, 100, 1, 2, 2, new[] { 0, 1 }, new[] { 1, 0, 1, -1 }, MoodTexture.Airy, true, true, true, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 } }),
+                "tense" => new MoodSpec("Tense", 14, 104, 154, 2, 4, 4, new[] { 2, -1, 2, -2 }, new[] { 2, -1, 2, -2 }, MoodTexture.Tense, false, false, false, false, true, false, new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 } }),
+                _ => new MoodSpec("Calm", -6, 70, 102, -1, 2, 2, new[] { 0, 1, 0 }, new[] { 0, 1, 0, -1 }, MoodTexture.Calm, true, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 2, 2, 4 } })
             };
         }
 
@@ -598,13 +902,14 @@ namespace MusicBox.Services
             int[][] calmCore = compound ? new[] { new[] { 3, 3 }, new[] { 2, 2, 2 }, new[] { 4, 2 } } : new[] { new[] { 4, 4 }, new[] { 2, 2, 4 }, new[] { 4, 2, 2 } };
             int[][] driveCore = compound ? new[] { new[] { 2, 2, 2 }, new[] { 1, 1, 2, 2 }, new[] { 1, 1, 1, 1, 2 } } : new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 }, new[] { 2, 1, 1, 2, 2 } };
             int[][] lift = compound ? new[] { new[] { 2, 2, 2 }, new[] { 1, 1, 2, 2 } } : new[] { new[] { 2, 2, 2, 2 }, new[] { 2, 1, 1, 2, 2 } };
+            int[][] tenseLift = compound ? new[] { new[] { 1, 1, 1, 1, 1, 1 }, new[] { 2, 1, 1, 2 } } : new[] { new[] { 1, 1, 1, 1, 2, 2 }, new[] { 2, 1, 1, 2, 1, 1 } };
 
             return style switch
             {
-                "folk" => new StyleSpec("民谣", 96, 58, 79, -1, 10, 1, new[] { new[] { new[] { 1, 4, 1, 5 }, new[] { 6, 4, 1, 5 }, new[] { 1, 5, 4, 1 } }, new[] { new[] { 1, 4, 6, 5 }, new[] { 6, 1, 4, 5 }, new[] { 1, 5, 6, 4 } }, new[] { new[] { 1, 1, 4, 5 }, new[] { 6, 4, 5, 1 }, new[] { 1, 4, 5, 1 } } }, driveCore, lift),
-                "ambient" => new StyleSpec("氛围", 82, 60, 84, -1, 11, 1, new[] { new[] { new[] { 1, 6, 4, 1 }, new[] { 4, 1, 6, 5 }, new[] { 1, 5, 4, 1 } }, new[] { new[] { 6, 1, 4, 5 }, new[] { 1, 4, 6, 1 }, new[] { 4, 5, 1, 1 } }, new[] { new[] { 1, 1, 6, 4 }, new[] { 4, 1, 5, 1 }, new[] { 6, 4, 1, 1 } } }, calmCore, lift),
-                "dance" => new StyleSpec("舞曲", 124, 61, 82, 0, 12, 5, new[] { new[] { new[] { 1, 5, 6, 4 }, new[] { 6, 4, 1, 5 }, new[] { 1, 1, 6, 4 } }, new[] { new[] { 1, 6, 4, 5 }, new[] { 6, 5, 1, 4 }, new[] { 1, 5, 4, 6 } }, new[] { new[] { 1, 5, 6, 5 }, new[] { 6, 4, 5, 1 }, new[] { 1, 4, 6, 5 } } }, driveCore, lift),
-                _ => new StyleSpec("流行", 108, 60, 80, -1, 11, 1, new[] { new[] { new[] { 1, 5, 6, 4 }, new[] { 1, 6, 4, 5 }, new[] { 6, 4, 1, 5 } }, new[] { new[] { 1, 4, 6, 5 }, new[] { 6, 1, 5, 4 }, new[] { 1, 5, 4, 1 } }, new[] { new[] { 1, 1, 6, 4 }, new[] { 6, 4, 5, 1 }, new[] { 1, 4, 5, 1 } } }, driveCore, lift)
+                "folk" => new StyleSpec("Folk", 96, 58, 79, -1, 10, new[] { new[] { 1, 4, 1, 5 }, new[] { 6, 4, 1, 5 }, new[] { 1, 5, 4, 1 } }, driveCore, lift),
+                "ambient" => new StyleSpec("Ambient", 82, 60, 84, -1, 11, new[] { new[] { 1, 6, 4, 1 }, new[] { 4, 1, 6, 5 }, new[] { 1, 5, 4, 1 } }, calmCore, lift),
+                "dance" => new StyleSpec("Dance", 124, 61, 82, 0, 12, new[] { new[] { 1, 5, 6, 4 }, new[] { 6, 4, 1, 5 }, new[] { 1, 1, 6, 4 } }, driveCore, tenseLift),
+                _ => new StyleSpec("Pop", 108, 60, 80, -1, 11, new[] { new[] { 1, 5, 6, 4 }, new[] { 1, 6, 4, 5 }, new[] { 6, 4, 1, 5 } }, driveCore, lift)
             };
         }
 
@@ -612,18 +917,85 @@ namespace MusicBox.Services
         {
             return (index % 3) switch
             {
-                1 => new VariantSpec("副歌型", "更高更密，推动感更强", VariantTexture.Anthem, 1, 1, 4, 2, 8, 0, 4, 1, false),
-                2 => new VariantSpec("氛围型", "更长音、更留白、更悬浮", VariantTexture.Atmosphere, 2, 2, 6, -3, -10, -2, 6, -1, true),
-                _ => new VariantSpec("主歌型", "句法更顺，低音更稳", VariantTexture.Narrative, 0, 0, 0, 0, 0, 0, 0, 0, false)
+                1 => new VariantSpec("Lift", "denser and brighter", VariantTexture.Anthem, 1, 4, 2, 8, 0, 4, 1, false),
+                2 => new VariantSpec("Atmosphere", "longer notes and more space", VariantTexture.Atmosphere, 2, 6, -3, -10, -2, 6, -1, true),
+                _ => new VariantSpec("Narrative", "balanced lead with stable cadence", VariantTexture.Narrative, 0, 0, 0, 0, 0, 0, 0, false)
             };
         }
 
-        private enum MeasureRole { Opening, Answer, Contrast, Cadence, Return, Climax, FinalCadence }
-        private enum VariantTexture { Narrative, Anthem, Atmosphere }
-        private sealed record StyleSpec(string DisplayName, int DefaultTempo, int MinMidi, int MaxMidi, int MinDegree, int MaxDegree, int FinalDegree, int[][][] Progressions, int[][] CorePatterns, int[][] LiftPatterns) { public int CenterMidi => (MinMidi + MaxMidi) / 2; }
-        private sealed record MoodSpec(string DisplayName, int TempoOffset, int MinTempo, int MaxTempo, int RangeOffset, int StartDegree, int[] OpeningChoices, int[] AnswerChoices, int[] LiftChoices, int[] CadenceChoices, int[] CoreMotion, int[] LiftMotion, int[][] CadencePatterns, bool SustainPedal, int TensionLevel, bool FavorStepwise) { public int MaxLeap => SustainPedal ? 2 : 3; public int[] ClimaxMotion => SustainPedal ? new[] { 1, 0, 2, -1 } : new[] { 2, 1, -1, 3, -2 }; }
-        private sealed record VariantSpec(string DisplayName, string Description, VariantTexture Texture, int ProgressionBank, int PhraseIndex, int MelodyOffset, int BassOffset, int TempoOffset, int RangeFloorOffset, int RangeCeilingOffset, int ContourBias, bool ForcePedal);
+        private enum MeasureRole
+        {
+            Opening,
+            Answer,
+            Contrast,
+            Cadence,
+            Return,
+            Climax,
+            FinalCadence
+        }
+
+        private enum VariantTexture
+        {
+            Narrative,
+            Anthem,
+            Atmosphere,
+            Tension
+        }
+
+        private enum MoodTexture
+        {
+            Calm,
+            Gentle,
+            Airy,
+            Bright,
+            Tense
+        }
+
+        private sealed record StyleSpec(string DisplayName, int DefaultTempo, int MinMidi, int MaxMidi, int MinDegree, int MaxDegree, int[][] Progressions, int[][] CorePatterns, int[][] LiftPatterns)
+        {
+            public int CenterMidi => (MinMidi + MaxMidi) / 2;
+        }
+
+        private sealed record MoodSpec(
+            string DisplayName,
+            int TempoOffset,
+            int MinTempo,
+            int MaxTempo,
+            int RangeOffset,
+            int StartDegree,
+            int MaxLeapDegrees,
+            int[] StrongMotion,
+            int[] WeakMotion,
+            MoodTexture Texture,
+            bool UseAdd9,
+            bool UseMaj7,
+            bool UseSus2,
+            bool PedalFriendly,
+            bool UseSus4,
+            bool FavorStepwise,
+            int[][] CadencePatterns)
+        {
+            public bool UseSeventh => Texture == MoodTexture.Tense;
+        }
+
+        private sealed record VariantSpec(string DisplayName, string Description, VariantTexture Texture, int ProgressionBank, int MelodyOffset, int BassOffset, int TempoOffset, int RangeFloorOffset, int RangeCeilingOffset, int ContourBias, bool ForcePedal);
+
+        private sealed record ChordPlan(int Degree, string Name, int[] StrongDegrees, int[] WeakDegrees, int[] CadenceDegrees, int[] HarmonyDegrees);
+
         private sealed record DurationSpec(int BaseTicks, int TotalTicks, int Dots);
+
+        private sealed class MelodyState
+        {
+            public MelodyState(int previousDegree)
+            {
+                PreviousDegree = previousDegree;
+            }
+
+            public int PreviousDegree { get; set; }
+            public int PreviousDirection { get; set; }
+            public int ConsecutiveLargeLeaps { get; set; }
+            public bool ForceContraryStep { get; set; }
+        }
     }
 
     public sealed class SmartComposeRequest
