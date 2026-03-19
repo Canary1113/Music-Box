@@ -2757,7 +2757,6 @@ namespace MusicBox
                 bool shouldUseBeamedQuarterGlyph = !info.Note.IsRest
                     && !isChordTone
                     && isBeamedGroupNote
-                    && info.Note.BeamGroupId > 0
                     && info.Beams > 0
                     && CanDrawBeamedQuarterGlyph(info);
                 bool shouldUseCompleteGlyph = !info.Note.IsRest
@@ -5053,40 +5052,47 @@ namespace MusicBox
                     .ThenBy(g => g.Key.Voice))
                 {
                     var current = new List<NoteDrawInfo>();
-                    NoteDrawInfo? prev = null;
+                    NoteDrawInfo? prevRepresentative = null;
 
-                    foreach (var note in lane.OrderBy(n => n.Note.StartTick).ThenBy(n => n.Y))
+                    foreach (var onsetGroup in lane
+                        .OrderBy(n => n.Note.StartTick)
+                        .ThenBy(n => n.Y)
+                        .GroupBy(n => n.Note.StartTick))
                     {
-                        if (manualNotes.Contains(note))
+                        List<NoteDrawInfo> onsetNotes = onsetGroup.ToList();
+                        if (onsetNotes.Any(manualNotes.Contains))
                         {
                             FinalizeGroup(current);
                             current.Clear();
-                            prev = null;
+                            prevRepresentative = null;
                             continue;
                         }
 
-                        bool beambable = note.Beams > 0 && (note.Note.BeamGroupId > 0 || CanAutoBeamNote(note));
-                        if (beambable)
+                        List<NoteDrawInfo> beamableNotes = onsetNotes
+                            .Where(note => note.Beams > 0 && (note.Note.BeamGroupId > 0 || CanAutoBeamNote(note)))
+                            .ToList();
+                        if (beamableNotes.Count == 0)
                         {
-                            if (current.Count > 0
-                                && prev != null
-                                && CanShareBeamGroup(prev, note, tolerance))
-                            {
-                                current.Add(note);
-                            }
-                            else
-                            {
-                                FinalizeGroup(current);
-                                current.Add(note);
-                            }
+                            FinalizeGroup(current);
+                            current.Clear();
+                            prevRepresentative = null;
+                            continue;
+                        }
+
+                        NoteDrawInfo representative = beamableNotes[0];
+                        if (current.Count > 0
+                            && prevRepresentative != null
+                            && CanShareBeamGroup(prevRepresentative, representative, tolerance))
+                        {
+                            current.AddRange(beamableNotes);
                         }
                         else
                         {
                             FinalizeGroup(current);
-                            current.Clear();
+                            current.AddRange(beamableNotes);
                         }
 
-                        prev = note;
+                        prevRepresentative = representative;
                     }
 
                     FinalizeGroup(current);
