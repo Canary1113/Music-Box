@@ -5047,45 +5047,50 @@ namespace MusicBox
                     index++;
                 }
 
-                var current = new List<NoteDrawInfo>();
-                NoteDrawInfo? prev = null;
-
-                foreach (var note in measureNotes)
+                foreach (var lane in measureNotes
+                    .GroupBy(n => (Voice: Math.Max(1, n.Note.Voice), n.PreferTrebleStaff))
+                    .OrderBy(g => g.Key.PreferTrebleStaff ? 0 : 1)
+                    .ThenBy(g => g.Key.Voice))
                 {
-                    if (manualNotes.Contains(note))
-                    {
-                        FinalizeGroup(current);
-                        current.Clear();
-                        prev = null;
-                        continue;
-                    }
+                    var current = new List<NoteDrawInfo>();
+                    NoteDrawInfo? prev = null;
 
-                    // Auto beam grouping follows drag-link groups only.
-                    bool beambable = note.Beams > 0 && note.Note.BeamGroupId > 0;
-                    if (beambable)
+                    foreach (var note in lane.OrderBy(n => n.Note.StartTick).ThenBy(n => n.Y))
                     {
-                        if (current.Count > 0
-                            && prev != null
-                            && AreAdjacent(prev, note, tolerance))
+                        if (manualNotes.Contains(note))
                         {
-                            current.Add(note);
+                            FinalizeGroup(current);
+                            current.Clear();
+                            prev = null;
+                            continue;
+                        }
+
+                        bool beambable = note.Beams > 0 && (note.Note.BeamGroupId > 0 || CanAutoBeamNote(note));
+                        if (beambable)
+                        {
+                            if (current.Count > 0
+                                && prev != null
+                                && CanShareBeamGroup(prev, note, tolerance))
+                            {
+                                current.Add(note);
+                            }
+                            else
+                            {
+                                FinalizeGroup(current);
+                                current.Add(note);
+                            }
                         }
                         else
                         {
                             FinalizeGroup(current);
-                            current.Add(note);
+                            current.Clear();
                         }
-                    }
-                    else
-                    {
-                        FinalizeGroup(current);
-                        current.Clear();
+
+                        prev = note;
                     }
 
-                    prev = note;
+                    FinalizeGroup(current);
                 }
-
-                FinalizeGroup(current);
             }
 
             return groups;
@@ -5198,6 +5203,75 @@ namespace MusicBox
             int prevSpan = Math.Max(1, prev.Note.BaseDurationTicks > 0 ? prev.Note.BaseDurationTicks : prev.Note.DurationTicks);
             int maxAcceptedDelta = Math.Max(1, prevSpan + Math.Max(1, tolerance * 2));
             return delta <= maxAcceptedDelta;
+        }
+
+        private static bool CanAutoBeamNote(NoteDrawInfo note)
+        {
+            return note.Beams > 0 && !note.Note.IsRest;
+        }
+
+        private bool CanShareBeamGroup(NoteDrawInfo prev, NoteDrawInfo next, int tolerance)
+        {
+            if (!AreAdjacent(prev, next, tolerance))
+            {
+                return false;
+            }
+
+            if (prev.MeasureIndex != next.MeasureIndex)
+            {
+                return false;
+            }
+
+            if (Math.Max(1, prev.Note.Voice) != Math.Max(1, next.Note.Voice))
+            {
+                return false;
+            }
+
+            if (prev.PreferTrebleStaff != next.PreferTrebleStaff)
+            {
+                return false;
+            }
+
+            int groupA = prev.Note.BeamGroupId;
+            int groupB = next.Note.BeamGroupId;
+            if (groupA > 0 || groupB > 0)
+            {
+                return groupA > 0 && groupA == groupB;
+            }
+
+            return CanAutoBeamTogether(prev, next);
+        }
+
+        private bool CanAutoBeamTogether(NoteDrawInfo prev, NoteDrawInfo next)
+        {
+            if (!CanAutoBeamNote(prev) || !CanAutoBeamNote(next))
+            {
+                return false;
+            }
+
+            int measureStartTick = GetMeasureBoundaryTick(prev.MeasureIndex);
+            int beamUnitTicks = GetAutoBeamUnitTicks(prev.Note.StartTick);
+            if (beamUnitTicks <= 0)
+            {
+                return false;
+            }
+
+            int prevBucket = Math.Max(0, prev.Note.StartTick - measureStartTick) / beamUnitTicks;
+            int nextBucket = Math.Max(0, next.Note.StartTick - measureStartTick) / beamUnitTicks;
+            return prevBucket == nextBucket;
+        }
+
+        private int GetAutoBeamUnitTicks(int tick)
+        {
+            if (_viewModel == null)
+            {
+                return Math.Max(1, _ticksPerBeat > 0 ? _ticksPerBeat : 480);
+            }
+
+            TimeSignature timeSignature = GetEffectiveTimeSignatureAtTick(tick);
+            int ticksPerBeat = Math.Max(1, timeSignature.TicksPerBeat(Math.Max(1, _viewModel.Project.Ppq)));
+            bool compoundMeter = timeSignature.Denominator == 8 && timeSignature.Numerator % 3 == 0 && timeSignature.Numerator >= 6;
+            return compoundMeter ? ticksPerBeat * 3 : ticksPerBeat;
         }
 
         private void DrawBeamGroup(
