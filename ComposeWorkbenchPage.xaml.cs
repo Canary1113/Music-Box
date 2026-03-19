@@ -31,7 +31,6 @@ namespace MusicBox
             NavigationCacheMode = NavigationCacheMode.Required;
             Loaded += ComposeWorkbenchPage_Loaded;
             Unloaded += ComposeWorkbenchPage_Unloaded;
-            StyleBox.SelectedIndex = 0;
             MoodBox.SelectedIndex = 0;
             LengthBox.SelectedIndex = 1;
             ApplyStaticButtonVisuals();
@@ -175,12 +174,11 @@ namespace MusicBox
 
         private SmartComposeRequest BuildRequest()
         {
-            string styleId = SelectedTag(StyleBox);
             string moodId = SelectedTag(MoodBox);
             string lengthId = SelectedTag(LengthBox);
-            int autoBpm = ResolveAutoBpm(styleId, moodId);
-            (int numerator, int denominator) = ResolveAutoMeter(styleId, moodId);
-            int autoKey = ResolveAutoKey(styleId, moodId);
+            int autoBpm = ResolveAutoBpm(moodId);
+            (int numerator, int denominator) = ResolveAutoMeter(moodId);
+            int autoKey = ResolveAutoKey(moodId);
             KeyMode autoMode = ResolveAutoMode(moodId);
 
             return new SmartComposeRequest
@@ -191,7 +189,6 @@ namespace MusicBox
                 KeyFifths = autoKey,
                 Mode = autoMode,
                 TimeSignature = new TimeSignature(numerator, denominator),
-                StyleId = styleId,
                 MoodId = moodId,
                 LengthId = lengthId,
                 IncludeBass = true
@@ -351,43 +348,38 @@ namespace MusicBox
             };
         }
 
-        private static int ResolveAutoBpm(string styleId, string moodId)
+        private static int ResolveAutoBpm(string moodId)
         {
-            return (styleId, moodId) switch
+            return moodId switch
             {
-                ("dance", _) => 124,
-                (_, "sleep") => 64,
-                (_, "sad") => 76,
-                (_, "positive") => 118,
-                (_, "hopeful") => 104,
-                (_, "tense") => 132,
-                ("ambient", _) => 78,
+                "sleep" => 64,
+                "sad" => 76,
+                "positive" => 118,
+                "hopeful" => 104,
+                "tense" => 132,
                 _ => 96
             };
         }
 
-        private static (int Numerator, int Denominator) ResolveAutoMeter(string styleId, string moodId)
+        private static (int Numerator, int Denominator) ResolveAutoMeter(string moodId)
         {
-            return (styleId, moodId) switch
+            return moodId switch
             {
-                ("dance", _) => (4, 4),
-                (_, "sleep") => (6, 8),
-                (_, "sad") => (3, 4),
-                ("folk", _) => (6, 8),
+                "sleep" => (6, 8),
+                "sad" => (3, 4),
                 _ => (4, 4)
             };
         }
 
-        private static int ResolveAutoKey(string styleId, string moodId)
+        private static int ResolveAutoKey(string moodId)
         {
-            return (styleId, moodId) switch
+            return moodId switch
             {
-                (_, "sad") => -2,
-                (_, "sleep") => -3,
-                (_, "nostalgic") => -1,
-                (_, "positive") => 2,
-                (_, "hopeful") => 1,
-                ("dance", _) => 3,
+                "sad" => -2,
+                "sleep" => -3,
+                "nostalgic" => -1,
+                "positive" => 2,
+                "hopeful" => 1,
                 _ => 0
             };
         }

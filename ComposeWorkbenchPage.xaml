@@ -28,7 +28,6 @@
                                 <ColumnDefinition Width="240" />
                                 <ColumnDefinition Width="150" />
                                 <ColumnDefinition Width="170" />
-                                <ColumnDefinition Width="150" />
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
@@ -40,21 +39,6 @@
                             </StackPanel>
 
                             <StackPanel Grid.Column="1" Spacing="8">
-                                <TextBlock Text="风格" />
-                                <ComboBox x:Name="StyleBox"
-                                          MinWidth="140">
-                                    <ComboBoxItem Content="流行 Pop"
-                                                  Tag="pop" />
-                                    <ComboBoxItem Content="民谣 Folk"
-                                                  Tag="folk" />
-                                    <ComboBoxItem Content="氛围 Ambient"
-                                                  Tag="ambient" />
-                                    <ComboBoxItem Content="舞曲 Dance"
-                                                  Tag="dance" />
-                                </ComboBox>
-                            </StackPanel>
-
-                            <StackPanel Grid.Column="2" Spacing="8">
                                 <TextBlock Text="情绪" />
                                 <ComboBox x:Name="MoodBox"
                                           MinWidth="160">
@@ -77,7 +61,7 @@
                                 </ComboBox>
                             </StackPanel>
 
-                            <StackPanel Grid.Column="3" Spacing="8">
+                            <StackPanel Grid.Column="2" Spacing="8">
                                 <TextBlock Text="长度" />
                                 <ComboBox x:Name="LengthBox"
                                           MinWidth="140">
@@ -91,7 +75,7 @@
                             </StackPanel>
 
                             <Button x:Name="GenerateButton"
-                                    Grid.Column="4"
+                                    Grid.Column="3"
                                     Margin="0,28,0,0"
                                     Height="40"
                                     MinWidth="72"
@@ -100,7 +84,7 @@
                                     Content="生成" />
 
                             <TextBlock x:Name="StatusText"
-                                       Grid.Column="5"
+                                       Grid.Column="4"
                                        Margin="0,34,0,0"
                                        VerticalAlignment="Center"
                                        Text="还没有候选方案。"
