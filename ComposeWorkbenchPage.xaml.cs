@@ -286,6 +286,7 @@ namespace MusicBox
             PageTitleText.FontSize = isEnglish ? 23 : 24;
 
             PageSubtitleText.Text = T("compose.page_subtitle");
+            PageSubtitleText.Visibility = Visibility.Collapsed;
             PageSubtitleText.FontSize = isEnglish ? 13 : 14;
 
             TitleLabelText.Text = T("compose.label.title");

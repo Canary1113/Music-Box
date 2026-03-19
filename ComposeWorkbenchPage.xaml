@@ -17,6 +17,7 @@
 
                     <TextBlock x:Name="PageSubtitleText"
                                MaxWidth="880"
+                               Visibility="Collapsed"
                                TextWrapping="Wrap"
                                Opacity="0.72" />
 
@@ -43,11 +44,13 @@
 
                         <TextBox x:Name="TitleBox"
                                  Grid.Row="1"
-                                 Grid.Column="0" />
+                                 Grid.Column="0"
+                                 Height="40" />
 
                         <ComboBox x:Name="MoodBox"
                                   Grid.Row="1"
                                   Grid.Column="1"
+                                  Height="40"
                                   MinWidth="210">
                             <ComboBoxItem x:Name="MoodCalmItem" Tag="calm" />
                             <ComboBoxItem x:Name="MoodPositiveItem" Tag="positive" />
@@ -62,6 +65,7 @@
                         <ComboBox x:Name="LengthBox"
                                   Grid.Row="1"
                                   Grid.Column="2"
+                                  Height="40"
                                   MinWidth="150">
                             <ComboBoxItem x:Name="LengthShortItem" Tag="short" />
                             <ComboBoxItem x:Name="LengthMediumItem" Tag="medium" />
