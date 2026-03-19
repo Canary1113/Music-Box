@@ -15,6 +15,8 @@ namespace MusicBox
     public sealed partial class ComposeWorkbenchPage : Page
     {
         private const int CandidateCount = 3;
+        private static readonly string[] SharpNames = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        private static readonly string[] FlatNames = { "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B" };
 
         private readonly SmartComposeService _service = new();
         private readonly PreviewPlaybackService _playback = new();
@@ -34,6 +36,7 @@ namespace MusicBox
             MoodBox.SelectedIndex = 0;
             LengthBox.SelectedIndex = 1;
             ApplyStaticButtonVisuals();
+            HideStatusText();
             ResetCandidateSurface();
             DebugTrace.Write("ComposeWorkbenchPage.ctor end");
         }
@@ -63,6 +66,7 @@ namespace MusicBox
             _seedBase = Environment.TickCount;
             _generationSerial++;
             Array.Fill(_keptCandidates, false);
+            HideStatusText();
             GenerateCandidates(preserveKept: false);
         }
 
@@ -70,6 +74,7 @@ namespace MusicBox
         {
             _seedBase = Environment.TickCount;
             _generationSerial++;
+            HideStatusText();
             GenerateCandidates(preserveKept: true);
         }
 
@@ -105,23 +110,6 @@ namespace MusicBox
             }
         }
 
-        private void SendCandidateButton_Click(object sender, RoutedEventArgs e)
-        {
-            int index = ResolveCandidateIndex(sender);
-            if (!HasCandidate(index) || _viewModel == null)
-            {
-                return;
-            }
-
-            SmartComposeResult result = _candidates[index];
-            _viewModel.LoadProjectSnapshot(CloneProject(result.Project));
-            _viewModel.SetStatus($"已采用方案 {(char)('A' + index)} 并发送到转换页：{result.Project.Title}");
-            if (App.MainWindow is MainWindow window)
-            {
-                window.NavigateToConvertAndImportEditor();
-            }
-        }
-
         private void ToggleKeepButton_Click(object sender, RoutedEventArgs e)
         {
             int index = ResolveCandidateIndex(sender);
@@ -132,7 +120,6 @@ namespace MusicBox
 
             _keptCandidates[index] = !_keptCandidates[index];
             RefreshKeepButtons();
-            UpdateStatusText();
         }
 
         private void GenerateCandidates(bool preserveKept)
@@ -161,12 +148,12 @@ namespace MusicBox
                 _candidates.Clear();
                 _candidates.AddRange(nextCandidates);
                 RenderCandidates();
-                UpdateStatusText();
+                HideStatusText();
                 _viewModel?.SetStatus("已生成 3 组智能创作候选方案。");
             }
             catch (Exception ex)
             {
-                StatusText.Text = $"生成失败：{ex.Message}";
+                ShowStatusText($"生成失败：{ex.Message}");
                 _viewModel?.SetStatus($"智能创作生成失败：{ex.Message}");
                 ResetCandidateSurface("生成失败");
             }
@@ -197,27 +184,25 @@ namespace MusicBox
 
         private void RenderCandidates()
         {
-            RenderCandidate(0, Option1SummaryText, Option1ApplyButton, Option1SendButton);
-            RenderCandidate(1, Option2SummaryText, Option2ApplyButton, Option2SendButton);
-            RenderCandidate(2, Option3SummaryText, Option3ApplyButton, Option3SendButton);
+            RenderCandidate(0, Option1SummaryText, Option1ApplyButton);
+            RenderCandidate(1, Option2SummaryText, Option2ApplyButton);
+            RenderCandidate(2, Option3SummaryText, Option3ApplyButton);
             RefreshPlayButtons();
             RefreshKeepButtons();
         }
 
-        private void RenderCandidate(int index, TextBlock summaryText, Button applyButton, Button sendButton)
+        private void RenderCandidate(int index, TextBlock summaryText, Button applyButton)
         {
             if (!HasCandidate(index))
             {
                 summaryText.Text = "等待生成";
                 applyButton.IsEnabled = false;
-                sendButton.IsEnabled = false;
                 return;
             }
 
             SmartComposeResult result = _candidates[index];
-            summaryText.Text = result.Summary;
+            summaryText.Text = BuildCandidateDetails(result);
             applyButton.IsEnabled = true;
-            sendButton.IsEnabled = true;
         }
 
         private void ResetCandidateSurface(string placeholder = "等待生成")
@@ -229,9 +214,6 @@ namespace MusicBox
             Option1ApplyButton.IsEnabled = false;
             Option2ApplyButton.IsEnabled = false;
             Option3ApplyButton.IsEnabled = false;
-            Option1SendButton.IsEnabled = false;
-            Option2SendButton.IsEnabled = false;
-            Option3SendButton.IsEnabled = false;
             RefreshPlayButtons();
             RefreshKeepButtons();
         }
@@ -263,7 +245,7 @@ namespace MusicBox
             bool enabled = HasCandidate(index);
             button.IsEnabled = enabled;
             ToolTipService.SetToolTip(button, enabled && _keptCandidates[index] ? "取消保留" : "保留方案");
-            SetButtonContent(button, Symbol.Accept, null);
+            SetButtonContent(button, Symbol.Accept, null, 14);
             TryApplyAccentStyle(button, enabled && _keptCandidates[index]);
         }
 
@@ -273,15 +255,19 @@ namespace MusicBox
             TryApplyAccentStyle(Option1PlayButton, true);
             TryApplyAccentStyle(Option2PlayButton, true);
             TryApplyAccentStyle(Option3PlayButton, true);
-            SetButtonContent(RetryButton, Symbol.Refresh, "重试");
+            SetButtonContent(RetryButton, Symbol.Refresh, "重试", 13);
         }
 
-        private void UpdateStatusText()
+        private void ShowStatusText(string message)
         {
-            int keptCount = _keptCandidates.Count(value => value);
-            StatusText.Text = keptCount > 0
-                ? $"已生成 3 组候选方案，保留 {keptCount} 组。"
-                : "已生成 3 组候选方案。";
+            StatusText.Text = message;
+            StatusText.Visibility = string.IsNullOrWhiteSpace(message) ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private void HideStatusText()
+        {
+            StatusText.Text = string.Empty;
+            StatusText.Visibility = Visibility.Collapsed;
         }
 
         private bool HasCandidate(int index)
@@ -316,7 +302,7 @@ namespace MusicBox
             return Color.FromArgb(255, 54, 103, 153);
         }
 
-        private static void SetButtonContent(Button button, Symbol symbol, string? text)
+        private static void SetButtonContent(Button button, Symbol symbol, string? text, double iconSize = 16)
         {
             var panel = new StackPanel
             {
@@ -325,7 +311,12 @@ namespace MusicBox
                 HorizontalAlignment = HorizontalAlignment.Center
             };
 
-            panel.Children.Add(new SymbolIcon(symbol));
+            panel.Children.Add(new Viewbox
+            {
+                Width = iconSize,
+                Height = iconSize,
+                Child = new SymbolIcon(symbol)
+            });
             if (!string.IsNullOrWhiteSpace(text))
             {
                 panel.Children.Add(new TextBlock
@@ -336,6 +327,41 @@ namespace MusicBox
             }
 
             button.Content = panel;
+        }
+
+        private static string BuildCandidateDetails(SmartComposeResult result)
+        {
+            ScoreProject project = result.Project;
+            int safePpq = Math.Max(1, project.Ppq);
+            int ticksPerMeasure = Math.Max(1, project.TimeSignature.TicksPerMeasure(safePpq));
+            int totalTicks = project.Notes.Count == 0
+                ? ticksPerMeasure
+                : Math.Max(ticksPerMeasure, project.Notes.Max(note => note.StartTick + Math.Max(1, note.DurationTicks)));
+            int measureCount = Math.Max(1, (int)Math.Ceiling(totalTicks / (double)ticksPerMeasure));
+
+            return string.Join(Environment.NewLine, new[]
+            {
+                $"调号：{BuildLocalizedKeyLabel(project.KeySignature.Fifths, project.KeySignature.Mode)}",
+                $"拍号：{project.TimeSignature.Numerator}/{project.TimeSignature.Denominator}",
+                $"小节数：{measureCount}",
+                $"速度：{project.Bpm} BPM",
+                $"总时长：{FormatDuration(totalTicks, safePpq, project.Bpm)}"
+            });
+        }
+
+        private static string BuildLocalizedKeyLabel(int fifths, KeyMode mode)
+        {
+            int pitchClass = Mod(fifths * 7 + (mode == KeyMode.Minor ? 9 : 0), 12);
+            string tonic = fifths >= 0 ? SharpNames[pitchClass] : FlatNames[pitchClass];
+            return $"{tonic} {(mode == KeyMode.Minor ? "小调" : "大调")}";
+        }
+
+        private static string FormatDuration(int totalTicks, int ppq, int bpm)
+        {
+            double seconds = totalTicks * 60d / (Math.Max(1, ppq) * Math.Max(1, bpm));
+            TimeSpan span = TimeSpan.FromSeconds(Math.Max(0, seconds));
+            int totalMinutes = (int)Math.Floor(span.TotalMinutes);
+            return $"{totalMinutes}:{span.Seconds:00}";
         }
 
         private static int ResolveMeasureCount(string lengthId)
@@ -352,7 +378,7 @@ namespace MusicBox
         {
             return moodId switch
             {
-                "sleep" => 64,
+                "sleep" => 56,
                 "sad" => 76,
                 "positive" => 118,
                 "hopeful" => 104,
@@ -404,6 +430,12 @@ namespace MusicBox
         private static string SelectedTag(ComboBox box)
         {
             return (box.SelectedItem as ComboBoxItem)?.Tag?.ToString()?.Trim().ToLowerInvariant() ?? string.Empty;
+        }
+
+        private static int Mod(int value, int modulus)
+        {
+            int result = value % modulus;
+            return result < 0 ? result + modulus : result;
         }
 
         private static ScoreProject CloneProject(ScoreProject source)

@@ -9,8 +9,8 @@
                       VerticalScrollMode="Auto"
                       HorizontalScrollBarVisibility="Disabled"
                       HorizontalScrollMode="Disabled">
-            <Grid Padding="32,24,32,28">
-                <StackPanel Spacing="18">
+            <Grid Padding="32,24,32,24">
+                <StackPanel Spacing="16">
                     <TextBlock Text="智能创作"
                                FontSize="24"
                                FontWeight="SemiBold" />
@@ -19,79 +19,88 @@
                                TextWrapping="Wrap"
                                Opacity="0.72" />
 
-                    <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                                  HorizontalScrollMode="Enabled"
-                                  VerticalScrollBarVisibility="Disabled"
-                                  VerticalScrollMode="Disabled">
-                        <Grid ColumnSpacing="14">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="240" />
-                                <ColumnDefinition Width="150" />
-                                <ColumnDefinition Width="170" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
+                    <Grid ColumnSpacing="14"
+                          RowSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="240" />
+                            <ColumnDefinition Width="210" />
+                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
 
-                            <StackPanel Grid.Column="0" Spacing="8">
-                                <TextBlock Text="标题" />
-                                <TextBox x:Name="TitleBox"
-                                         Text="智能创作" />
-                            </StackPanel>
+                        <StackPanel Grid.Column="0"
+                                    Spacing="8">
+                            <TextBlock Text="标题" />
+                            <TextBox x:Name="TitleBox"
+                                     Text="智能创作" />
+                        </StackPanel>
 
-                            <StackPanel Grid.Column="1" Spacing="8">
-                                <TextBlock Text="情绪" />
-                                <ComboBox x:Name="MoodBox"
-                                          MinWidth="160">
-                                    <ComboBoxItem Content="平静 Calm"
-                                                  Tag="calm" />
-                                    <ComboBoxItem Content="积极 Positive"
-                                                  Tag="positive" />
-                                    <ComboBoxItem Content="伤感 Sad"
-                                                  Tag="sad" />
-                                    <ComboBoxItem Content="助眠 Sleep"
-                                                  Tag="sleep" />
-                                    <ComboBoxItem Content="希望 Hopeful"
-                                                  Tag="hopeful" />
-                                    <ComboBoxItem Content="怀旧 Nostalgic"
-                                                  Tag="nostalgic" />
-                                    <ComboBoxItem Content="梦幻 Dreamy"
-                                                  Tag="dreamy" />
-                                    <ComboBoxItem Content="紧张 Tense"
-                                                  Tag="tense" />
-                                </ComboBox>
-                            </StackPanel>
+                        <StackPanel Grid.Column="1"
+                                    Spacing="8">
+                            <TextBlock Text="情绪" />
+                            <ComboBox x:Name="MoodBox"
+                                      MinWidth="200">
+                                <ComboBoxItem Content="平静"
+                                              Tag="calm" />
+                                <ComboBoxItem Content="积极"
+                                              Tag="positive" />
+                                <ComboBoxItem Content="伤感"
+                                              Tag="sad" />
+                                <ComboBoxItem Content="助眠"
+                                              Tag="sleep" />
+                                <ComboBoxItem Content="希望"
+                                              Tag="hopeful" />
+                                <ComboBoxItem Content="怀旧"
+                                              Tag="nostalgic" />
+                                <ComboBoxItem Content="梦幻"
+                                              Tag="dreamy" />
+                                <ComboBoxItem Content="紧张"
+                                              Tag="tense" />
+                            </ComboBox>
+                        </StackPanel>
 
-                            <StackPanel Grid.Column="2" Spacing="8">
-                                <TextBlock Text="长度" />
-                                <ComboBox x:Name="LengthBox"
-                                          MinWidth="140">
-                                    <ComboBoxItem Content="短"
-                                                  Tag="short" />
-                                    <ComboBoxItem Content="中"
-                                                  Tag="medium" />
-                                    <ComboBoxItem Content="长"
-                                                  Tag="long" />
-                                </ComboBox>
-                            </StackPanel>
+                        <StackPanel Grid.Column="2"
+                                    Spacing="8">
+                            <TextBlock Text="长度" />
+                            <ComboBox x:Name="LengthBox"
+                                      MinWidth="140">
+                                <ComboBoxItem Content="短"
+                                              Tag="short" />
+                                <ComboBoxItem Content="中"
+                                              Tag="medium" />
+                                <ComboBoxItem Content="长"
+                                              Tag="long" />
+                            </ComboBox>
+                        </StackPanel>
 
+                        <StackPanel Grid.Column="3"
+                                    Orientation="Horizontal"
+                                    Spacing="8"
+                                    Margin="0,26,0,0">
                             <Button x:Name="GenerateButton"
-                                    Grid.Column="3"
-                                    Margin="0,28,0,0"
                                     Height="40"
-                                    MinWidth="72"
+                                    MinWidth="74"
                                     Padding="18,10"
                                     Click="GenerateButton_Click"
                                     Content="生成" />
+                            <Button x:Name="RetryButton"
+                                    Height="36"
+                                    MinWidth="88"
+                                    Padding="12,8"
+                                    Click="RetryButton_Click" />
+                        </StackPanel>
 
-                            <TextBlock x:Name="StatusText"
-                                       Grid.Column="4"
-                                       Margin="0,34,0,0"
-                                       VerticalAlignment="Center"
-                                       Text="还没有候选方案。"
-                                       TextWrapping="Wrap"
-                                       Opacity="0.72" />
-                        </Grid>
-                    </ScrollViewer>
+                        <TextBlock x:Name="StatusText"
+                                   Grid.Row="1"
+                                   Grid.ColumnSpan="4"
+                                   Visibility="Collapsed"
+                                   TextWrapping="Wrap"
+                                   Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                    </Grid>
 
                     <ScrollViewer HorizontalScrollBarVisibility="Auto"
                                   HorizontalScrollMode="Enabled"
@@ -99,8 +108,8 @@
                                   VerticalScrollMode="Disabled">
                         <StackPanel Orientation="Horizontal"
                                     Spacing="12">
-                            <Border Width="340"
-                                    Padding="16"
+                            <Border Width="336"
+                                    Padding="16,16,16,14"
                                     CornerRadius="8"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -111,36 +120,29 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
-                                    <Grid ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="4">
-                                            <TextBlock Text="方案 A"
-                                                       FontSize="20"
-                                                       FontWeight="SemiBold" />
-                                            <TextBlock Text="更像主歌和叙事段。"
-                                                       Opacity="0.62" />
-                                        </StackPanel>
+                                    <Grid>
+                                        <TextBlock Text="方案 A"
+                                                   FontSize="20"
+                                                   FontWeight="SemiBold" />
                                         <Button x:Name="Option1KeepButton"
-                                                Grid.Column="1"
-                                                Width="36"
-                                                Height="36"
+                                                Width="30"
+                                                Height="30"
                                                 Padding="0"
+                                                Margin="0,-4,-4,0"
                                                 Tag="0"
                                                 HorizontalAlignment="Right"
+                                                VerticalAlignment="Top"
                                                 Click="ToggleKeepButton_Click" />
                                     </Grid>
                                     <TextBlock x:Name="Option1SummaryText"
                                                Grid.Row="1"
+                                               MinHeight="126"
                                                Text="等待生成"
                                                TextWrapping="Wrap" />
                                     <Grid Grid.Row="2"
                                           ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <Button x:Name="Option1PlayButton"
@@ -157,19 +159,12 @@
                                                 Content="写入编辑页"
                                                 IsEnabled="False"
                                                 Click="ApplyCandidateButton_Click" />
-                                        <Button x:Name="Option1SendButton"
-                                                Grid.Column="2"
-                                                Tag="0"
-                                                Height="36"
-                                                Content="发送到转换页"
-                                                IsEnabled="False"
-                                                Click="SendCandidateButton_Click" />
                                     </Grid>
                                 </Grid>
                             </Border>
 
-                            <Border Width="340"
-                                    Padding="16"
+                            <Border Width="336"
+                                    Padding="16,16,16,14"
                                     CornerRadius="8"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -180,36 +175,29 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
-                                    <Grid ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="4">
-                                            <TextBlock Text="方案 B"
-                                                       FontSize="20"
-                                                       FontWeight="SemiBold" />
-                                            <TextBlock Text="更像副歌和推动段。"
-                                                       Opacity="0.62" />
-                                        </StackPanel>
+                                    <Grid>
+                                        <TextBlock Text="方案 B"
+                                                   FontSize="20"
+                                                   FontWeight="SemiBold" />
                                         <Button x:Name="Option2KeepButton"
-                                                Grid.Column="1"
-                                                Width="36"
-                                                Height="36"
+                                                Width="30"
+                                                Height="30"
                                                 Padding="0"
+                                                Margin="0,-4,-4,0"
                                                 Tag="1"
                                                 HorizontalAlignment="Right"
+                                                VerticalAlignment="Top"
                                                 Click="ToggleKeepButton_Click" />
                                     </Grid>
                                     <TextBlock x:Name="Option2SummaryText"
                                                Grid.Row="1"
+                                               MinHeight="126"
                                                Text="等待生成"
                                                TextWrapping="Wrap" />
                                     <Grid Grid.Row="2"
                                           ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <Button x:Name="Option2PlayButton"
@@ -226,19 +214,12 @@
                                                 Content="写入编辑页"
                                                 IsEnabled="False"
                                                 Click="ApplyCandidateButton_Click" />
-                                        <Button x:Name="Option2SendButton"
-                                                Grid.Column="2"
-                                                Tag="1"
-                                                Height="36"
-                                                Content="发送到转换页"
-                                                IsEnabled="False"
-                                                Click="SendCandidateButton_Click" />
                                     </Grid>
                                 </Grid>
                             </Border>
 
-                            <Border Width="340"
-                                    Padding="16"
+                            <Border Width="336"
+                                    Padding="16,16,16,14"
                                     CornerRadius="8"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
@@ -249,36 +230,29 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
-                                    <Grid ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="4">
-                                            <TextBlock Text="方案 C"
-                                                       FontSize="20"
-                                                       FontWeight="SemiBold" />
-                                            <TextBlock Text="更像氛围和留白段。"
-                                                       Opacity="0.62" />
-                                        </StackPanel>
+                                    <Grid>
+                                        <TextBlock Text="方案 C"
+                                                   FontSize="20"
+                                                   FontWeight="SemiBold" />
                                         <Button x:Name="Option3KeepButton"
-                                                Grid.Column="1"
-                                                Width="36"
-                                                Height="36"
+                                                Width="30"
+                                                Height="30"
                                                 Padding="0"
+                                                Margin="0,-4,-4,0"
                                                 Tag="2"
                                                 HorizontalAlignment="Right"
+                                                VerticalAlignment="Top"
                                                 Click="ToggleKeepButton_Click" />
                                     </Grid>
                                     <TextBlock x:Name="Option3SummaryText"
                                                Grid.Row="1"
+                                               MinHeight="126"
                                                Text="等待生成"
                                                TextWrapping="Wrap" />
                                     <Grid Grid.Row="2"
                                           ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
                                         <Button x:Name="Option3PlayButton"
@@ -295,24 +269,11 @@
                                                 Content="写入编辑页"
                                                 IsEnabled="False"
                                                 Click="ApplyCandidateButton_Click" />
-                                        <Button x:Name="Option3SendButton"
-                                                Grid.Column="2"
-                                                Tag="2"
-                                                Height="36"
-                                                Content="发送到转换页"
-                                                IsEnabled="False"
-                                                Click="SendCandidateButton_Click" />
                                     </Grid>
                                 </Grid>
                             </Border>
                         </StackPanel>
                     </ScrollViewer>
-
-                    <Button x:Name="RetryButton"
-                            HorizontalAlignment="Center"
-                            Height="40"
-                            Padding="16,10"
-                            Click="RetryButton_Click" />
                 </StackPanel>
             </Grid>
         </ScrollViewer>

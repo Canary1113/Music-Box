@@ -196,11 +196,30 @@ namespace MusicBox.Services
             var harmonyDegrees = new List<int> { root, root + 2, root + 4 };
             string extension = string.Empty;
 
-            bool useAdd9 = mood.UseAdd9 && role is MeasureRole.Opening or MeasureRole.Return or MeasureRole.Climax;
-            bool useMaj7 = mood.UseMaj7 && mode == KeyMode.Major && chordDegree is 1 or 4;
-            bool useSus2 = mood.UseSus2 && role is MeasureRole.Opening or MeasureRole.Return && random.NextDouble() < 0.45;
-            bool useSus4 = mood.UseSus4 && role is MeasureRole.Contrast or MeasureRole.Climax;
-            bool useSeventh = mood.UseSeventh && (chordDegree == 5 || role is MeasureRole.Cadence or MeasureRole.FinalCadence);
+            double colorChance = variant.Texture switch
+            {
+                VariantTexture.Atmosphere => 0.42,
+                VariantTexture.Anthem => 0.24,
+                VariantTexture.Tension => 0.18,
+                _ => 0.16
+            };
+
+            bool useAdd9 = mood.UseAdd9
+                && role is MeasureRole.Opening or MeasureRole.Return or MeasureRole.Climax
+                && random.NextDouble() < colorChance;
+            bool useMaj7 = mood.UseMaj7
+                && mode == KeyMode.Major
+                && chordDegree is 1 or 4
+                && random.NextDouble() < colorChance * 0.75;
+            bool useSus2 = mood.UseSus2
+                && role is MeasureRole.Opening or MeasureRole.Return
+                && random.NextDouble() < colorChance * 0.55;
+            bool useSus4 = mood.UseSus4
+                && role is MeasureRole.Contrast or MeasureRole.Climax
+                && random.NextDouble() < Math.Max(0.12, colorChance * 0.5);
+            bool useSeventh = mood.UseSeventh
+                && (chordDegree == 5 || role is MeasureRole.Cadence or MeasureRole.FinalCadence)
+                && random.NextDouble() < Math.Max(0.18, colorChance * 0.7);
 
             if (useSus2)
             {
@@ -430,12 +449,20 @@ namespace MusicBox.Services
             int? previousBassMidi,
             int[]? previousHarmony)
         {
+            int measureIndex = Math.Max(0, startTick / Math.Max(1, ticksPerMeasure));
             int center = style.CenterMidi - 4 + variant.MelodyOffset;
             int[] voicing = BuildChordVoicing(tonicPitchClass, center, scale, chordPlan.HarmonyDegrees, mood, bassMidi, previousBassMidi, previousHarmony);
+            int activeToneCount = Math.Max(1, Math.Min(voicing.Length, DetermineHarmonyToneCount(mood, variant)));
+            int[] activeVoicing = voicing.Take(activeToneCount).ToArray();
+
+            if (ShouldSkipHarmonyMeasure(measureIndex, mood, variant))
+            {
+                return voicing;
+            }
 
             if (variant.Texture == VariantTexture.Atmosphere)
             {
-                foreach (int midi in voicing)
+                foreach (int midi in activeVoicing)
                 {
                     project.Notes.Add(CreateNote(midi, startTick, ticksPerMeasure, 480, 3, true));
                 }
@@ -449,7 +476,7 @@ namespace MusicBox.Services
                 {
                     int hitStart = startTick + hit * unitTicks * 2 + (hit == 1 ? unitTicks : 0);
                     int hitDuration = hit == 2 ? ticksPerMeasure - (hit * unitTicks * 2) : unitTicks * 2;
-                    foreach (int midi in voicing.Take(Math.Min(3, voicing.Length)))
+                    foreach (int midi in activeVoicing)
                     {
                         NoteEvent note = CreateNote(midi + (hit == 1 ? 12 : 0), hitStart, hitDuration, 480, 3, true);
                         note.IsAccent = hit != 1;
@@ -463,15 +490,15 @@ namespace MusicBox.Services
 
             if (variant.Texture == VariantTexture.Anthem)
             {
-                for (int beat = 0; beat < 4; beat++)
+                int half = ticksPerMeasure / 2;
+                foreach (int hitStart in new[] { startTick, startTick + half })
                 {
-                    int hitStart = startTick + beat * unitTicks * 2;
-                    int hitDuration = beat == 3 ? ticksPerMeasure - beat * unitTicks * 2 : unitTicks * 2;
-                    foreach (int midi in voicing.Take(Math.Min(3, voicing.Length)))
+                    int duration = hitStart == startTick ? half : ticksPerMeasure - half;
+                    foreach (int midi in activeVoicing)
                     {
-                        NoteEvent note = CreateNote(midi + (beat % 2 == 0 ? 0 : 12), hitStart, hitDuration, 480, 3, true);
-                        note.IsAccent = beat is 0 or 2;
-                        note.IsStaccato = beat is 1 or 3;
+                        NoteEvent note = CreateNote(midi, hitStart, duration, 480, 3, true);
+                        note.IsAccent = hitStart == startTick;
+                        note.IsStaccato = hitStart != startTick;
                         project.Notes.Add(note);
                     }
                 }
@@ -479,17 +506,46 @@ namespace MusicBox.Services
                 return voicing;
             }
 
-            int half = ticksPerMeasure / 2;
-            foreach (int hitStart in new[] { startTick, startTick + half })
+            foreach (int midi in activeVoicing)
             {
-                int duration = hitStart == startTick ? half : ticksPerMeasure - half;
-                foreach (int midi in voicing)
-                {
-                    project.Notes.Add(CreateNote(midi, hitStart, duration, 480, 3, true));
-                }
+                project.Notes.Add(CreateNote(midi, startTick, ticksPerMeasure, 480, 3, true));
             }
 
             return voicing;
+        }
+
+        private static int DetermineHarmonyToneCount(MoodSpec mood, VariantSpec variant)
+        {
+            if (variant.Texture == VariantTexture.Tension)
+            {
+                return 3;
+            }
+
+            if (variant.Texture == VariantTexture.Atmosphere)
+            {
+                return 2;
+            }
+
+            return mood.Texture switch
+            {
+                MoodTexture.Calm or MoodTexture.Airy or MoodTexture.Gentle => 2,
+                _ => variant.Texture == VariantTexture.Anthem ? 3 : 2
+            };
+        }
+
+        private static bool ShouldSkipHarmonyMeasure(int measureIndex, MoodSpec mood, VariantSpec variant)
+        {
+            if (variant.Texture == VariantTexture.Tension)
+            {
+                return false;
+            }
+
+            return mood.Texture switch
+            {
+                MoodTexture.Calm or MoodTexture.Airy => measureIndex % 2 == 1,
+                MoodTexture.Gentle => variant.Texture != VariantTexture.Anthem && measureIndex % 3 == 2,
+                _ => false
+            };
         }
 
         private static int[] BuildChordVoicing(
@@ -886,7 +942,7 @@ namespace MusicBox.Services
             {
                 "positive" => new MoodSpec("Positive", 10, 102, 150, 3, 2, 3, new[] { 0, 1, 2 }, new[] { 1, 1, 2, 0 }, MoodTexture.Bright, false, false, false, false, false, false, new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 } }),
                 "sad" => new MoodSpec("Sad", -14, 58, 88, -4, 2, 2, new[] { -1, 0, 1 }, new[] { 1, -1, -1, 0 }, MoodTexture.Gentle, false, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 2, 2, 4 } }),
-                "sleep" => new MoodSpec("Sleep", -20, 50, 72, -5, 0, 2, new[] { 0, 1 }, new[] { 0, 1, 0 }, MoodTexture.Calm, false, false, false, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 } }),
+                "sleep" => new MoodSpec("Sleep", -20, 40, 64, -5, 0, 2, new[] { 0, 1 }, new[] { 0, 1, 0 }, MoodTexture.Calm, false, false, false, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 } }),
                 "hopeful" => new MoodSpec("Hopeful", 8, 92, 136, 2, 2, 3, new[] { 1, 2, 1 }, new[] { 1, 2, 0, 1 }, MoodTexture.Bright, true, false, false, false, false, false, new[] { new[] { 2, 2, 4 }, new[] { 4, 4 } }),
                 "nostalgic" => new MoodSpec("Nostalgic", -6, 66, 104, -2, 2, 2, new[] { -1, 0, 1 }, new[] { -1, 0, 1, -1 }, MoodTexture.Gentle, true, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 6, 2 } }),
                 "dreamy" => new MoodSpec("Dreamy", -10, 68, 100, 1, 2, 2, new[] { 0, 1 }, new[] { 1, 0, 1, -1 }, MoodTexture.Airy, true, true, true, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 } }),
