@@ -10,92 +10,82 @@
                       HorizontalScrollBarVisibility="Disabled"
                       HorizontalScrollMode="Disabled">
             <Grid Padding="32,24,32,24">
-                <StackPanel Spacing="16">
-                    <TextBlock Text="智能创作"
+                <StackPanel Spacing="18">
+                    <TextBlock x:Name="PageTitleText"
                                FontSize="24"
                                FontWeight="SemiBold" />
 
-                    <TextBlock Text="系统会自动决定速度、拍号和调性，一次给出 3 个明显不同的候选方案。"
+                    <TextBlock x:Name="PageSubtitleText"
+                               MaxWidth="880"
                                TextWrapping="Wrap"
                                Opacity="0.72" />
 
                     <Grid ColumnSpacing="14"
-                          RowSpacing="8">
+                          RowSpacing="10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="240" />
-                            <ColumnDefinition Width="210" />
-                            <ColumnDefinition Width="150" />
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="160" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <StackPanel Grid.Column="0"
-                                    Spacing="8">
-                            <TextBlock Text="标题" />
-                            <TextBox x:Name="TitleBox"
-                                     Text="智能创作" />
-                        </StackPanel>
+                        <TextBlock x:Name="TitleLabelText"
+                                   Grid.Column="0" />
+                        <TextBlock x:Name="MoodLabelText"
+                                   Grid.Column="1" />
+                        <TextBlock x:Name="LengthLabelText"
+                                   Grid.Column="2" />
 
-                        <StackPanel Grid.Column="1"
-                                    Spacing="8">
-                            <TextBlock Text="情绪" />
-                            <ComboBox x:Name="MoodBox"
-                                      MinWidth="200">
-                                <ComboBoxItem Content="平静"
-                                              Tag="calm" />
-                                <ComboBoxItem Content="积极"
-                                              Tag="positive" />
-                                <ComboBoxItem Content="伤感"
-                                              Tag="sad" />
-                                <ComboBoxItem Content="助眠"
-                                              Tag="sleep" />
-                                <ComboBoxItem Content="希望"
-                                              Tag="hopeful" />
-                                <ComboBoxItem Content="怀旧"
-                                              Tag="nostalgic" />
-                                <ComboBoxItem Content="梦幻"
-                                              Tag="dreamy" />
-                                <ComboBoxItem Content="紧张"
-                                              Tag="tense" />
-                            </ComboBox>
-                        </StackPanel>
+                        <TextBox x:Name="TitleBox"
+                                 Grid.Row="1"
+                                 Grid.Column="0" />
 
-                        <StackPanel Grid.Column="2"
-                                    Spacing="8">
-                            <TextBlock Text="长度" />
-                            <ComboBox x:Name="LengthBox"
-                                      MinWidth="140">
-                                <ComboBoxItem Content="短"
-                                              Tag="short" />
-                                <ComboBoxItem Content="中"
-                                              Tag="medium" />
-                                <ComboBoxItem Content="长"
-                                              Tag="long" />
-                            </ComboBox>
-                        </StackPanel>
+                        <ComboBox x:Name="MoodBox"
+                                  Grid.Row="1"
+                                  Grid.Column="1"
+                                  MinWidth="210">
+                            <ComboBoxItem x:Name="MoodCalmItem" Tag="calm" />
+                            <ComboBoxItem x:Name="MoodPositiveItem" Tag="positive" />
+                            <ComboBoxItem x:Name="MoodSadItem" Tag="sad" />
+                            <ComboBoxItem x:Name="MoodSleepItem" Tag="sleep" />
+                            <ComboBoxItem x:Name="MoodHopefulItem" Tag="hopeful" />
+                            <ComboBoxItem x:Name="MoodNostalgicItem" Tag="nostalgic" />
+                            <ComboBoxItem x:Name="MoodDreamyItem" Tag="dreamy" />
+                            <ComboBoxItem x:Name="MoodTenseItem" Tag="tense" />
+                        </ComboBox>
 
-                        <StackPanel Grid.Column="3"
+                        <ComboBox x:Name="LengthBox"
+                                  Grid.Row="1"
+                                  Grid.Column="2"
+                                  MinWidth="150">
+                            <ComboBoxItem x:Name="LengthShortItem" Tag="short" />
+                            <ComboBoxItem x:Name="LengthMediumItem" Tag="medium" />
+                            <ComboBoxItem x:Name="LengthLongItem" Tag="long" />
+                        </ComboBox>
+
+                        <StackPanel Grid.Row="1"
+                                    Grid.Column="3"
                                     Orientation="Horizontal"
-                                    Spacing="8"
-                                    Margin="0,26,0,0">
+                                    Spacing="8">
                             <Button x:Name="GenerateButton"
                                     Height="40"
-                                    MinWidth="74"
+                                    MinWidth="96"
                                     Padding="18,10"
-                                    Click="GenerateButton_Click"
-                                    Content="生成" />
+                                    Click="GenerateButton_Click" />
                             <Button x:Name="RetryButton"
-                                    Height="36"
-                                    MinWidth="88"
-                                    Padding="12,8"
+                                    Height="40"
+                                    MinWidth="96"
+                                    Padding="18,10"
                                     Click="RetryButton_Click" />
                         </StackPanel>
 
                         <TextBlock x:Name="StatusText"
-                                   Grid.Row="1"
+                                   Grid.Row="2"
                                    Grid.ColumnSpan="4"
                                    Visibility="Collapsed"
                                    TextWrapping="Wrap"
@@ -108,7 +98,7 @@
                                   VerticalScrollMode="Disabled">
                         <StackPanel Orientation="Horizontal"
                                     Spacing="12">
-                            <Border Width="336"
+                            <Border Width="344"
                                     Padding="16,16,16,14"
                                     CornerRadius="8"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -120,25 +110,27 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
+
                                     <Grid>
-                                        <TextBlock Text="方案 A"
+                                        <TextBlock x:Name="Option1TitleText"
                                                    FontSize="20"
                                                    FontWeight="SemiBold" />
                                         <Button x:Name="Option1KeepButton"
-                                                Width="30"
-                                                Height="30"
+                                                Width="28"
+                                                Height="28"
                                                 Padding="0"
-                                                Margin="0,-4,-4,0"
+                                                Margin="0,-2,-2,0"
                                                 Tag="0"
                                                 HorizontalAlignment="Right"
                                                 VerticalAlignment="Top"
                                                 Click="ToggleKeepButton_Click" />
                                     </Grid>
+
                                     <TextBlock x:Name="Option1SummaryText"
                                                Grid.Row="1"
-                                               MinHeight="126"
-                                               Text="等待生成"
+                                               MinHeight="132"
                                                TextWrapping="Wrap" />
+
                                     <Grid Grid.Row="2"
                                           ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
@@ -148,22 +140,22 @@
                                         <Button x:Name="Option1PlayButton"
                                                 Grid.Column="0"
                                                 Tag="0"
-                                                Height="36"
-                                                MinWidth="92"
+                                                Height="38"
+                                                MinWidth="96"
                                                 Padding="14,8"
                                                 Click="PlayCandidateButton_Click" />
                                         <Button x:Name="Option1ApplyButton"
                                                 Grid.Column="1"
                                                 Tag="0"
-                                                Height="36"
-                                                Content="写入编辑页"
+                                                Height="38"
+                                                MinWidth="116"
                                                 IsEnabled="False"
                                                 Click="ApplyCandidateButton_Click" />
                                     </Grid>
                                 </Grid>
                             </Border>
 
-                            <Border Width="336"
+                            <Border Width="344"
                                     Padding="16,16,16,14"
                                     CornerRadius="8"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -175,25 +167,27 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
+
                                     <Grid>
-                                        <TextBlock Text="方案 B"
+                                        <TextBlock x:Name="Option2TitleText"
                                                    FontSize="20"
                                                    FontWeight="SemiBold" />
                                         <Button x:Name="Option2KeepButton"
-                                                Width="30"
-                                                Height="30"
+                                                Width="28"
+                                                Height="28"
                                                 Padding="0"
-                                                Margin="0,-4,-4,0"
+                                                Margin="0,-2,-2,0"
                                                 Tag="1"
                                                 HorizontalAlignment="Right"
                                                 VerticalAlignment="Top"
                                                 Click="ToggleKeepButton_Click" />
                                     </Grid>
+
                                     <TextBlock x:Name="Option2SummaryText"
                                                Grid.Row="1"
-                                               MinHeight="126"
-                                               Text="等待生成"
+                                               MinHeight="132"
                                                TextWrapping="Wrap" />
+
                                     <Grid Grid.Row="2"
                                           ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
@@ -203,22 +197,22 @@
                                         <Button x:Name="Option2PlayButton"
                                                 Grid.Column="0"
                                                 Tag="1"
-                                                Height="36"
-                                                MinWidth="92"
+                                                Height="38"
+                                                MinWidth="96"
                                                 Padding="14,8"
                                                 Click="PlayCandidateButton_Click" />
                                         <Button x:Name="Option2ApplyButton"
                                                 Grid.Column="1"
                                                 Tag="1"
-                                                Height="36"
-                                                Content="写入编辑页"
+                                                Height="38"
+                                                MinWidth="116"
                                                 IsEnabled="False"
                                                 Click="ApplyCandidateButton_Click" />
                                     </Grid>
                                 </Grid>
                             </Border>
 
-                            <Border Width="336"
+                            <Border Width="344"
                                     Padding="16,16,16,14"
                                     CornerRadius="8"
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -230,25 +224,27 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
+
                                     <Grid>
-                                        <TextBlock Text="方案 C"
+                                        <TextBlock x:Name="Option3TitleText"
                                                    FontSize="20"
                                                    FontWeight="SemiBold" />
                                         <Button x:Name="Option3KeepButton"
-                                                Width="30"
-                                                Height="30"
+                                                Width="28"
+                                                Height="28"
                                                 Padding="0"
-                                                Margin="0,-4,-4,0"
+                                                Margin="0,-2,-2,0"
                                                 Tag="2"
                                                 HorizontalAlignment="Right"
                                                 VerticalAlignment="Top"
                                                 Click="ToggleKeepButton_Click" />
                                     </Grid>
+
                                     <TextBlock x:Name="Option3SummaryText"
                                                Grid.Row="1"
-                                               MinHeight="126"
-                                               Text="等待生成"
+                                               MinHeight="132"
                                                TextWrapping="Wrap" />
+
                                     <Grid Grid.Row="2"
                                           ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
@@ -258,15 +254,15 @@
                                         <Button x:Name="Option3PlayButton"
                                                 Grid.Column="0"
                                                 Tag="2"
-                                                Height="36"
-                                                MinWidth="92"
+                                                Height="38"
+                                                MinWidth="96"
                                                 Padding="14,8"
                                                 Click="PlayCandidateButton_Click" />
                                         <Button x:Name="Option3ApplyButton"
                                                 Grid.Column="1"
                                                 Tag="2"
-                                                Height="36"
-                                                Content="写入编辑页"
+                                                Height="38"
+                                                MinWidth="116"
                                                 IsEnabled="False"
                                                 Click="ApplyCandidateButton_Click" />
                                     </Grid>

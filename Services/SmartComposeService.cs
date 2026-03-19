@@ -77,6 +77,10 @@ namespace MusicBox.Services
             int? previousBassMidi = null;
             int[]? previousHarmony = null;
             int? previousMelodyMidi = null;
+            int[]? previousRhythm = null;
+            int repeatedRhythmCount = 0;
+            List<int>? signatureMotifDegrees = null;
+            int[]? signatureMotifRhythm = null;
 
             for (int measure = 0; measure < measures; measure++)
             {
@@ -87,7 +91,7 @@ namespace MusicBox.Services
                 chordNames.Add(chordPlan.Name);
 
                 int bassMidi = request.IncludeBass
-                    ? AddBass(project, startTick, ticksPerMeasure, unitTicks, bassAnchor, tonicPitchClass, scale, chordPlan, previousBassMidi, mood, variant)
+                    ? AddBass(project, startTick, ticksPerMeasure, unitTicks, bassAnchor, tonicPitchClass, scale, chordPlan, previousBassMidi, mood, variant, role)
                     : bassAnchor;
 
                 int[] harmonyVoicing = AddHarmony(
@@ -103,10 +107,12 @@ namespace MusicBox.Services
                     variant,
                     bassMidi,
                     previousBassMidi,
-                    previousHarmony);
+                    previousHarmony,
+                    role);
 
-                int[] rhythm = PickRhythm(style, mood, variant, role, measureUnits);
-                List<int> melodyDegrees = BuildMeasureDegrees(rhythm.Length, chordPlan, role, mood, style, variant, melodyState, random);
+                int[] rhythm = PickRhythm(style, mood, variant, role, measureUnits, previousRhythm, repeatedRhythmCount, measure, measures, random);
+                List<int> melodyDegrees = BuildMeasureDegrees(rhythm, chordPlan, role, mood, style, variant, melodyState, signatureMotifDegrees, signatureMotifRhythm, random);
+                int measureMelodyAnchor = AdjustMelodyAnchorForRole(melodyAnchor, role, variant);
 
                 int cursor = startTick;
                 for (int index = 0; index < rhythm.Length; index++)
@@ -114,7 +120,7 @@ namespace MusicBox.Services
                     int durationTicks = rhythm[index] * unitTicks;
                     int degree = melodyDegrees[Math.Min(index, melodyDegrees.Count - 1)];
                     int midi = ClampToRange(
-                        GetScaleMidi(tonicPitchClass, melodyAnchor, scale, degree),
+                        GetScaleMidi(tonicPitchClass, measureMelodyAnchor, scale, degree),
                         style.MinMidi + variant.RangeFloorOffset,
                         style.MaxMidi + variant.RangeCeilingOffset);
 
@@ -127,6 +133,22 @@ namespace MusicBox.Services
                     cursor += durationTicks;
                 }
 
+                if (role == MeasureRole.Opening && signatureMotifDegrees == null)
+                {
+                    signatureMotifDegrees = melodyDegrees.ToList();
+                    signatureMotifRhythm = rhythm.ToArray();
+                }
+
+                if (PatternsEqual(previousRhythm, rhythm))
+                {
+                    repeatedRhythmCount++;
+                }
+                else
+                {
+                    repeatedRhythmCount = 0;
+                }
+
+                previousRhythm = rhythm.ToArray();
                 previousBassMidi = bassMidi;
                 previousHarmony = harmonyVoicing;
             }
@@ -164,7 +186,17 @@ namespace MusicBox.Services
             return output.ToArray();
         }
 
-        private static int[] PickRhythm(StyleSpec style, MoodSpec mood, VariantSpec variant, MeasureRole role, int measureUnits)
+        private static int[] PickRhythm(
+            StyleSpec style,
+            MoodSpec mood,
+            VariantSpec variant,
+            MeasureRole role,
+            int measureUnits,
+            int[]? previousPattern,
+            int repeatedRhythmCount,
+            int measureIndex,
+            int totalMeasures,
+            Random random)
         {
             int[][] bank = role switch
             {
@@ -173,14 +205,39 @@ namespace MusicBox.Services
                 _ => style.CorePatterns
             };
 
-            List<int[]> normalized = bank.Select(pattern => NormalizePattern(pattern, measureUnits)).OrderBy(pattern => pattern.Length).ToList();
-            return variant.Texture switch
+            List<int[]> normalized = bank
+                .Select(pattern => NormalizePattern(pattern, measureUnits))
+                .OrderBy(pattern => pattern.Length)
+                .ThenBy(pattern => pattern.Max())
+                .ToList();
+
+            List<int[]> candidates = repeatedRhythmCount >= 1 && previousPattern != null
+                ? normalized.Where(pattern => !PatternsEqual(pattern, previousPattern)).ToList()
+                : normalized;
+
+            if (candidates.Count == 0)
             {
-                VariantTexture.Anthem => normalized[^1],
-                VariantTexture.Atmosphere => normalized[0],
-                VariantTexture.Tension => normalized[Math.Min(normalized.Count - 1, Math.Max(1, normalized.Count / 2))],
-                _ => normalized[(normalized.Count - 1) / 2]
+                candidates = normalized;
+            }
+
+            List<int[]> shortlist = variant.Texture switch
+            {
+                VariantTexture.Anthem => candidates.Skip(Math.Max(0, candidates.Count - 2)).ToList(),
+                VariantTexture.Atmosphere => candidates.Take(Math.Min(2, candidates.Count)).ToList(),
+                VariantTexture.Tension => candidates.Skip(Math.Max(0, candidates.Count / 2 - 1)).Take(Math.Min(2, candidates.Count)).ToList(),
+                _ when role is MeasureRole.Cadence or MeasureRole.FinalCadence => candidates.Take(Math.Min(2, candidates.Count)).ToList(),
+                _ when mood.Texture is MoodTexture.Calm or MoodTexture.Airy or MoodTexture.Gentle => candidates.Take(Math.Min(2, candidates.Count)).ToList(),
+                _ when role is MeasureRole.Contrast or MeasureRole.Climax => candidates.Skip(Math.Max(0, candidates.Count - 2)).ToList(),
+                _ => candidates.Skip(Math.Max(0, (candidates.Count - 2) / 2)).Take(Math.Min(2, candidates.Count)).ToList()
             };
+
+            if (shortlist.Count == 0)
+            {
+                shortlist = candidates;
+            }
+
+            int[] selected = shortlist[random.Next(shortlist.Count)].ToArray();
+            return ShapeRhythmForRole(selected, role, measureUnits, measureIndex, totalMeasures);
         }
 
         private static int[] NormalizePattern(IReadOnlyList<int> pattern, int measureUnits)
@@ -188,6 +245,57 @@ namespace MusicBox.Services
             int[] copy = pattern.ToArray();
             copy[^1] += measureUnits - copy.Sum();
             return copy;
+        }
+
+        private static bool PatternsEqual(IReadOnlyList<int>? left, IReadOnlyList<int>? right)
+        {
+            if (left == null || right == null || left.Count != right.Count)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < left.Count; index++)
+            {
+                if (left[index] != right[index])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static int[] ShapeRhythmForRole(int[] pattern, MeasureRole role, int measureUnits, int measureIndex, int totalMeasures)
+        {
+            int[] shaped = pattern.ToArray();
+            if (shaped.Length == 0)
+            {
+                return shaped;
+            }
+
+            if (role is MeasureRole.Cadence or MeasureRole.FinalCadence)
+            {
+                int desiredTail = role == MeasureRole.FinalCadence
+                    ? Math.Max(3, measureUnits / 2)
+                    : Math.Max(2, measureUnits / 3);
+
+                int deficit = Math.Max(0, desiredTail - shaped[^1]);
+                for (int index = shaped.Length - 2; index >= 0 && deficit > 0; index--)
+                {
+                    int available = Math.Max(0, shaped[index] - 1);
+                    int transfer = Math.Min(deficit, available);
+                    shaped[index] -= transfer;
+                    shaped[^1] += transfer;
+                    deficit -= transfer;
+                }
+            }
+            else if ((role is MeasureRole.Opening or MeasureRole.Return) && shaped.Length > 2 && shaped[0] == 1)
+            {
+                shaped[0] = 2;
+                shaped[1] = Math.Max(1, shaped[1] - 1);
+            }
+
+            return shaped;
         }
 
         private static ChordPlan BuildChordPlan(int chordDegree, MeasureRole role, KeyMode mode, MoodSpec mood, VariantSpec variant, Random random)
@@ -261,8 +369,30 @@ namespace MusicBox.Services
             return new ChordPlan(chordDegree, chordName, strongDegrees, weakDegrees, cadenceDegrees, harmonyDegrees.Distinct().OrderBy(value => value).ToArray());
         }
 
-        private static List<int> BuildMeasureDegrees(int noteCount, ChordPlan chordPlan, MeasureRole role, MoodSpec mood, StyleSpec style, VariantSpec variant, MelodyState state, Random random)
+        private static List<int> BuildMeasureDegrees(
+            IReadOnlyList<int> rhythm,
+            ChordPlan chordPlan,
+            MeasureRole role,
+            MoodSpec mood,
+            StyleSpec style,
+            VariantSpec variant,
+            MelodyState state,
+            IReadOnlyList<int>? referenceMotif,
+            IReadOnlyList<int>? referenceRhythm,
+            Random random)
         {
+            int noteCount = rhythm.Count;
+            if (role == MeasureRole.Return
+                && referenceMotif != null
+                && referenceRhythm != null
+                && referenceRhythm.Count == noteCount)
+            {
+                List<int> reused = RecastMotif(referenceMotif, chordPlan, style, variant);
+                ApplyCadenceContour(reused, chordPlan, role);
+                state.PreviousDegree = reused[^1];
+                return reused;
+            }
+
             var result = new List<int>(noteCount);
             int current = state.PreviousDegree;
 
@@ -290,8 +420,52 @@ namespace MusicBox.Services
                 current = candidate;
             }
 
-            state.PreviousDegree = current;
+            ApplyCadenceContour(result, chordPlan, role);
+            state.PreviousDegree = result[^1];
             return result;
+        }
+
+        private static List<int> RecastMotif(IReadOnlyList<int> motif, ChordPlan chordPlan, StyleSpec style, VariantSpec variant)
+        {
+            var result = new List<int>(motif.Count);
+            int first = Math.Clamp(ChooseNearest(motif[0], chordPlan.StrongDegrees), style.MinDegree, style.MaxDegree);
+            result.Add(first);
+
+            for (int index = 1; index < motif.Count; index++)
+            {
+                int interval = Math.Clamp(motif[index] - motif[index - 1], -2, 2);
+                int target = result[^1] + interval;
+                IReadOnlyList<int> pool = IsStrongBeat(index, motif.Count) ? chordPlan.StrongDegrees : chordPlan.WeakDegrees;
+                int candidate = Math.Clamp(ChooseNearest(target, pool), style.MinDegree, style.MaxDegree);
+                result.Add(candidate);
+            }
+
+            return result;
+        }
+
+        private static void ApplyCadenceContour(List<int> degrees, ChordPlan chordPlan, MeasureRole role)
+        {
+            if (degrees.Count == 0 || role is not (MeasureRole.Cadence or MeasureRole.FinalCadence))
+            {
+                return;
+            }
+
+            degrees[^1] = ResolveCadenceDegree(degrees.Count > 1 ? degrees[^2] : degrees[^1], chordPlan, role);
+
+            if (degrees.Count >= 2)
+            {
+                int direction = degrees[^2] <= degrees[^1] ? -1 : 1;
+                degrees[^2] = ChooseNearest(degrees[^1] + direction, chordPlan.WeakDegrees);
+            }
+
+            if (degrees.Count >= 3)
+            {
+                int delta = degrees[^2] - degrees[^3];
+                if (Math.Abs(delta) > 2)
+                {
+                    degrees[^3] = degrees[^2] - Math.Sign(delta) * 2;
+                }
+            }
         }
 
         private static int ChooseInnerDegree(int current, ChordPlan chordPlan, bool strongBeat, MoodSpec mood, VariantSpec variant, MelodyState state, Random random)
@@ -384,7 +558,8 @@ namespace MusicBox.Services
             ChordPlan chordPlan,
             int? previousBassMidi,
             MoodSpec mood,
-            VariantSpec variant)
+            VariantSpec variant,
+            MeasureRole role)
         {
             int root = ClosestMidiToTarget(GetScaleMidi(tonicPitchClass, bassAnchor, scale, chordPlan.Degree - 1), previousBassMidi ?? bassAnchor);
             int fifth = ClosestMidiToTarget(GetScaleMidi(tonicPitchClass, bassAnchor + 5, scale, chordPlan.Degree + 3), root + 7);
@@ -392,6 +567,14 @@ namespace MusicBox.Services
             fifth = ShiftNear(fifth, root + 7);
 
             if (variant.Texture == VariantTexture.Atmosphere || mood.PedalFriendly)
+            {
+                project.Notes.Add(CreateNote(root, startTick, ticksPerMeasure, 480, 2, false));
+                return root;
+            }
+
+            if (variant.Texture != VariantTexture.Anthem
+                && variant.Texture != VariantTexture.Tension
+                && mood.Texture is MoodTexture.Calm or MoodTexture.Airy or MoodTexture.Gentle)
             {
                 project.Notes.Add(CreateNote(root, startTick, ticksPerMeasure, 480, 2, false));
                 return root;
@@ -447,15 +630,16 @@ namespace MusicBox.Services
             VariantSpec variant,
             int bassMidi,
             int? previousBassMidi,
-            int[]? previousHarmony)
+            int[]? previousHarmony,
+            MeasureRole role)
         {
             int measureIndex = Math.Max(0, startTick / Math.Max(1, ticksPerMeasure));
             int center = style.CenterMidi - 4 + variant.MelodyOffset;
             int[] voicing = BuildChordVoicing(tonicPitchClass, center, scale, chordPlan.HarmonyDegrees, mood, bassMidi, previousBassMidi, previousHarmony);
-            int activeToneCount = Math.Max(1, Math.Min(voicing.Length, DetermineHarmonyToneCount(mood, variant)));
+            int activeToneCount = Math.Max(1, Math.Min(voicing.Length, DetermineHarmonyToneCount(mood, variant, role)));
             int[] activeVoicing = voicing.Take(activeToneCount).ToArray();
 
-            if (ShouldSkipHarmonyMeasure(measureIndex, mood, variant))
+            if (ShouldSkipHarmonyMeasure(measureIndex, mood, variant, role))
             {
                 return voicing;
             }
@@ -514,7 +698,7 @@ namespace MusicBox.Services
             return voicing;
         }
 
-        private static int DetermineHarmonyToneCount(MoodSpec mood, VariantSpec variant)
+        private static int DetermineHarmonyToneCount(MoodSpec mood, VariantSpec variant, MeasureRole role)
         {
             if (variant.Texture == VariantTexture.Tension)
             {
@@ -526,6 +710,11 @@ namespace MusicBox.Services
                 return 2;
             }
 
+            if (role is MeasureRole.Cadence or MeasureRole.FinalCadence or MeasureRole.Climax)
+            {
+                return 3;
+            }
+
             return mood.Texture switch
             {
                 MoodTexture.Calm or MoodTexture.Airy or MoodTexture.Gentle => 2,
@@ -533,8 +722,13 @@ namespace MusicBox.Services
             };
         }
 
-        private static bool ShouldSkipHarmonyMeasure(int measureIndex, MoodSpec mood, VariantSpec variant)
+        private static bool ShouldSkipHarmonyMeasure(int measureIndex, MoodSpec mood, VariantSpec variant, MeasureRole role)
         {
+            if (role is MeasureRole.Cadence or MeasureRole.FinalCadence)
+            {
+                return false;
+            }
+
             if (variant.Texture == VariantTexture.Tension)
             {
                 return false;
@@ -542,9 +736,9 @@ namespace MusicBox.Services
 
             return mood.Texture switch
             {
-                MoodTexture.Calm or MoodTexture.Airy => measureIndex % 2 == 1,
-                MoodTexture.Gentle => variant.Texture != VariantTexture.Anthem && measureIndex % 3 == 2,
-                _ => false
+                MoodTexture.Calm or MoodTexture.Airy => role == MeasureRole.Answer || measureIndex % 2 == 1,
+                MoodTexture.Gentle => role == MeasureRole.Answer || (variant.Texture != VariantTexture.Anthem && measureIndex % 3 == 2),
+                _ => variant.Texture == VariantTexture.Narrative && role == MeasureRole.Contrast
             };
         }
 
@@ -583,6 +777,8 @@ namespace MusicBox.Services
                 }
             }
 
+            SpreadLowRegisterIntervals(resolved);
+
             int[] voicing = resolved
                 .Select(midi => ClampToRange(midi, 48, 92))
                 .Distinct()
@@ -595,6 +791,17 @@ namespace MusicBox.Services
             }
 
             return voicing;
+        }
+
+        private static void SpreadLowRegisterIntervals(List<int> resolved)
+        {
+            for (int index = 1; index < resolved.Count; index++)
+            {
+                while (resolved[index] < 60 && resolved[index] - resolved[index - 1] < 3)
+                {
+                    resolved[index] += 12;
+                }
+            }
         }
 
         private static int[] AvoidOuterParallelPerfects(
@@ -714,6 +921,20 @@ namespace MusicBox.Services
             {
                 note.IsAccent = note.IsAccent || index % 2 == 0;
             }
+        }
+
+        private static int AdjustMelodyAnchorForRole(int melodyAnchor, MeasureRole role, VariantSpec variant)
+        {
+            int offset = role switch
+            {
+                MeasureRole.Answer => -2,
+                MeasureRole.Contrast => 1,
+                MeasureRole.Climax => 3,
+                MeasureRole.Cadence or MeasureRole.FinalCadence => -1,
+                _ => 0
+            };
+
+            return melodyAnchor + offset + (variant.Texture == VariantTexture.Atmosphere && role == MeasureRole.Climax ? 2 : 0);
         }
 
         private static void AddExpressionMarks(ScoreProject project, MoodSpec mood, VariantSpec variant, int measures, int ticksPerMeasure)
@@ -942,7 +1163,7 @@ namespace MusicBox.Services
             {
                 "positive" => new MoodSpec("Positive", 10, 102, 150, 3, 2, 3, new[] { 0, 1, 2 }, new[] { 1, 1, 2, 0 }, MoodTexture.Bright, false, false, false, false, false, false, new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 } }),
                 "sad" => new MoodSpec("Sad", -14, 58, 88, -4, 2, 2, new[] { -1, 0, 1 }, new[] { 1, -1, -1, 0 }, MoodTexture.Gentle, false, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 2, 2, 4 } }),
-                "sleep" => new MoodSpec("Sleep", -20, 40, 64, -5, 0, 2, new[] { 0, 1 }, new[] { 0, 1, 0 }, MoodTexture.Calm, false, false, false, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 } }),
+                "sleep" => new MoodSpec("Sleep", -24, 36, 58, -5, 0, 2, new[] { 0, 1 }, new[] { 0, 1, 0 }, MoodTexture.Calm, false, false, false, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 } }),
                 "hopeful" => new MoodSpec("Hopeful", 8, 92, 136, 2, 2, 3, new[] { 1, 2, 1 }, new[] { 1, 2, 0, 1 }, MoodTexture.Bright, true, false, false, false, false, false, new[] { new[] { 2, 2, 4 }, new[] { 4, 4 } }),
                 "nostalgic" => new MoodSpec("Nostalgic", -6, 66, 104, -2, 2, 2, new[] { -1, 0, 1 }, new[] { -1, 0, 1, -1 }, MoodTexture.Gentle, true, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 6, 2 } }),
                 "dreamy" => new MoodSpec("Dreamy", -10, 68, 100, 1, 2, 2, new[] { 0, 1 }, new[] { 1, 0, 1, -1 }, MoodTexture.Airy, true, true, true, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 } }),

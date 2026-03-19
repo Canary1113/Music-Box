@@ -165,7 +165,7 @@ namespace MusicBox
                 NavComposeText = new TextBlock
                 {
                     Text = "创作",
-                    FontSize = 10.5,
+                    FontSize = 10,
                     FontWeight = Microsoft.UI.Text.FontWeights.Normal,
                     MaxLines = 2,
                     TextWrapping = TextWrapping.Wrap,
@@ -176,7 +176,7 @@ namespace MusicBox
                 var composePanel = new StackPanel
                 {
                     Spacing = 4,
-                    Width = 82,
+                    Width = 88,
                     HorizontalAlignment = HorizontalAlignment.Center,
                     Margin = new Thickness(3, 0, 3, 0)
                 };
@@ -448,11 +448,17 @@ namespace MusicBox
 
             Title = LocalizationService.Translate("window.title");
             if (WindowTitleText != null) WindowTitleText.Text = LocalizationService.Translate("window.title");
-            if (NavEditorText != null) NavEditorText.Text = isEnglish ? "Editor" : "\u7f16\u8f91";
-            if (NavConvertText != null) NavConvertText.Text = isEnglish ? "Convert" : "\u8f6c\u6362";
-            if (NavComposeText != null) NavComposeText.Text = isEnglish ? "Compose" : "\u521b\u4f5c";
-            if (NavRecognizeText != null) NavRecognizeText.Text = isEnglish ? "Detect" : "\u8bc6\u522b";
-            if (NavSettingsText != null) NavSettingsText.Text = isEnglish ? "Settings" : "\u8bbe\u7f6e";
+            if (NavEditorText != null) NavEditorText.Text = LocalizationService.Translate("nav.editor");
+            if (NavConvertText != null) NavConvertText.Text = LocalizationService.Translate("nav.convert");
+            if (NavComposeText != null) NavComposeText.Text = LocalizationService.Translate("nav.compose");
+            if (NavRecognizeText != null) NavRecognizeText.Text = LocalizationService.Translate("nav.recognize");
+            if (NavSettingsText != null) NavSettingsText.Text = LocalizationService.Translate("nav.settings");
+
+            ApplyNavLabelStyle(NavEditorText, isEnglish);
+            ApplyNavLabelStyle(NavConvertText, isEnglish);
+            ApplyNavLabelStyle(NavComposeText, isEnglish);
+            ApplyNavLabelStyle(NavRecognizeText, isEnglish);
+            ApplyNavLabelStyle(NavSettingsText, isEnglish);
 
             if (ConvertImportMenu != null) ConvertImportMenu.Title = isEnglish ? "Import" : "\u5bfc\u5165";
             if (ConvertFormatMenu != null) ConvertFormatMenu.Title = isEnglish ? "Format" : "\u683c\u5f0f\u8f6c\u6362";
@@ -477,6 +483,19 @@ namespace MusicBox
 
             ApplyEditorMenuItemLocalization(isEnglish);
             ApplyExperimentalFeatureVisibility();
+        }
+
+        private static void ApplyNavLabelStyle(TextBlock? label, bool isEnglish)
+        {
+            if (label == null)
+            {
+                return;
+            }
+
+            label.FontSize = isEnglish ? 9.5 : 10;
+            label.MaxLines = 2;
+            label.TextWrapping = TextWrapping.Wrap;
+            label.TextAlignment = TextAlignment.Center;
         }
 
         private void ApplyEditorMenuItemLocalization(bool isEnglish)
