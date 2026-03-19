@@ -15,6 +15,46 @@ namespace MusicBox.Services
                 ["nav.compose"] = "\u521b\u4f5c",
                 ["nav.recognize"] = "\u8bc6\u522b",
                 ["nav.settings"] = "\u8bbe\u7f6e",
+                ["compose.page_title"] = "\u667a\u80fd\u521b\u4f5c",
+                ["compose.page_subtitle"] = "\u7cfb\u7edf\u4f1a\u81ea\u52a8\u51b3\u5b9a\u901f\u5ea6\u3001\u62cd\u53f7\u548c\u8c03\u6027\uff0c\u4e00\u6b21\u7ed9\u51fa 3 \u4e2a\u660e\u663e\u4e0d\u540c\u7684\u5019\u9009\u65b9\u6848\u3002",
+                ["compose.label.title"] = "\u6807\u9898",
+                ["compose.label.mood"] = "\u60c5\u7eea",
+                ["compose.label.length"] = "\u957f\u5ea6",
+                ["compose.default_title"] = "\u667a\u80fd\u521b\u4f5c",
+                ["compose.mood.calm"] = "\u5e73\u9759",
+                ["compose.mood.positive"] = "\u79ef\u6781",
+                ["compose.mood.sad"] = "\u4f24\u611f",
+                ["compose.mood.sleep"] = "\u52a9\u7720",
+                ["compose.mood.hopeful"] = "\u5e0c\u671b",
+                ["compose.mood.nostalgic"] = "\u6000\u65e7",
+                ["compose.mood.dreamy"] = "\u68a6\u5e7b",
+                ["compose.mood.tense"] = "\u7d27\u5f20",
+                ["compose.length.short"] = "\u77ed",
+                ["compose.length.medium"] = "\u4e2d",
+                ["compose.length.long"] = "\u957f",
+                ["compose.option.a"] = "\u65b9\u6848 A",
+                ["compose.option.b"] = "\u65b9\u6848 B",
+                ["compose.option.c"] = "\u65b9\u6848 C",
+                ["compose.action.generate"] = "\u751f\u6210",
+                ["compose.action.retry"] = "\u91cd\u8bd5",
+                ["compose.action.apply_to_editor"] = "\u5199\u5165\u7f16\u8f91\u9875",
+                ["compose.action.waiting"] = "\u7b49\u5f85\u751f\u6210",
+                ["compose.action.play"] = "\u64ad\u653e",
+                ["compose.action.pause"] = "\u6682\u505c",
+                ["compose.action.keep"] = "\u4fdd\u7559\u65b9\u6848",
+                ["compose.action.unkeep"] = "\u53d6\u6d88\u4fdd\u7559",
+                ["compose.meta.key"] = "\u8c03\u53f7",
+                ["compose.meta.meter"] = "\u62cd\u53f7",
+                ["compose.meta.measures"] = "\u5c0f\u8282\u6570",
+                ["compose.meta.tempo"] = "\u901f\u5ea6",
+                ["compose.meta.duration"] = "\u603b\u65f6\u957f",
+                ["compose.mode.major"] = "\u5927\u8c03",
+                ["compose.mode.minor"] = "\u5c0f\u8c03",
+                ["compose.status.ready"] = "\u667a\u80fd\u521b\u4f5c\u9875\u9762\u5df2\u6253\u5f00\u3002",
+                ["compose.status.generated"] = "\u5df2\u751f\u6210 {0} \u7ec4\u5019\u9009\u65b9\u6848\u3002",
+                ["compose.status.applied"] = "\u5df2\u91c7\u7528\u65b9\u6848 {0} \u5e76\u5199\u5165\u7f16\u8f91\u9875\uff1a{1}",
+                ["compose.status.generation_failed"] = "\u751f\u6210\u5931\u8d25\uff1a{0}",
+                ["compose.status.failed_short"] = "\u751f\u6210\u5931\u8d25",
                 ["settings.page_title"] = "\u8bbe\u7f6e",
                 ["settings.section.personalization"] = "\u4e2a\u6027\u5316",
                 ["settings.theme"] = "\u4e3b\u9898",
@@ -95,6 +135,46 @@ namespace MusicBox.Services
                 ["nav.compose"] = "Compose",
                 ["nav.recognize"] = "Recognize",
                 ["nav.settings"] = "Settings",
+                ["compose.page_title"] = "Smart Compose",
+                ["compose.page_subtitle"] = "The system decides tempo, meter, and key automatically, then returns three clearly different ideas.",
+                ["compose.label.title"] = "Title",
+                ["compose.label.mood"] = "Mood",
+                ["compose.label.length"] = "Length",
+                ["compose.default_title"] = "Smart Compose",
+                ["compose.mood.calm"] = "Calm",
+                ["compose.mood.positive"] = "Positive",
+                ["compose.mood.sad"] = "Sad",
+                ["compose.mood.sleep"] = "Sleep",
+                ["compose.mood.hopeful"] = "Hopeful",
+                ["compose.mood.nostalgic"] = "Nostalgic",
+                ["compose.mood.dreamy"] = "Dreamy",
+                ["compose.mood.tense"] = "Tense",
+                ["compose.length.short"] = "Short",
+                ["compose.length.medium"] = "Medium",
+                ["compose.length.long"] = "Long",
+                ["compose.option.a"] = "Option A",
+                ["compose.option.b"] = "Option B",
+                ["compose.option.c"] = "Option C",
+                ["compose.action.generate"] = "Generate",
+                ["compose.action.retry"] = "Retry",
+                ["compose.action.apply_to_editor"] = "Write to Editor",
+                ["compose.action.waiting"] = "Waiting for generation",
+                ["compose.action.play"] = "Play",
+                ["compose.action.pause"] = "Pause",
+                ["compose.action.keep"] = "Keep option",
+                ["compose.action.unkeep"] = "Unkeep",
+                ["compose.meta.key"] = "Key",
+                ["compose.meta.meter"] = "Meter",
+                ["compose.meta.measures"] = "Measures",
+                ["compose.meta.tempo"] = "Tempo",
+                ["compose.meta.duration"] = "Duration",
+                ["compose.mode.major"] = "major",
+                ["compose.mode.minor"] = "minor",
+                ["compose.status.ready"] = "Smart Compose page is ready.",
+                ["compose.status.generated"] = "Generated {0} candidate ideas.",
+                ["compose.status.applied"] = "Applied option {0} to the editor: {1}",
+                ["compose.status.generation_failed"] = "Generation failed: {0}",
+                ["compose.status.failed_short"] = "Generation failed",
                 ["settings.page_title"] = "Settings",
                 ["settings.section.personalization"] = "Personalization",
                 ["settings.theme"] = "Theme",
@@ -178,12 +258,17 @@ namespace MusicBox.Services
 
         public static string Translate(string key)
         {
+            return TranslateForLanguage(AppSettingsService.Instance.ResolveLanguageTag(), key);
+        }
+
+        public static string TranslateForLanguage(string languageTag, string key)
+        {
             if (string.IsNullOrWhiteSpace(key))
             {
                 return string.Empty;
             }
 
-            string language = AppSettingsService.Instance.ResolveLanguageTag();
+            string language = string.IsNullOrWhiteSpace(languageTag) ? "en-US" : languageTag;
             if (Resources.TryGetValue(language, out Dictionary<string, string>? table) && table.TryGetValue(key, out string? localized))
             {
                 return localized;
@@ -195,6 +280,24 @@ namespace MusicBox.Services
             }
 
             return key;
+        }
+
+        public static string Format(string key, params object?[] args)
+        {
+            string template = Translate(key);
+            if (args == null || args.Length == 0)
+            {
+                return template;
+            }
+
+            try
+            {
+                return string.Format(template, args);
+            }
+            catch
+            {
+                return template;
+            }
         }
 
         public static void RegisterLanguage(string languageTag, IReadOnlyDictionary<string, string> entries)

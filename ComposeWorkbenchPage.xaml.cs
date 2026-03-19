@@ -15,6 +15,8 @@ namespace MusicBox
     public sealed partial class ComposeWorkbenchPage : Page
     {
         private const int CandidateCount = 3;
+        private const string ChineseLanguage = "zh-Hans";
+        private const string EnglishLanguage = "en-US";
         private static readonly string[] SharpNames = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
         private static readonly string[] FlatNames = { "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B" };
 
@@ -57,7 +59,7 @@ namespace MusicBox
         private void ComposeWorkbenchPage_Loaded(object sender, RoutedEventArgs e)
         {
             ApplyLocalizedText();
-            _viewModel?.SetStatus(Localize("智能创作页面已打开。", "Smart Compose page is ready."));
+            _viewModel?.SetStatus(T("compose.status.ready"));
         }
 
         private void ComposeWorkbenchPage_Unloaded(object sender, RoutedEventArgs e)
@@ -113,9 +115,7 @@ namespace MusicBox
 
             SmartComposeResult result = _candidates[index];
             _viewModel.LoadProjectSnapshot(CloneProject(result.Project));
-            _viewModel.SetStatus(Localize(
-                $"已采用方案 {(char)('A' + index)} 并写入编辑页：{result.Project.Title}",
-                $"Applied option {(char)('A' + index)} to the editor: {result.Project.Title}"));
+            _viewModel.SetStatus(TF("compose.status.applied", (char)('A' + index), result.Project.Title));
 
             if (App.MainWindow is MainWindow window)
             {
@@ -162,14 +162,14 @@ namespace MusicBox
                 _candidates.AddRange(nextCandidates);
                 RenderCandidates();
                 HideStatusText();
-                _viewModel?.SetStatus(Localize("已生成 3 组候选方案。", "Generated 3 candidate ideas."));
+                _viewModel?.SetStatus(TF("compose.status.generated", CandidateCount));
             }
             catch (Exception ex)
             {
-                string message = Localize($"生成失败：{ex.Message}", $"Generation failed: {ex.Message}");
+                string message = TF("compose.status.generation_failed", ex.Message);
                 ShowStatusText(message);
                 _viewModel?.SetStatus(message);
-                ResetCandidateSurface(Localize("生成失败", "Generation failed"));
+                ResetCandidateSurface(T("compose.status.failed_short"));
             }
         }
 
@@ -184,7 +184,7 @@ namespace MusicBox
 
             return new SmartComposeRequest
             {
-                Title = string.IsNullOrWhiteSpace(TitleBox.Text) ? Localize("智能创作", "Smart Compose") : TitleBox.Text.Trim(),
+                Title = string.IsNullOrWhiteSpace(TitleBox.Text) ? T("compose.default_title") : TitleBox.Text.Trim(),
                 Bpm = autoBpm,
                 Measures = ResolveMeasureCount(lengthId),
                 KeyFifths = autoKey,
@@ -212,7 +212,7 @@ namespace MusicBox
 
             if (!HasCandidate(index))
             {
-                summaryText.Text = Localize("等待生成", "Waiting for generation");
+                summaryText.Text = T("compose.action.waiting");
                 applyButton.IsEnabled = false;
                 return;
             }
@@ -225,7 +225,7 @@ namespace MusicBox
         private void ResetCandidateSurface(string? placeholder = null)
         {
             string text = string.IsNullOrWhiteSpace(placeholder)
-                ? Localize("等待生成", "Waiting for generation")
+                ? T("compose.action.waiting")
                 : placeholder;
 
             _candidates.Clear();
@@ -254,7 +254,7 @@ namespace MusicBox
             SetButtonContent(
                 button,
                 isActive ? Symbol.Pause : Symbol.Play,
-                Localize(isActive ? "暂停" : "播放", isActive ? "Pause" : "Play"),
+                T(isActive ? "compose.action.pause" : "compose.action.play"),
                 14,
                 IsEnglishUi() ? 13 : 14);
         }
@@ -270,11 +270,7 @@ namespace MusicBox
         {
             bool enabled = HasCandidate(index);
             button.IsEnabled = enabled;
-            ToolTipService.SetToolTip(
-                button,
-                enabled && _keptCandidates[index]
-                    ? Localize("取消保留", "Unkeep")
-                    : Localize("保留方案", "Keep option"));
+            ToolTipService.SetToolTip(button, T(enabled && _keptCandidates[index] ? "compose.action.unkeep" : "compose.action.keep"));
             SetButtonContent(button, Symbol.Accept, null, 12);
             TryApplyAccentStyle(button, enabled && _keptCandidates[index]);
         }
@@ -282,59 +278,58 @@ namespace MusicBox
         private void ApplyLocalizedText()
         {
             bool isEnglish = IsEnglishUi();
-            string defaultTitleZh = "智能创作";
-            string defaultTitleEn = "Smart Compose";
+            string localizedDefaultTitle = T("compose.default_title");
+            string chineseDefaultTitle = LocalizationService.TranslateForLanguage(ChineseLanguage, "compose.default_title");
+            string englishDefaultTitle = LocalizationService.TranslateForLanguage(EnglishLanguage, "compose.default_title");
 
-            PageTitleText.Text = isEnglish ? "Smart Compose" : "智能创作";
+            PageTitleText.Text = T("compose.page_title");
             PageTitleText.FontSize = isEnglish ? 23 : 24;
 
-            PageSubtitleText.Text = isEnglish
-                ? "The system decides tempo, meter, and key automatically, then returns three clearly different ideas."
-                : "系统会自动决定速度、拍号和调性，一次给出 3 个明显不同的候选方案。";
+            PageSubtitleText.Text = T("compose.page_subtitle");
             PageSubtitleText.FontSize = isEnglish ? 13 : 14;
 
-            TitleLabelText.Text = isEnglish ? "Title" : "标题";
-            MoodLabelText.Text = isEnglish ? "Mood" : "情绪";
-            LengthLabelText.Text = isEnglish ? "Length" : "长度";
+            TitleLabelText.Text = T("compose.label.title");
+            MoodLabelText.Text = T("compose.label.mood");
+            LengthLabelText.Text = T("compose.label.length");
 
             if (string.IsNullOrWhiteSpace(TitleBox.Text)
-                || string.Equals(TitleBox.Text.Trim(), defaultTitleZh, StringComparison.Ordinal)
-                || string.Equals(TitleBox.Text.Trim(), defaultTitleEn, StringComparison.Ordinal))
+                || string.Equals(TitleBox.Text.Trim(), chineseDefaultTitle, StringComparison.Ordinal)
+                || string.Equals(TitleBox.Text.Trim(), englishDefaultTitle, StringComparison.Ordinal))
             {
-                TitleBox.Text = isEnglish ? defaultTitleEn : defaultTitleZh;
+                TitleBox.Text = localizedDefaultTitle;
             }
 
-            MoodCalmItem.Content = isEnglish ? "Calm" : "平静";
-            MoodPositiveItem.Content = isEnglish ? "Positive" : "积极";
-            MoodSadItem.Content = isEnglish ? "Sad" : "伤感";
-            MoodSleepItem.Content = isEnglish ? "Sleep" : "助眠";
-            MoodHopefulItem.Content = isEnglish ? "Hopeful" : "希望";
-            MoodNostalgicItem.Content = isEnglish ? "Nostalgic" : "怀旧";
-            MoodDreamyItem.Content = isEnglish ? "Dreamy" : "梦幻";
-            MoodTenseItem.Content = isEnglish ? "Tense" : "紧张";
+            MoodCalmItem.Content = T("compose.mood.calm");
+            MoodPositiveItem.Content = T("compose.mood.positive");
+            MoodSadItem.Content = T("compose.mood.sad");
+            MoodSleepItem.Content = T("compose.mood.sleep");
+            MoodHopefulItem.Content = T("compose.mood.hopeful");
+            MoodNostalgicItem.Content = T("compose.mood.nostalgic");
+            MoodDreamyItem.Content = T("compose.mood.dreamy");
+            MoodTenseItem.Content = T("compose.mood.tense");
 
-            LengthShortItem.Content = isEnglish ? "Short" : "短";
-            LengthMediumItem.Content = isEnglish ? "Medium" : "中";
-            LengthLongItem.Content = isEnglish ? "Long" : "长";
+            LengthShortItem.Content = T("compose.length.short");
+            LengthMediumItem.Content = T("compose.length.medium");
+            LengthLongItem.Content = T("compose.length.long");
 
-            Option1TitleText.Text = isEnglish ? "Option A" : "方案 A";
-            Option2TitleText.Text = isEnglish ? "Option B" : "方案 B";
-            Option3TitleText.Text = isEnglish ? "Option C" : "方案 C";
+            Option1TitleText.Text = T("compose.option.a");
+            Option2TitleText.Text = T("compose.option.b");
+            Option3TitleText.Text = T("compose.option.c");
 
-            SetPlainButtonContent(GenerateButton, isEnglish ? "Generate" : "生成", isEnglish ? 13 : 14);
-            SetButtonContent(RetryButton, Symbol.Refresh, isEnglish ? "Retry" : "重试", 12, isEnglish ? 13 : 14);
+            SetPlainButtonContent(GenerateButton, T("compose.action.generate"), isEnglish ? 13 : 14);
+            SetButtonContent(RetryButton, Symbol.Refresh, T("compose.action.retry"), 12, isEnglish ? 13 : 14);
 
-            Option1ApplyButton.Content = isEnglish ? "Write to Editor" : "写入编辑页";
-            Option2ApplyButton.Content = isEnglish ? "Write to Editor" : "写入编辑页";
-            Option3ApplyButton.Content = isEnglish ? "Write to Editor" : "写入编辑页";
+            Option1ApplyButton.Content = T("compose.action.apply_to_editor");
+            Option2ApplyButton.Content = T("compose.action.apply_to_editor");
+            Option3ApplyButton.Content = T("compose.action.apply_to_editor");
 
-            double englishSize = isEnglish ? 13 : 14;
-            TitleLabelText.FontSize = englishSize;
-            MoodLabelText.FontSize = englishSize;
-            LengthLabelText.FontSize = englishSize;
-            Option1ApplyButton.FontSize = englishSize;
-            Option2ApplyButton.FontSize = englishSize;
-            Option3ApplyButton.FontSize = englishSize;
+            double compactTextSize = isEnglish ? 13 : 14;
+            TitleLabelText.FontSize = compactTextSize;
+            MoodLabelText.FontSize = compactTextSize;
+            LengthLabelText.FontSize = compactTextSize;
+            Option1ApplyButton.FontSize = compactTextSize;
+            Option2ApplyButton.FontSize = compactTextSize;
+            Option3ApplyButton.FontSize = compactTextSize;
 
             RenderCandidates();
             ApplyStaticButtonVisuals();
@@ -371,9 +366,14 @@ namespace MusicBox
             return _settings.ResolveLanguageTag().StartsWith("en", StringComparison.OrdinalIgnoreCase);
         }
 
-        private string Localize(string zh, string en)
+        private static string T(string key)
         {
-            return IsEnglishUi() ? en : zh;
+            return LocalizationService.Translate(key);
+        }
+
+        private static string TF(string key, params object?[] args)
+        {
+            return LocalizationService.Format(key, args);
         }
 
         private static void TryApplyAccentStyle(Button button, bool applyAccent)
@@ -455,21 +455,11 @@ namespace MusicBox
 
             return string.Join(Environment.NewLine, new[]
             {
-                IsEnglishUi()
-                    ? $"Key: {BuildLocalizedKeyLabel(project.KeySignature.Fifths, project.KeySignature.Mode)}"
-                    : $"调号：{BuildLocalizedKeyLabel(project.KeySignature.Fifths, project.KeySignature.Mode)}",
-                IsEnglishUi()
-                    ? $"Meter: {project.TimeSignature.Numerator}/{project.TimeSignature.Denominator}"
-                    : $"拍号：{project.TimeSignature.Numerator}/{project.TimeSignature.Denominator}",
-                IsEnglishUi()
-                    ? $"Measures: {measureCount}"
-                    : $"小节数：{measureCount}",
-                IsEnglishUi()
-                    ? $"Tempo: {project.Bpm} BPM"
-                    : $"速度：{project.Bpm} BPM",
-                IsEnglishUi()
-                    ? $"Duration: {FormatDuration(totalTicks, safePpq, project.Bpm)}"
-                    : $"总时长：{FormatDuration(totalTicks, safePpq, project.Bpm)}"
+                $"{T("compose.meta.key")}: {BuildLocalizedKeyLabel(project.KeySignature.Fifths, project.KeySignature.Mode)}",
+                $"{T("compose.meta.meter")}: {project.TimeSignature.Numerator}/{project.TimeSignature.Denominator}",
+                $"{T("compose.meta.measures")}: {measureCount}",
+                $"{T("compose.meta.tempo")}: {project.Bpm} BPM",
+                $"{T("compose.meta.duration")}: {FormatDuration(totalTicks, safePpq, project.Bpm)}"
             });
         }
 
@@ -477,9 +467,7 @@ namespace MusicBox
         {
             int pitchClass = Mod(fifths * 7 + (mode == KeyMode.Minor ? 9 : 0), 12);
             string tonic = fifths >= 0 ? SharpNames[pitchClass] : FlatNames[pitchClass];
-            return IsEnglishUi()
-                ? $"{tonic} {(mode == KeyMode.Minor ? "minor" : "major")}"
-                : $"{tonic} {(mode == KeyMode.Minor ? "小调" : "大调")}";
+            return $"{tonic} {T(mode == KeyMode.Minor ? "compose.mode.minor" : "compose.mode.major")}";
         }
 
         private static string FormatDuration(int totalTicks, int ppq, int bpm)
