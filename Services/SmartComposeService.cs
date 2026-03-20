@@ -1149,11 +1149,13 @@ namespace MusicBox.Services
             int totalTicks = measures * ticksPerMeasure;
             string openingDynamic = variant.Texture == VariantTexture.Atmosphere ? "p" : variant.Texture == VariantTexture.Tension ? "mf" : "mp";
             string closingDynamic = variant.Texture == VariantTexture.Atmosphere ? "pp" : variant.Texture == VariantTexture.Tension ? "mp" : "p";
+            const float centerGapStaffOffset = 5.2f;
+            const float pedalStaffOffset = 24f;
 
-            project.ExpressionMarks.Add(new ExpressionMark { Code = openingDynamic, StartTick = 0, StaffStepOffset = 17f });
-            project.ExpressionMarks.Add(new ExpressionMark { Code = mood.Texture == MoodTexture.Tense ? "cresc" : "cresc_text", StartTick = totalTicks / 3, StaffStepOffset = 17f, SpanBeats = 3.5f });
-            project.ExpressionMarks.Add(new ExpressionMark { Code = "rit", StartTick = Math.Max(0, totalTicks - ticksPerMeasure * 2), StaffStepOffset = 17f, SpanBeats = 2.4f });
-            project.ExpressionMarks.Add(new ExpressionMark { Code = closingDynamic, StartTick = Math.Max(0, totalTicks - ticksPerMeasure), StaffStepOffset = 17f });
+            project.ExpressionMarks.Add(new ExpressionMark { Code = openingDynamic, StartTick = 0, StaffStepOffset = centerGapStaffOffset });
+            project.ExpressionMarks.Add(new ExpressionMark { Code = mood.Texture == MoodTexture.Tense ? "cresc" : "cresc_text", StartTick = totalTicks / 3, StaffStepOffset = centerGapStaffOffset, SpanBeats = 3.5f });
+            project.ExpressionMarks.Add(new ExpressionMark { Code = "rit", StartTick = Math.Max(0, totalTicks - ticksPerMeasure * 2), StaffStepOffset = centerGapStaffOffset, SpanBeats = 2.4f });
+            project.ExpressionMarks.Add(new ExpressionMark { Code = closingDynamic, StartTick = Math.Max(0, totalTicks - ticksPerMeasure), StaffStepOffset = centerGapStaffOffset });
 
             if (!mood.PedalFriendly && !variant.ForcePedal)
             {
@@ -1164,8 +1166,8 @@ namespace MusicBox.Services
             {
                 int start = measure * ticksPerMeasure;
                 int end = Math.Min(totalTicks, start + ticksPerMeasure * 2);
-                project.ExpressionMarks.Add(new ExpressionMark { Code = "ped", StartTick = start, StaffStepOffset = 30f });
-                project.ExpressionMarks.Add(new ExpressionMark { Code = "ped_release", StartTick = end, StaffStepOffset = 30f });
+                project.ExpressionMarks.Add(new ExpressionMark { Code = "ped", StartTick = start, StaffStepOffset = pedalStaffOffset });
+                project.ExpressionMarks.Add(new ExpressionMark { Code = "ped_release", StartTick = end, StaffStepOffset = pedalStaffOffset });
             }
         }
 
