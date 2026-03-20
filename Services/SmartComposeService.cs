@@ -59,7 +59,8 @@ namespace MusicBox.Services
             int tonicPitchClass = Mod(request.KeyFifths * 7 + (request.Mode == KeyMode.Minor ? 9 : 0), 12);
             int melodyAnchor = ClosestMidiToTarget(tonicPitchClass, style.CenterMidi + mood.RangeOffset + variant.MelodyOffset);
             int bassAnchor = ClosestMidiToTarget(tonicPitchClass, 43 + variant.BassOffset);
-            int[] progression = BuildProgression(style, measures, variant, random);
+            StructurePlan structure = BuildStructure(style, measures, variant, random);
+            int[] progression = structure.Progression;
 
             var project = new ScoreProject
             {
@@ -79,14 +80,16 @@ namespace MusicBox.Services
             int? previousMelodyMidi = null;
             int[]? previousRhythm = null;
             int repeatedRhythmCount = 0;
-            List<int>? signatureMotifDegrees = null;
-            int[]? signatureMotifRhythm = null;
+            var themeMotifs = new Dictionary<ThemeFamily, ThemeMotif>();
 
             for (int measure = 0; measure < measures; measure++)
             {
                 int startTick = measure * ticksPerMeasure;
                 int chordDegree = progression[measure];
-                MeasureRole role = ResolveRole(measure, measures);
+                SectionPlan section = structure.SectionMap[measure];
+                int measureInSection = measure - section.StartMeasure;
+                bool hasThemeMotif = themeMotifs.TryGetValue(section.Theme, out ThemeMotif? referenceMotif);
+                MeasureRole role = ResolveRole(measureInSection, section.Length, section.IsFinalSection, section.Energy, hasThemeMotif);
                 ChordPlan chordPlan = BuildChordPlan(chordDegree, role, request.Mode, mood, variant, random);
                 chordNames.Add(chordPlan.Name);
 
@@ -111,7 +114,17 @@ namespace MusicBox.Services
                     role);
 
                 int[] rhythm = PickRhythm(style, mood, variant, role, measureUnits, previousRhythm, repeatedRhythmCount, measure, measures, random);
-                List<int> melodyDegrees = BuildMeasureDegrees(rhythm, chordPlan, role, mood, style, variant, melodyState, signatureMotifDegrees, signatureMotifRhythm, random);
+                List<int> melodyDegrees = BuildMeasureDegrees(
+                    rhythm,
+                    chordPlan,
+                    role,
+                    mood,
+                    style,
+                    variant,
+                    melodyState,
+                    referenceMotif?.Degrees,
+                    referenceMotif?.Rhythm,
+                    random);
                 int measureMelodyAnchor = AdjustMelodyAnchorForRole(melodyAnchor, role, variant);
 
                 int cursor = startTick;
@@ -133,10 +146,9 @@ namespace MusicBox.Services
                     cursor += durationTicks;
                 }
 
-                if (role == MeasureRole.Opening && signatureMotifDegrees == null)
+                if (measureInSection == 0 && !hasThemeMotif)
                 {
-                    signatureMotifDegrees = melodyDegrees.ToList();
-                    signatureMotifRhythm = rhythm.ToArray();
+                    themeMotifs[section.Theme] = new ThemeMotif(melodyDegrees.ToList(), rhythm.ToArray());
                 }
 
                 if (PatternsEqual(previousRhythm, rhythm))
@@ -165,25 +177,220 @@ namespace MusicBox.Services
             return new SmartComposeResult(project, chordProgression, summary, seed);
         }
 
-        private static int[] BuildProgression(StyleSpec style, int measures, VariantSpec variant, Random random)
+        private static StructurePlan BuildStructure(StyleSpec style, int measures, VariantSpec variant, Random random)
+        {
+            int sectionLength = ResolveSectionLength(measures);
+            IReadOnlyList<SectionBlueprint> blueprints = BuildSectionBlueprints(measures, sectionLength);
+            var progression = new int[measures];
+            var sectionMap = new SectionPlan[measures];
+            var themePhrases = new Dictionary<ThemeFamily, int[]>();
+
+            foreach (SectionBlueprint blueprint in blueprints)
+            {
+                int actualLength = Math.Min(blueprint.Length, measures - blueprint.StartMeasure);
+                if (actualLength <= 0)
+                {
+                    continue;
+                }
+
+                if (!themePhrases.TryGetValue(blueprint.Theme, out int[]? basePhrase))
+                {
+                    basePhrase = SelectThemePhrase(style, blueprint.Theme, variant, random);
+                    themePhrases[blueprint.Theme] = basePhrase;
+                }
+
+                int[] sectionProgression = BuildSectionProgression(basePhrase, actualLength, blueprint.Energy, blueprint.IsFinalSection, variant, random);
+                var section = new SectionPlan(blueprint.StartMeasure, actualLength, blueprint.Theme, blueprint.Energy, blueprint.IsFinalSection);
+
+                for (int localIndex = 0; localIndex < actualLength; localIndex++)
+                {
+                    int absoluteMeasure = blueprint.StartMeasure + localIndex;
+                    progression[absoluteMeasure] = sectionProgression[localIndex];
+                    sectionMap[absoluteMeasure] = section;
+                }
+            }
+
+            return new StructurePlan(progression, sectionMap);
+        }
+
+        private static int ResolveSectionLength(int measures)
+        {
+            return measures >= 24 ? 8 : 4;
+        }
+
+        private static IReadOnlyList<SectionBlueprint> BuildSectionBlueprints(int measures, int sectionLength)
+        {
+            int sectionCount = Math.Max(1, (int)Math.Ceiling(measures / (double)sectionLength));
+            ThemeFamily[] themes = sectionCount switch
+            {
+                1 => new[] { ThemeFamily.A },
+                2 => new[] { ThemeFamily.A, ThemeFamily.A },
+                3 => new[] { ThemeFamily.A, ThemeFamily.B, ThemeFamily.A },
+                4 => new[] { ThemeFamily.A, ThemeFamily.A, ThemeFamily.B, ThemeFamily.A },
+                5 => new[] { ThemeFamily.A, ThemeFamily.A, ThemeFamily.B, ThemeFamily.C, ThemeFamily.A },
+                6 => new[] { ThemeFamily.A, ThemeFamily.A, ThemeFamily.B, ThemeFamily.A, ThemeFamily.C, ThemeFamily.A },
+                7 => new[] { ThemeFamily.A, ThemeFamily.A, ThemeFamily.B, ThemeFamily.A, ThemeFamily.C, ThemeFamily.B, ThemeFamily.A },
+                _ => new[] { ThemeFamily.A, ThemeFamily.A, ThemeFamily.B, ThemeFamily.A, ThemeFamily.C, ThemeFamily.B, ThemeFamily.A, ThemeFamily.A }
+            };
+
+            SectionEnergy[] energies = sectionCount switch
+            {
+                1 => new[] { SectionEnergy.Resolution },
+                2 => new[] { SectionEnergy.Statement, SectionEnergy.Resolution },
+                3 => new[] { SectionEnergy.Statement, SectionEnergy.Contrast, SectionEnergy.Resolution },
+                4 => new[] { SectionEnergy.Statement, SectionEnergy.Development, SectionEnergy.Contrast, SectionEnergy.Resolution },
+                5 => new[] { SectionEnergy.Statement, SectionEnergy.Development, SectionEnergy.Contrast, SectionEnergy.Development, SectionEnergy.Resolution },
+                6 => new[] { SectionEnergy.Statement, SectionEnergy.Development, SectionEnergy.Contrast, SectionEnergy.Development, SectionEnergy.Climax, SectionEnergy.Resolution },
+                7 => new[] { SectionEnergy.Statement, SectionEnergy.Development, SectionEnergy.Contrast, SectionEnergy.Development, SectionEnergy.Contrast, SectionEnergy.Climax, SectionEnergy.Resolution },
+                _ => new[] { SectionEnergy.Statement, SectionEnergy.Development, SectionEnergy.Contrast, SectionEnergy.Development, SectionEnergy.Contrast, SectionEnergy.Climax, SectionEnergy.Development, SectionEnergy.Resolution }
+            };
+
+            var sections = new List<SectionBlueprint>(sectionCount);
+            for (int index = 0; index < sectionCount; index++)
+            {
+                sections.Add(new SectionBlueprint(
+                    index * sectionLength,
+                    sectionLength,
+                    themes[Math.Min(index, themes.Length - 1)],
+                    energies[Math.Min(index, energies.Length - 1)],
+                    index == sectionCount - 1));
+            }
+
+            return sections;
+        }
+
+        private static int[] SelectThemePhrase(StyleSpec style, ThemeFamily theme, VariantSpec variant, Random random)
         {
             int[][] bank = style.Progressions;
-            int[] phrase = bank[(variant.ProgressionBank + random.Next(bank.Length)) % bank.Length];
-            var output = new List<int>(measures);
-
-            while (output.Count < measures)
+            int offset = theme switch
             {
-                int remaining = measures - output.Count;
-                output.AddRange(remaining >= phrase.Length ? phrase : phrase.Take(remaining));
+                ThemeFamily.B => 1,
+                ThemeFamily.C => 2,
+                _ => 0
+            };
+
+            return bank[(variant.ProgressionBank + offset + random.Next(bank.Length)) % bank.Length].ToArray();
+        }
+
+        private static int[] BuildSectionProgression(
+            IReadOnlyList<int> basePhrase,
+            int sectionLength,
+            SectionEnergy energy,
+            bool isFinalSection,
+            VariantSpec variant,
+            Random random)
+        {
+            var output = new List<int>(sectionLength);
+
+            while (output.Count < sectionLength)
+            {
+                bool openingHalf = output.Count < Math.Min(4, sectionLength);
+                int[] phrase = ShapePhrase(basePhrase, energy, openingHalf, variant, random);
+                int remaining = sectionLength - output.Count;
+                output.AddRange(phrase.Take(remaining));
             }
 
-            if (measures >= 2)
-            {
-                output[^2] = variant.Texture == VariantTexture.Tension ? 5 : output[^2];
-                output[^1] = 1;
-            }
-
+            ApplySectionCadence(output, energy, isFinalSection, variant);
             return output.ToArray();
+        }
+
+        private static int[] ShapePhrase(
+            IReadOnlyList<int> phrase,
+            SectionEnergy energy,
+            bool openingHalf,
+            VariantSpec variant,
+            Random random)
+        {
+            int[] result = phrase.ToArray();
+            if (result.Length == 0)
+            {
+                return result;
+            }
+
+            switch (energy)
+            {
+                case SectionEnergy.Development:
+                    if (!openingHalf && result.Length >= 3)
+                    {
+                        result[1] = result[0] == 1 ? 6 : 4;
+                        result[2] = result[1] == 6 ? 4 : 2;
+                    }
+                    break;
+
+                case SectionEnergy.Contrast:
+                    result[0] = openingHalf ? 6 : 4;
+                    if (result.Length >= 2)
+                    {
+                        result[1] = openingHalf ? 4 : 2;
+                    }
+
+                    if (result.Length >= 3)
+                    {
+                        result[2] = variant.Texture == VariantTexture.Atmosphere ? 2 : 5;
+                    }
+                    break;
+
+                case SectionEnergy.Climax:
+                    result[0] = openingHalf ? 4 : 6;
+                    if (result.Length >= 2)
+                    {
+                        result[1] = 5;
+                    }
+
+                    if (result.Length >= 3)
+                    {
+                        result[2] = openingHalf ? 6 : 5;
+                    }
+                    break;
+
+                case SectionEnergy.Resolution:
+                    result[0] = openingHalf ? 1 : result[0];
+                    if (!openingHalf && result.Length >= 3)
+                    {
+                        result[1] = 4;
+                        result[2] = 5;
+                    }
+                    break;
+            }
+
+            if (!openingHalf && result.Length >= 3 && random.NextDouble() < 0.35)
+            {
+                (result[1], result[2]) = (result[2], result[1]);
+            }
+
+            for (int index = 0; index < result.Length; index++)
+            {
+                result[index] = Math.Clamp(result[index], 1, 7);
+            }
+
+            return result;
+        }
+
+        private static void ApplySectionCadence(List<int> progression, SectionEnergy energy, bool isFinalSection, VariantSpec variant)
+        {
+            if (progression.Count == 0)
+            {
+                return;
+            }
+
+            progression[^1] = 1;
+            if (progression.Count >= 2)
+            {
+                progression[^2] = isFinalSection || energy == SectionEnergy.Climax || variant.Texture == VariantTexture.Tension
+                    ? 5
+                    : 2;
+            }
+
+            if (progression.Count >= 4)
+            {
+                progression[^4] = energy switch
+                {
+                    SectionEnergy.Contrast => 6,
+                    SectionEnergy.Climax => 4,
+                    SectionEnergy.Resolution => 1,
+                    _ => progression[^4]
+                };
+            }
         }
 
         private static int[] PickRhythm(
@@ -382,7 +589,7 @@ namespace MusicBox.Services
             Random random)
         {
             int noteCount = rhythm.Count;
-            if (role == MeasureRole.Return
+            if ((role == MeasureRole.Return || role == MeasureRole.Opening)
                 && referenceMotif != null
                 && referenceRhythm != null
                 && referenceRhythm.Count == noteCount)
@@ -1130,17 +1337,39 @@ namespace MusicBox.Services
             };
         }
 
-        private static MeasureRole ResolveRole(int measureIndex, int totalMeasures)
+        private static MeasureRole ResolveRole(int measureInSection, int sectionLength, bool isFinalSection, SectionEnergy energy, bool hasThemeMotif)
         {
-            int slot = measureIndex % 4;
-            bool finalPhrase = measureIndex >= Math.Max(0, totalMeasures - 4);
-            return slot switch
+            int lastMeasure = Math.Max(0, sectionLength - 1);
+            if (measureInSection <= 0)
             {
-                0 => finalPhrase && measureIndex > 0 ? MeasureRole.Return : MeasureRole.Opening,
-                1 => MeasureRole.Answer,
-                2 => finalPhrase ? MeasureRole.Climax : MeasureRole.Contrast,
-                _ => finalPhrase ? MeasureRole.FinalCadence : MeasureRole.Cadence
-            };
+                return hasThemeMotif && energy != SectionEnergy.Contrast ? MeasureRole.Return : MeasureRole.Opening;
+            }
+
+            if (measureInSection >= lastMeasure)
+            {
+                return isFinalSection ? MeasureRole.FinalCadence : MeasureRole.Cadence;
+            }
+
+            if (measureInSection == 1)
+            {
+                return MeasureRole.Answer;
+            }
+
+            if (measureInSection == Math.Max(1, lastMeasure - 1))
+            {
+                return energy is SectionEnergy.Climax or SectionEnergy.Resolution
+                    ? MeasureRole.Climax
+                    : MeasureRole.Contrast;
+            }
+
+            if (measureInSection >= Math.Max(2, sectionLength / 2))
+            {
+                return hasThemeMotif && energy == SectionEnergy.Development
+                    ? MeasureRole.Return
+                    : MeasureRole.Contrast;
+            }
+
+            return energy == SectionEnergy.Contrast ? MeasureRole.Contrast : MeasureRole.Answer;
         }
 
         private static int FloorDiv(int value, int divisor)
@@ -1198,6 +1427,22 @@ namespace MusicBox.Services
                 2 => new VariantSpec("Atmosphere", "longer notes and more space", VariantTexture.Atmosphere, 2, 6, -3, -10, -2, 6, -1, true),
                 _ => new VariantSpec("Narrative", "balanced lead with stable cadence", VariantTexture.Narrative, 0, 0, 0, 0, 0, 0, 0, false)
             };
+        }
+
+        private enum ThemeFamily
+        {
+            A,
+            B,
+            C
+        }
+
+        private enum SectionEnergy
+        {
+            Statement,
+            Development,
+            Contrast,
+            Climax,
+            Resolution
         }
 
         private enum MeasureRole
@@ -1260,6 +1505,14 @@ namespace MusicBox.Services
         private sealed record ChordPlan(int Degree, string Name, int[] StrongDegrees, int[] WeakDegrees, int[] CadenceDegrees, int[] HarmonyDegrees);
 
         private sealed record DurationSpec(int BaseTicks, int TotalTicks, int Dots);
+
+        private sealed record ThemeMotif(List<int> Degrees, int[] Rhythm);
+
+        private sealed record SectionBlueprint(int StartMeasure, int Length, ThemeFamily Theme, SectionEnergy Energy, bool IsFinalSection);
+
+        private sealed record SectionPlan(int StartMeasure, int Length, ThemeFamily Theme, SectionEnergy Energy, bool IsFinalSection);
+
+        private sealed record StructurePlan(int[] Progression, SectionPlan[] SectionMap);
 
         private sealed class MelodyState
         {
