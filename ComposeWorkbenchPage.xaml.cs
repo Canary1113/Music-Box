@@ -190,9 +190,9 @@ namespace MusicBox
                 TimeSignature = new TimeSignature(numerator, denominator),
                 MoodId = moodId,
                 LengthId = lengthId,
-                IncludeBass = true,
+                IncludeBass = false,
                 AutoTonality = true,
-                UseSustainPedal = true
+                UseSustainPedal = false
             };
         }
 

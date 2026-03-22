@@ -429,7 +429,7 @@ namespace MusicBox
                 JianpuCanvas?.Invalidate();
                 _guitarTabCanvas?.Invalidate();
                 SavePageStateToCache();
-                SetStatus(Loc("请先在“导入”菜单里选择“编辑页导入”或“从文件导入”。", "Choose Import -> From Editor or From File first."));
+                SetStatus(Loc("请先在“导入”菜单里选择“五线谱页导入”或“从文件导入”。", "Choose Import -> From Staff or From File first."));
                 return;
             }
 
@@ -1150,6 +1150,11 @@ namespace MusicBox
             foreach (ExpressionMark mark in _sourceProject.ExpressionMarks.OrderBy(mark => mark.StartTick))
             {
                 string code = ScorePreviewLayoutHelper.NormalizeExpressionCode(mark.Code);
+                if (!code.StartsWith("score_", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 if (code is "score_repeat_barline" or "score_final_barline")
                 {
                     continue;
@@ -1212,16 +1217,7 @@ namespace MusicBox
 
                 string? textLabel = code switch
                 {
-                    "rit" => "rit.",
-                    "cresc_text" => "cresc.",
-                    "dim_text" => "dim.",
-                    "pp" => "pp",
-                    "p" => "p",
-                    "mp" => "mp",
-                    "mf" => "mf",
-                    "f" => "f",
-                    "ff" => "ff",
-                    "segno" or "score_segno" => "segno",
+                    "score_segno" => "segno",
                     _ => null
                 };
 

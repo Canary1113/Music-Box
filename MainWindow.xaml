@@ -139,7 +139,7 @@
                              Margin="0"
                              Visibility="Collapsed">
                         <MenuBarItem x:Name="ConvertImportMenu" Title="导入">
-                            <MenuFlyoutItem x:Name="ConvertImportFromEditorMenuItem" Text="编辑页导入" Tag="import_editor" Click="ConvertTitleImportMenuItem_Click"/>
+                            <MenuFlyoutItem x:Name="ConvertImportFromEditorMenuItem" Text="五线谱页导入" Tag="import_editor" Click="ConvertTitleImportMenuItem_Click"/>
                             <MenuFlyoutItem x:Name="ConvertImportFromFileMenuItem" Text="从文件导入" Tag="import_file" Click="ConvertTitleImportMenuItem_Click"/>
                         </MenuBarItem>
                         <MenuBarItem x:Name="ConvertFormatMenu" Title="格式转换">
@@ -177,8 +177,8 @@
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="NavEditor" Tag="editor" Style="{StaticResource CompactNavItemStyle}">
                     <StackPanel Spacing="4" Width="88" HorizontalAlignment="Center" Margin="3,0,3,0">
-                        <FontIcon Glyph="&#xE70F;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="NavEditorText" Text="编辑" FontSize="10" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
+                        <FontIcon Glyph="🎼" FontFamily="Segoe UI Emoji" FontSize="18" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="NavEditorText" Text="五线谱" FontSize="10" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
                     </StackPanel>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavConvert" Tag="convert" Style="{StaticResource CompactNavItemStyle}">

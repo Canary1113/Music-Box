@@ -130,25 +130,27 @@ namespace MusicBox.Services
                 ChordPlan chordPlan = BuildChordPlan(chordDegree, role, request.Mode, mood, variant, random);
                 chordNames.Add(chordPlan.Name);
 
-                int bassMidi = request.IncludeBass
-                    ? AddBass(project, startTick, ticksPerMeasure, unitTicks, bassAnchor, tonicPitchClass, scale, chordPlan, previousBassMidi, mood, variant, role)
-                    : bassAnchor;
-
-                int[] harmonyVoicing = AddHarmony(
-                    project,
-                    startTick,
-                    ticksPerMeasure,
-                    unitTicks,
-                    tonicPitchClass,
-                    scale,
-                    chordPlan,
-                    style,
-                    mood,
-                    variant,
-                    bassMidi,
-                    previousBassMidi,
-                    previousHarmony,
-                    role);
+                int bassMidi = bassAnchor;
+                int[] harmonyVoicing = Array.Empty<int>();
+                if (request.IncludeBass)
+                {
+                    bassMidi = AddBass(project, startTick, ticksPerMeasure, unitTicks, bassAnchor, tonicPitchClass, scale, chordPlan, previousBassMidi, mood, variant, role);
+                    harmonyVoicing = AddHarmony(
+                        project,
+                        startTick,
+                        ticksPerMeasure,
+                        unitTicks,
+                        tonicPitchClass,
+                        scale,
+                        chordPlan,
+                        style,
+                        mood,
+                        variant,
+                        bassMidi,
+                        previousBassMidi,
+                        previousHarmony,
+                        role);
+                }
 
                 int[] rhythm = PickRhythm(style, mood, variant, role, measureUnits, previousRhythm, repeatedRhythmCount, measure, measures, random);
                 if (hasThemeMotif
@@ -212,6 +214,12 @@ namespace MusicBox.Services
             }
 
             AddExpressionMarks(project, mood, variant, measures, ticksPerMeasure, structure.SectionMap, request.UseSustainPedal);
+            foreach (NoteEvent note in project.Notes)
+            {
+                note.IsAccent = false;
+                note.IsStaccato = false;
+                note.IsStaccatissimo = false;
+            }
             project.Notes = project.Notes
                 .OrderBy(note => note.StartTick)
                 .ThenBy(note => note.Voice)
@@ -924,8 +932,6 @@ namespace MusicBox.Services
             }
 
             NoteEvent note = CreateNote(midi, startTick, durationTicks, 480, 2, false);
-            note.IsAccent = accent;
-            note.IsStaccato = !accent;
             project.Notes.Add(note);
         }
 
@@ -974,10 +980,7 @@ namespace MusicBox.Services
                     int hitDuration = hit == 2 ? ticksPerMeasure - (hit * unitTicks * 2) : unitTicks * 2;
                     foreach (int midi in activeVoicing)
                     {
-                        NoteEvent note = CreateNote(midi + (hit == 1 ? 12 : 0), hitStart, hitDuration, 480, 3, true);
-                        note.IsAccent = hit != 1;
-                        note.IsStaccato = hit == 1;
-                        project.Notes.Add(note);
+                        project.Notes.Add(CreateNote(midi + (hit == 1 ? 12 : 0), hitStart, hitDuration, 480, 3, true));
                     }
                 }
 
@@ -992,10 +995,7 @@ namespace MusicBox.Services
                     int duration = hitStart == startTick ? half : ticksPerMeasure - half;
                     foreach (int midi in activeVoicing)
                     {
-                        NoteEvent note = CreateNote(midi, hitStart, duration, 480, 3, true);
-                        note.IsAccent = hitStart == startTick;
-                        note.IsStaccato = hitStart != startTick;
-                        project.Notes.Add(note);
+                        project.Notes.Add(CreateNote(midi, hitStart, duration, 480, 3, true));
                     }
                 }
 
@@ -1209,29 +1209,9 @@ namespace MusicBox.Services
 
         private static void ApplyMelodyExpression(NoteEvent note, int index, int count, MeasureRole role, MoodSpec mood, VariantSpec variant)
         {
-            if (index == 0 && role is MeasureRole.Opening or MeasureRole.Return or MeasureRole.Climax)
-            {
-                note.IsAccent = true;
-            }
-
-            if (variant.Texture == VariantTexture.Anthem && index % 2 == 1)
-            {
-                note.IsAccent = true;
-            }
-
-            if (variant.Texture == VariantTexture.Narrative && count > 3 && index == 1)
-            {
-                note.IsStaccato = true;
-            }
-
             if (variant.Texture == VariantTexture.Atmosphere && role == MeasureRole.Climax && index == Math.Max(0, count - 2))
             {
                 note.Ornament = NoteOrnament.Appoggiatura;
-            }
-
-            if (variant.Texture == VariantTexture.Tension && index > 0 && index < count - 1)
-            {
-                note.IsAccent = note.IsAccent || index % 2 == 0;
             }
         }
 

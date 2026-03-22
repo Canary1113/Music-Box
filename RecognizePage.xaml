@@ -12,7 +12,7 @@
             <StackPanel Spacing="12" MaxWidth="920">
                 <TextBlock x:Name="AudioSectionTitleText" Text="音频识别 -> 五线谱（MP3/WAV）" FontSize="20" FontWeight="SemiBold"/>
                 <TextBlock x:Name="AudioSectionDescText"
-                           Text="支持 MP3 / WAV 离线识别：提取主旋律音高并生成草稿音符，可直接导入编辑页生成五线谱。"
+                           Text="支持 MP3 / WAV 离线识别：提取主旋律音高并生成草稿音符，可直接导入五线谱页。"
                            TextWrapping="Wrap"/>
 
                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">

@@ -182,8 +182,8 @@ namespace MusicBox
                 };
                 composePanel.Children.Add(new FontIcon
                 {
-                    Glyph = "✎",
-                    FontFamily = new FontFamily("Segoe UI Symbol"),
+                    Glyph = "🎨",
+                    FontFamily = new FontFamily("Segoe UI Emoji"),
                     FontSize = 18,
                     HorizontalAlignment = HorizontalAlignment.Center
                 });
@@ -463,7 +463,7 @@ namespace MusicBox
             if (ConvertImportMenu != null) ConvertImportMenu.Title = isEnglish ? "Import" : "\u5bfc\u5165";
             if (ConvertFormatMenu != null) ConvertFormatMenu.Title = isEnglish ? "Format" : "\u683c\u5f0f\u8f6c\u6362";
             if (ConvertExportMenu != null) ConvertExportMenu.Title = isEnglish ? "Export" : "\u5bfc\u51fa";
-            if (ConvertImportFromEditorMenuItem != null) ConvertImportFromEditorMenuItem.Text = isEnglish ? "Import From Editor" : "\u7f16\u8f91\u9875\u5bfc\u5165";
+            if (ConvertImportFromEditorMenuItem != null) ConvertImportFromEditorMenuItem.Text = isEnglish ? "Import From Staff" : "五线谱页导入";
             if (ConvertImportFromFileMenuItem != null) ConvertImportFromFileMenuItem.Text = isEnglish ? "Import From File" : "\u4ece\u6587\u4ef6\u5bfc\u5165";
             if (ConvertStaffToJianpuMenuItem != null) ConvertStaffToJianpuMenuItem.Text = isEnglish ? "Staff -> Jianpu" : "\u4e94\u7ebf\u8c31 \u2192 \u7b80\u8c31";
             if (ConvertStaffToGuitarTabMenuItem != null) ConvertStaffToGuitarTabMenuItem.Text = isEnglish ? "Staff -> Guitar Tab" : "\u4e94\u7ebf\u8c31 \u2192 \u5409\u4ed6\u8c31";

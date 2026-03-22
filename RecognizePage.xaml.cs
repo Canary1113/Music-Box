@@ -135,12 +135,12 @@ namespace MusicBox
             AudioSectionTitleText.Text = isEnglish ? "Audio -> Staff (MP3/WAV)" : "音频识别 -> 五线谱（MP3/WAV）";
             AudioSectionDescText.Text = isEnglish
                 ? "Offline MP3/WAV recognition: detect monophonic pitch and generate draft notes for direct import."
-                : "支持 MP3 / WAV 离线识别：提取主旋律音高并生成草稿音符，可直接导入编辑页生成五线谱。";
+                : "支持 MP3 / WAV 离线识别：提取主旋律音高并生成草稿音符，可直接导入五线谱页。";
             FrequencyLabelText.Text = isEnglish ? "Frequency (Hz):" : "频率 (Hz):";
             FrequencyResultLabelText.Text = isEnglish ? "Converted:" : "换算:";
             SelectAudioButton.Content = isEnglish ? "Pick Audio (MP3/WAV)" : "选择音频 (MP3/WAV)";
             AnalyzeAudioButton.Content = isEnglish ? "Analyze Pitch" : "分析音高并生成草稿";
-            ImportDetectedNotesButton.Content = isEnglish ? "Import to Editor" : "导入到编辑页";
+            ImportDetectedNotesButton.Content = isEnglish ? "Import to Staff" : "导入到五线谱页";
             AudioSupportText.Text = isEnglish
                 ? "Supports MP3/WAV, shows live progress, reduces false chords, and auto-infers key + meter after recognition."
                 : "支持 MP3 / WAV，含百分比进度，已优化误判和弦问题，并在识别后自动推断调号与拍号。";
@@ -779,7 +779,7 @@ namespace MusicBox
             _viewModel.TouchProject();
             _viewModel.SetStatus($"{Loc("已导入识别音符", "Imported detected notes")}: {_viewModel.Project.Notes.Count}");
             RecognizeSummaryText.Text =
-                $"{Loc("已导入到编辑页", "Imported to editor")}: {_viewModel.Project.Notes.Count} {Loc("个音符", "notes")} · " +
+                $"{Loc("已导入到五线谱页", "Imported to staff")}: {_viewModel.Project.Notes.Count} {Loc("个音符", "notes")} · " +
                 $"{inference.Numerator}/{inference.Denominator}, 1={inference.KeyName}";
             SaveAudioStateToCache();
 
@@ -824,8 +824,8 @@ namespace MusicBox
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = Loc("编辑页已有内容", "Editor already has content"),
-                Content = Loc("导入会先清空当前编辑页（包含音符、谱面记号、调号、拍号和速度）。是否继续？", "Import will clear current editor data first (notes, score marks, key, meter, tempo). Continue?"),
+                Title = Loc("五线谱页已有内容", "Staff page already has content"),
+                Content = Loc("导入会先清空当前五线谱页（包含音符、谱面记号、调号、拍号和速度）。是否继续？", "Import will clear current staff page data first (notes, score marks, key, meter, tempo). Continue?"),
                 PrimaryButtonText = Loc("继续导入", "Import"),
                 CloseButtonText = Loc("取消", "Cancel"),
                 DefaultButton = ContentDialogButton.Close

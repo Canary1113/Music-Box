@@ -10,7 +10,7 @@ namespace MusicBox.Services
             ["zh-Hans"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["window.title"] = "\u97f3\u4e50\u9b54\u76d2",
-                ["nav.editor"] = "\u7f16\u8f91",
+                ["nav.editor"] = "\u4e94\u7ebf\u8c31",
                 ["nav.convert"] = "\u8f6c\u6362",
                 ["nav.compose"] = "\u521b\u4f5c",
                 ["nav.recognize"] = "\u8bc6\u522b",
@@ -37,7 +37,7 @@ namespace MusicBox.Services
                 ["compose.option.c"] = "\u65b9\u6848 C",
                 ["compose.action.generate"] = "\u751f\u6210",
                 ["compose.action.retry"] = "\u91cd\u8bd5",
-                ["compose.action.apply_to_editor"] = "\u5199\u5165\u7f16\u8f91\u9875",
+                ["compose.action.apply_to_editor"] = "\u5199\u5165\u4e94\u7ebf\u8c31",
                 ["compose.action.waiting"] = "\u7b49\u5f85\u751f\u6210",
                 ["compose.action.play"] = "\u64ad\u653e",
                 ["compose.action.pause"] = "\u6682\u505c",
@@ -52,7 +52,7 @@ namespace MusicBox.Services
                 ["compose.mode.minor"] = "\u5c0f\u8c03",
                 ["compose.status.ready"] = "\u667a\u80fd\u521b\u4f5c\u9875\u9762\u5df2\u6253\u5f00\u3002",
                 ["compose.status.generated"] = "\u5df2\u751f\u6210 {0} \u7ec4\u5019\u9009\u65b9\u6848\u3002",
-                ["compose.status.applied"] = "\u5df2\u91c7\u7528\u65b9\u6848 {0} \u5e76\u5199\u5165\u7f16\u8f91\u9875\uff1a{1}",
+                ["compose.status.applied"] = "\u5df2\u91c7\u7528\u65b9\u6848 {0} \u5e76\u5199\u5165\u4e94\u7ebf\u8c31\uff1a{1}",
                 ["compose.status.generation_failed"] = "\u751f\u6210\u5931\u8d25\uff1a{0}",
                 ["compose.status.failed_short"] = "\u751f\u6210\u5931\u8d25",
                 ["settings.page_title"] = "\u8bbe\u7f6e",
@@ -131,7 +131,7 @@ namespace MusicBox.Services
             ["en-US"] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["window.title"] = "MusicBox",
-                ["nav.editor"] = "Editor",
+                ["nav.editor"] = "Staff",
                 ["nav.convert"] = "Convert",
                 ["nav.compose"] = "Compose",
                 ["nav.recognize"] = "Recognize",
@@ -158,7 +158,7 @@ namespace MusicBox.Services
                 ["compose.option.c"] = "Option C",
                 ["compose.action.generate"] = "Generate",
                 ["compose.action.retry"] = "Retry",
-                ["compose.action.apply_to_editor"] = "Write to Editor",
+                ["compose.action.apply_to_editor"] = "Write to Staff",
                 ["compose.action.waiting"] = "Waiting for generation",
                 ["compose.action.play"] = "Play",
                 ["compose.action.pause"] = "Pause",
@@ -173,7 +173,7 @@ namespace MusicBox.Services
                 ["compose.mode.minor"] = "minor",
                 ["compose.status.ready"] = "Smart Compose page is ready.",
                 ["compose.status.generated"] = "Generated {0} candidate ideas.",
-                ["compose.status.applied"] = "Applied option {0} to the editor: {1}",
+                ["compose.status.applied"] = "Applied option {0} to the staff page: {1}",
                 ["compose.status.generation_failed"] = "Generation failed: {0}",
                 ["compose.status.failed_short"] = "Generation failed",
                 ["settings.page_title"] = "Settings",
