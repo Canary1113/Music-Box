@@ -976,10 +976,7 @@ namespace MusicBox
             _ornamentHitTargets.Clear();
             _clefHitTargets.Clear();
 
-            if (!compactForPrintLayout)
-            {
-                DrawScoreHeader(ds, topMargin);
-            }
+            DrawScoreHeader(ds, topMargin);
 
             for (int systemIndex = 0; systemIndex < systemCount; systemIndex++)
             {
@@ -4907,25 +4904,51 @@ namespace MusicBox
                 return;
             }
 
-            string label = info.OttavaShiftOctaves switch
-            {
-                >= 2 => "15ma",
-                <= -2 => "15mb",
-                > 0 => "8va",
-                _ => "8vb"
-            };
+            bool up = info.OttavaShiftOctaves > 0;
+            float textSize = Math.Max(13.5f, SymbolSizeGap * 0.96f);
+            float numberX = info.X - SymbolSizeGap * 0.42f;
+            float baselineY = up
+                ? info.Y - SymbolSizeGap * 3.15f
+                : info.Y + SymbolSizeGap * 3.55f;
 
-            float y = info.OttavaShiftOctaves > 0
-                ? info.Y - SymbolSizeGap * 3.7f
-                : info.Y + SymbolSizeGap * 3.0f;
-            var format = new CanvasTextFormat
+            DrawOttavaNumber(ds, numberX, baselineY, textSize, color);
+
+            string suffix = up ? "va" : "vb";
+            var suffixFormat = new CanvasTextFormat
             {
-                FontFamily = "Times New Roman",
-                FontSize = Math.Max(12f, SymbolSizeGap * 0.82f),
+                FontFamily = _expressionTextFormat.FontFamily,
+                FontSize = Math.Max(8.5f, SymbolSizeGap * 0.42f),
                 FontStyle = Windows.UI.Text.FontStyle.Italic,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
             };
-            ds.DrawText(label, info.X - SymbolSizeGap * 0.42f, y, color, format);
+
+            float numberWidth = GetOttavaNumberWidth(textSize);
+            float suffixX = numberX + numberWidth + SymbolSizeGap * 0.1f;
+            float suffixY = baselineY - SymbolSizeGap * 0.62f;
+            ds.DrawText(suffix, suffixX, suffixY, color, suffixFormat);
+
+            float suffixWidth = GetTextWidth(suffix, suffixFormat);
+            float lineY = up
+                ? baselineY - SymbolSizeGap * 0.18f
+                : baselineY + SymbolSizeGap * 0.12f;
+            float lineStartX = suffixX + suffixWidth + SymbolSizeGap * 0.18f;
+            float lineEndX = info.X + SymbolSizeGap * 1.85f;
+            if (lineEndX > lineStartX)
+            {
+                DrawDashedHorizontalLine(
+                    ds,
+                    lineStartX,
+                    lineEndX,
+                    lineY,
+                    SymbolSizeGap * 0.26f,
+                    SymbolSizeGap * 0.14f,
+                    Math.Max(0.9f, SymbolSizeGap * 0.08f),
+                    color);
+            }
+
+            float hookHeight = Math.Max(1.6f, SymbolSizeGap * 0.26f);
+            float hookEndY = up ? lineY + hookHeight : lineY - hookHeight;
+            ds.DrawLine(lineEndX, lineY, lineEndX, hookEndY, color, Math.Max(0.9f, SymbolSizeGap * 0.08f));
         }
 
         private static bool IsGraceOrnament(NoteOrnament ornament)
@@ -6686,7 +6709,7 @@ namespace MusicBox
 
                     if (OttavaDirectionButton?.Content is TextBlock block)
                     {
-                        block.Text = IsOttavaUp(ottavaMark) ? "鈫?" : "鈫?";
+                        block.Text = IsOttavaUp(ottavaMark) ? "↓" : "↑";
                     }
 
                     Canvas.SetLeft(OttavaEditPanel, Math.Clamp(targetX, 0d, maxX));
@@ -9122,14 +9145,14 @@ namespace MusicBox
             int upperThreshold = preferTreble ? TrebleBottomDiatonic + 16 : BassUpperSwitchDiatonic;
             ottavaShiftOctaves = 0;
 
-            while (diatonicIndex > upperThreshold && displayMidi - 12 >= 0 && ottavaShiftOctaves < 2)
+            while (diatonicIndex > upperThreshold && displayMidi - 12 >= 0 && ottavaShiftOctaves < 1)
             {
                 displayMidi -= 12;
                 diatonicIndex -= 7;
                 ottavaShiftOctaves++;
             }
 
-            while (diatonicIndex < lowerThreshold && displayMidi + 12 <= 127 && ottavaShiftOctaves > -2)
+            while (diatonicIndex < lowerThreshold && displayMidi + 12 <= 127 && ottavaShiftOctaves > -1)
             {
                 displayMidi += 12;
                 diatonicIndex += 7;
@@ -12976,7 +12999,7 @@ namespace MusicBox
             if (_viewModel == null) return;
             if (_isPreparingPrintPreview)
             {
-                _viewModel.SetStatus("姝ｅ湪鍑嗗鎵撳嵃锛岃绋嶅€?..");
+                _viewModel.SetStatus("正在准备打印，请稍候...");
                 return;
             }
 
@@ -12991,11 +13014,11 @@ namespace MusicBox
                 HidePrintBusyOverlay();
                 IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
                 await PrintManagerInterop.ShowPrintUIForWindowAsync(hwnd);
-                _viewModel.SetStatus("宸叉墦寮€绯荤粺鎵撳嵃閫夐」");
+                _viewModel.SetStatus("已打开系统打印选项。");
             }
             catch (Exception ex)
             {
-                _viewModel.SetStatus($"鎵撳紑鎵撳嵃閫夐」澶辫触: {ex.Message}");
+                _viewModel.SetStatus($"打开打印选项失败: {ex.Message}");
             }
             finally
             {
@@ -13139,12 +13162,12 @@ namespace MusicBox
                 // Visual zoom for all notation primitives (staff gap, noteheads, symbols, title, expressions).
                 // This controls physical size on page; render scale controls bitmap density.
                 const float printContentZoom = 1.175f;
-                float adjustedPrintContentZoom = Math.Clamp(1.28f * printContentZoom, 0.5f, 2.6f);
+                float adjustedPrintContentZoom = Math.Clamp(1.24f * printContentZoom, 0.5f, 2.6f);
                 const float printDpi = 300f;
-                const float drawSidePadding = 8f;
-                float printLeftGuardLogical = 10.0f * PrintSideMarginScale;
-                float printRightGuardLogical = 10.0f * PrintSideMarginScale;
-                float printTopGuardLogical = 8.8f * PrintSideMarginScale;
+                const float drawSidePadding = 18f;
+                float printLeftGuardLogical = 16.0f * PrintSideMarginScale;
+                float printRightGuardLogical = 18.0f * PrintSideMarginScale;
+                float printTopGuardLogical = 7.2f * PrintSideMarginScale;
                 float printBottomGuardLogical = 6.8f * PrintSideMarginScale;
                 float leftReserved = Math.Max(0f, _musicStartX - _staffLeft);
                 int maxMeasuresInAnySystem = Math.Max(
@@ -13157,8 +13180,8 @@ namespace MusicBox
                     ? contentWidthLogical + drawSidePadding * 2f + _staffGap * 0.32f
                     : fallbackWidth;
                 // Keep total print width stable while increasing left/right safety guards.
-                const int preferredPrintTotalLogicalWidth = 1924;
-                const int minPrintTotalLogicalWidth = 1304;
+                const int preferredPrintTotalLogicalWidth = 2048;
+                const int minPrintTotalLogicalWidth = 1420;
                 int maxContentLogicalWidth = Math.Max(1, (int)Math.Floor(preferredPrintTotalLogicalWidth - (printLeftGuardLogical + printRightGuardLogical)));
                 int minContentLogicalWidth = Math.Max(1, (int)Math.Floor(minPrintTotalLogicalWidth - (printLeftGuardLogical + printRightGuardLogical)));
                 int logicalWidth = Math.Clamp((int)Math.Ceiling(Math.Min(targetLogicalWidth, maxContentLogicalWidth)), minContentLogicalWidth, maxContentLogicalWidth);
@@ -13230,11 +13253,15 @@ namespace MusicBox
                         }
 
                         float effectiveScale = Math.Max(0.01f, attemptScale * adjustedPrintContentZoom);
+                        float actualLayoutWidthLogical = Math.Max(
+                            layoutWidthForPrint,
+                            _staffLeft + _staffWidth + drawSidePadding + _staffGap * 1.8f);
+                        int pageContentWidthPixels = Math.Max(1, (int)Math.Ceiling(actualLayoutWidthLogical * effectiveScale));
                         int leftGuardPixels = Math.Max(0, (int)Math.Ceiling(printLeftGuardLogical * effectiveScale));
                         int rightGuardPixels = Math.Max(0, (int)Math.Ceiling(printRightGuardLogical * effectiveScale));
                         int topGuardPixels = Math.Max(0, (int)Math.Ceiling(printTopGuardLogical * effectiveScale));
                         int bottomGuardPixels = Math.Max(0, (int)Math.Ceiling(printBottomGuardLogical * effectiveScale));
-                        int pagePixelWidth = Math.Max(1, pixelWidth + leftGuardPixels + rightGuardPixels);
+                        int pagePixelWidth = Math.Max(1, pageContentWidthPixels + leftGuardPixels + rightGuardPixels);
                         if (pagePixelWidth > maxRenderDimension)
                         {
                             throw new InvalidOperationException("Print width exceeds render capability.");
@@ -13259,7 +13286,7 @@ namespace MusicBox
                                 ? fixedPageLogicalHeight
                                 : pageContentMaxHeightLogical;
                             float pageStartYLogical = systemIndex == 0
-                                ? 0f
+                                ? Math.Max(0f, (float)_titleHitRect.Y - _staffGap * 1.8f)
                                 : Math.Max(0f, GetSystemTrebleTop(systemIndex) - _staffGap * 5.6f);
                             int lastSystem = systemIndex;
                             float pageEndYLogical = GetSystemBassBottom(lastSystem) + _staffGap * 3.1f;
@@ -13357,7 +13384,7 @@ namespace MusicBox
             }
             catch (Exception ex)
             {
-                _viewModel?.SetStatus($"鎵撳嵃棰勮鐢熸垚澶辫触: {ex.Message}");
+                _viewModel?.SetStatus($"打印预览生成失败: {ex.Message}");
                 _pendingPrintPages.Clear();
                 _pendingPdfPages.Clear();
                 _pendingPrintPages.Add(new Grid

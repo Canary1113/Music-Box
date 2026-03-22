@@ -19,7 +19,7 @@ namespace MusicBox.Services
         };
 
         private const int MaxFret = 20;
-        private const int MeasuresPerBlock = 4;
+        private const int DefaultMeasuresPerBlock = 4;
 
         public string BuildAsciiTab(ScoreProject project)
         {
@@ -37,9 +37,9 @@ namespace MusicBox.Services
             sb.AppendLine($"Tempo: {project.Bpm} BPM    Time: {source.TimeNumerator}/{source.TimeDenominator}    Tuning: E A D G B e");
             sb.AppendLine();
 
-            for (int blockStart = 0; blockStart < source.MeasureCount; blockStart += MeasuresPerBlock)
+            for (int blockStart = 0; blockStart < source.MeasureCount; blockStart += DefaultMeasuresPerBlock)
             {
-                int blockEnd = Math.Min(source.MeasureCount, blockStart + MeasuresPerBlock);
+                int blockEnd = Math.Min(source.MeasureCount, blockStart + DefaultMeasuresPerBlock);
                 StringBuilder[] builders = Strings
                     .Select(guitarString => new StringBuilder($"{guitarString.Label}|"))
                     .ToArray();
@@ -104,14 +104,15 @@ namespace MusicBox.Services
             const float leftMargin = 92f;
             const float rightMargin = 44f;
             const float measureGap = 18f;
+            int measuresPerBlock = ResolveMeasuresPerBlock(viewportWidth);
             float contentWidth = Math.Max(900f, viewportWidth);
-            float measureWidth = Math.Max(168f, (contentWidth - leftMargin - rightMargin - (MeasuresPerBlock - 1) * measureGap) / MeasuresPerBlock);
-            float canvasWidth = leftMargin + MeasuresPerBlock * measureWidth + (MeasuresPerBlock - 1) * measureGap + rightMargin;
+            float measureWidth = Math.Max(168f, (contentWidth - leftMargin - rightMargin - (measuresPerBlock - 1) * measureGap) / measuresPerBlock);
+            float canvasWidth = leftMargin + measuresPerBlock * measureWidth + (measuresPerBlock - 1) * measureGap + rightMargin;
 
             var systems = new List<TabSystem>();
-            for (int blockStart = 0; blockStart < source.MeasureCount; blockStart += MeasuresPerBlock)
+            for (int blockStart = 0; blockStart < source.MeasureCount; blockStart += measuresPerBlock)
             {
-                int blockEnd = Math.Min(source.MeasureCount, blockStart + MeasuresPerBlock);
+                int blockEnd = Math.Min(source.MeasureCount, blockStart + measuresPerBlock);
                 var measures = new List<TabMeasure>();
 
                 for (int measureIndex = blockStart; measureIndex < blockEnd; measureIndex++)
@@ -146,6 +147,21 @@ namespace MusicBox.Services
                 project.Bpm,
                 canvasWidth,
                 systems);
+        }
+
+        private static int ResolveMeasuresPerBlock(float viewportWidth)
+        {
+            if (viewportWidth < 980f)
+            {
+                return 2;
+            }
+
+            if (viewportWidth < 1220f)
+            {
+                return 3;
+            }
+
+            return DefaultMeasuresPerBlock;
         }
 
         private static TabSource CreateSource(ScoreProject project)

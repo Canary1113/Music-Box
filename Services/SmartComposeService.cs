@@ -7,6 +7,14 @@ namespace MusicBox.Services
 {
     public sealed class SmartComposeService
     {
+        private const int ComposeMelodyMinMidi = 60;
+        private const int ComposeMelodyMaxMidi = 81;
+        private const int ComposeBassMinMidi = 40;
+        private const int ComposeBassMaxMidi = 60;
+        private const int ComposeBassRootMaxMidi = 55;
+        private const int ComposeHarmonyMinMidi = 52;
+        private const int ComposeHarmonyMaxMidi = 81;
+
         private static readonly int[] MajorScale = { 0, 2, 4, 5, 7, 9, 11 };
         private static readonly int[] MinorScale = { 0, 2, 3, 5, 7, 8, 10 };
         private static readonly string[] SharpNames = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
@@ -86,8 +94,8 @@ namespace MusicBox.Services
             int unitTicks = Math.Max(1, ticksPerMeasure / measureUnits);
             int[] scale = request.Mode == KeyMode.Minor ? MinorScale : MajorScale;
             int tonicPitchClass = Mod(request.KeyFifths * 7 + (request.Mode == KeyMode.Minor ? 9 : 0), 12);
-            int melodyAnchor = ClosestMidiToTarget(tonicPitchClass, style.CenterMidi + mood.RangeOffset + variant.MelodyOffset);
-            int bassAnchor = ClosestMidiToTarget(tonicPitchClass, 43 + variant.BassOffset);
+            int melodyAnchor = ClampMelodyMidi(ClosestMidiToTarget(tonicPitchClass, style.CenterMidi + mood.RangeOffset + variant.MelodyOffset));
+            int bassAnchor = ClampBassRootMidi(ClosestMidiToTarget(tonicPitchClass, 43 + variant.BassOffset));
             StructurePlan structure = BuildStructure(style, measures, variant, random);
             int[] progression = structure.Progression;
 
@@ -169,12 +177,13 @@ namespace MusicBox.Services
                 {
                     int durationTicks = rhythm[index] * unitTicks;
                     int degree = melodyDegrees[Math.Min(index, melodyDegrees.Count - 1)];
-                    int midi = ClampToRange(
+                    int midi = ClampMelodyMidi(ClampToRange(
                         GetScaleMidi(tonicPitchClass, measureMelodyAnchor, scale, degree),
                         style.MinMidi + variant.RangeFloorOffset,
-                        style.MaxMidi + variant.RangeCeilingOffset);
+                        style.MaxMidi + variant.RangeCeilingOffset));
 
                     midi = ResolveMelodyCollisionWithBass(previousMelodyMidi, previousBassMidi, midi, bassMidi, tonicPitchClass, scale, chordPlan, style, variant);
+                    midi = ClampMelodyMidi(midi);
 
                     NoteEvent note = CreateNote(midi, cursor, durationTicks, ppq, 1, true);
                     ApplyMelodyExpression(note, index, rhythm.Length, role, mood, variant);
@@ -866,8 +875,8 @@ namespace MusicBox.Services
         {
             int root = ClosestMidiToTarget(GetScaleMidi(tonicPitchClass, bassAnchor, scale, chordPlan.Degree - 1), previousBassMidi ?? bassAnchor);
             int fifth = ClosestMidiToTarget(GetScaleMidi(tonicPitchClass, bassAnchor + 5, scale, chordPlan.Degree + 3), root + 7);
-            root = ShiftNear(root, previousBassMidi ?? root);
-            fifth = ShiftNear(fifth, root + 7);
+            root = ClampBassRootMidi(ShiftNear(root, previousBassMidi ?? root));
+            fifth = ClampBassMidi(ShiftNear(fifth, root + 7));
 
             if (variant.Texture == VariantTexture.Atmosphere || mood.PedalFriendly)
             {
@@ -887,7 +896,7 @@ namespace MusicBox.Services
             {
                 AddBassHit(project, root, startTick, unitTicks * 2, true);
                 AddBassHit(project, fifth, startTick + unitTicks * 3, unitTicks, false);
-                AddBassHit(project, root + 12, startTick + unitTicks * 5, unitTicks, true);
+                AddBassHit(project, ClampBassMidi(root + 12), startTick + unitTicks * 5, unitTicks, true);
                 AddBassHit(project, fifth, startTick + unitTicks * 6, ticksPerMeasure - unitTicks * 6, false);
                 return root;
             }
@@ -895,9 +904,9 @@ namespace MusicBox.Services
             if (variant.Texture == VariantTexture.Anthem)
             {
                 AddBassHit(project, root, startTick, unitTicks * 2, true);
-                AddBassHit(project, root + 12, startTick + unitTicks * 2, unitTicks * 2, false);
+                AddBassHit(project, ClampBassMidi(root + 12), startTick + unitTicks * 2, unitTicks * 2, false);
                 AddBassHit(project, fifth, startTick + unitTicks * 4, unitTicks * 2, true);
-                AddBassHit(project, root + 12, startTick + unitTicks * 6, ticksPerMeasure - unitTicks * 6, false);
+                AddBassHit(project, ClampBassMidi(root + 12), startTick + unitTicks * 6, ticksPerMeasure - unitTicks * 6, false);
                 return root;
             }
 
@@ -1083,7 +1092,7 @@ namespace MusicBox.Services
             SpreadLowRegisterIntervals(resolved);
 
             int[] voicing = resolved
-                .Select(midi => ClampToRange(midi, 50, 86))
+                .Select(ClampHarmonyMidi)
                 .Distinct()
                 .OrderBy(midi => midi)
                 .ToArray();
@@ -1432,6 +1441,26 @@ namespace MusicBox.Services
             }
 
             return Math.Clamp(midi, minMidi, maxMidi);
+        }
+
+        private static int ClampMelodyMidi(int midi)
+        {
+            return ClampToRange(midi, ComposeMelodyMinMidi, ComposeMelodyMaxMidi);
+        }
+
+        private static int ClampBassMidi(int midi)
+        {
+            return ClampToRange(midi, ComposeBassMinMidi, ComposeBassMaxMidi);
+        }
+
+        private static int ClampBassRootMidi(int midi)
+        {
+            return ClampToRange(midi, ComposeBassMinMidi, ComposeBassRootMaxMidi);
+        }
+
+        private static int ClampHarmonyMidi(int midi)
+        {
+            return ClampToRange(midi, ComposeHarmonyMinMidi, ComposeHarmonyMaxMidi);
         }
 
         private static string CombineExtension(string current, string next)
