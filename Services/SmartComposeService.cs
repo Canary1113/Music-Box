@@ -130,11 +130,20 @@ namespace MusicBox.Services
                 ChordPlan chordPlan = BuildChordPlan(chordDegree, role, request.Mode, mood, variant, random);
                 chordNames.Add(chordPlan.Name);
 
+                int[] rhythm = PickRhythm(style, mood, variant, role, measureUnits, previousRhythm, repeatedRhythmCount, measure, measures, random);
+                if (hasThemeMotif
+                    && measureInSection == 0
+                    && referenceMotif?.Rhythm != null
+                    && PatternsEqual(rhythm, referenceMotif.Rhythm))
+                {
+                    rhythm = CreateRhythmVariation(rhythm, measureUnits, role);
+                }
+
                 int bassMidi = bassAnchor;
                 int[] harmonyVoicing = Array.Empty<int>();
                 if (request.IncludeBass)
                 {
-                    bassMidi = AddBass(project, startTick, ticksPerMeasure, unitTicks, bassAnchor, tonicPitchClass, scale, chordPlan, previousBassMidi, mood, variant, role);
+                    bassMidi = AddBass(project, startTick, ticksPerMeasure, unitTicks, bassAnchor, tonicPitchClass, scale, chordPlan, previousBassMidi, mood, variant, role, rhythm);
                     harmonyVoicing = AddHarmony(
                         project,
                         startTick,
@@ -149,16 +158,8 @@ namespace MusicBox.Services
                         bassMidi,
                         previousBassMidi,
                         previousHarmony,
-                        role);
-                }
-
-                int[] rhythm = PickRhythm(style, mood, variant, role, measureUnits, previousRhythm, repeatedRhythmCount, measure, measures, random);
-                if (hasThemeMotif
-                    && measureInSection == 0
-                    && referenceMotif?.Rhythm != null
-                    && PatternsEqual(rhythm, referenceMotif.Rhythm))
-                {
-                    rhythm = CreateRhythmVariation(rhythm, measureUnits, role);
+                        role,
+                        rhythm);
                 }
 
                 List<int> melodyDegrees = BuildMeasureDegrees(
@@ -879,48 +880,37 @@ namespace MusicBox.Services
             int? previousBassMidi,
             MoodSpec mood,
             VariantSpec variant,
-            MeasureRole role)
+            MeasureRole role,
+            IReadOnlyList<int> rhythm)
         {
             int root = ClosestMidiToTarget(GetScaleMidi(tonicPitchClass, bassAnchor, scale, chordPlan.Degree - 1), previousBassMidi ?? bassAnchor);
             int fifth = ClosestMidiToTarget(GetScaleMidi(tonicPitchClass, bassAnchor + 5, scale, chordPlan.Degree + 3), root + 7);
             root = ClampBassRootMidi(ShiftNear(root, previousBassMidi ?? root));
             fifth = ClampBassMidi(ShiftNear(fifth, root + 7));
 
-            if (variant.Texture == VariantTexture.Atmosphere || mood.PedalFriendly)
+            if (rhythm == null || rhythm.Count == 0)
             {
                 project.Notes.Add(CreateNote(root, startTick, ticksPerMeasure, 480, 2, false));
                 return root;
             }
 
-            if (variant.Texture != VariantTexture.Anthem
-                && variant.Texture != VariantTexture.Tension
-                && mood.Texture is MoodTexture.Calm or MoodTexture.Airy or MoodTexture.Gentle)
+            int cursor = startTick;
+            for (int index = 0; index < rhythm.Count; index++)
             {
-                project.Notes.Add(CreateNote(root, startTick, ticksPerMeasure, 480, 2, false));
-                return root;
+                int duration = Math.Max(1, rhythm[index] * unitTicks);
+                int bassNote = index switch
+                {
+                    0 => root,
+                    _ when role is MeasureRole.Cadence or MeasureRole.FinalCadence && index == rhythm.Count - 1 => root,
+                    _ when variant.Texture == VariantTexture.Atmosphere => index % 3 == 1 ? fifth : root,
+                    _ when variant.Texture is VariantTexture.Anthem or VariantTexture.Tension => index % 2 == 0 ? root : fifth,
+                    _ => index == rhythm.Count / 2 ? fifth : root
+                };
+
+                project.Notes.Add(CreateNote(bassNote, cursor, duration, 480, 2, false));
+                cursor += duration;
             }
 
-            if (variant.Texture == VariantTexture.Tension)
-            {
-                AddBassHit(project, root, startTick, unitTicks * 2, true);
-                AddBassHit(project, fifth, startTick + unitTicks * 3, unitTicks, false);
-                AddBassHit(project, ClampBassMidi(root + 12), startTick + unitTicks * 5, unitTicks, true);
-                AddBassHit(project, fifth, startTick + unitTicks * 6, ticksPerMeasure - unitTicks * 6, false);
-                return root;
-            }
-
-            if (variant.Texture == VariantTexture.Anthem)
-            {
-                AddBassHit(project, root, startTick, unitTicks * 2, true);
-                AddBassHit(project, ClampBassMidi(root + 12), startTick + unitTicks * 2, unitTicks * 2, false);
-                AddBassHit(project, fifth, startTick + unitTicks * 4, unitTicks * 2, true);
-                AddBassHit(project, ClampBassMidi(root + 12), startTick + unitTicks * 6, ticksPerMeasure - unitTicks * 6, false);
-                return root;
-            }
-
-            int half = ticksPerMeasure / 2;
-            project.Notes.Add(CreateNote(root, startTick, half, 480, 2, false));
-            project.Notes.Add(CreateNote(fifth, startTick + half, ticksPerMeasure - half, 480, 2, false));
             return root;
         }
 
@@ -949,7 +939,8 @@ namespace MusicBox.Services
             int bassMidi,
             int? previousBassMidi,
             int[]? previousHarmony,
-            MeasureRole role)
+            MeasureRole role,
+            IReadOnlyList<int> rhythm)
         {
             int measureIndex = Math.Max(0, startTick / Math.Max(1, ticksPerMeasure));
             int center = style.CenterMidi - 4 + variant.MelodyOffset;
@@ -962,7 +953,7 @@ namespace MusicBox.Services
                 return voicing;
             }
 
-            if (variant.Texture == VariantTexture.Atmosphere)
+            if (rhythm == null || rhythm.Count == 0)
             {
                 foreach (int midi in activeVoicing)
                 {
@@ -972,42 +963,67 @@ namespace MusicBox.Services
                 return voicing;
             }
 
-            if (variant.Texture == VariantTexture.Tension)
+            int cursor = startTick;
+            int harmonyToneCount = variant.Texture == VariantTexture.Atmosphere
+                ? Math.Min(2, activeVoicing.Length)
+                : Math.Min(3, activeVoicing.Length);
+
+            for (int index = 0; index < rhythm.Count; index++)
             {
-                for (int hit = 0; hit < 3; hit++)
+                int duration = Math.Max(1, rhythm[index] * unitTicks);
+                if (ShouldPlaceHarmonyOnSegment(index, rhythm.Count, duration, unitTicks, role, variant))
                 {
-                    int hitStart = startTick + hit * unitTicks * 2 + (hit == 1 ? unitTicks : 0);
-                    int hitDuration = hit == 2 ? ticksPerMeasure - (hit * unitTicks * 2) : unitTicks * 2;
-                    foreach (int midi in activeVoicing)
+                    foreach (int midi in activeVoicing.Take(harmonyToneCount))
                     {
-                        project.Notes.Add(CreateNote(midi + (hit == 1 ? 12 : 0), hitStart, hitDuration, 480, 3, true));
+                        project.Notes.Add(CreateNote(midi, cursor, duration, 480, 3, true));
                     }
                 }
 
-                return voicing;
+                cursor += duration;
+            }
+
+            return voicing;
+        }
+
+        private static bool ShouldPlaceHarmonyOnSegment(
+            int index,
+            int segmentCount,
+            int durationTicks,
+            int unitTicks,
+            MeasureRole role,
+            VariantSpec variant)
+        {
+            if (segmentCount <= 2)
+            {
+                return true;
+            }
+
+            if (index == 0)
+            {
+                return true;
+            }
+
+            if (role is MeasureRole.Cadence or MeasureRole.FinalCadence && index == segmentCount - 1)
+            {
+                return true;
+            }
+
+            if (variant.Texture == VariantTexture.Atmosphere)
+            {
+                return durationTicks >= unitTicks * 2 && (index == segmentCount - 1 || index == segmentCount / 2);
             }
 
             if (variant.Texture == VariantTexture.Anthem)
             {
-                int half = ticksPerMeasure / 2;
-                foreach (int hitStart in new[] { startTick, startTick + half })
-                {
-                    int duration = hitStart == startTick ? half : ticksPerMeasure - half;
-                    foreach (int midi in activeVoicing)
-                    {
-                        project.Notes.Add(CreateNote(midi, hitStart, duration, 480, 3, true));
-                    }
-                }
-
-                return voicing;
+                return index % 2 == 1;
             }
 
-            foreach (int midi in activeVoicing)
+            if (variant.Texture == VariantTexture.Tension)
             {
-                project.Notes.Add(CreateNote(midi, startTick, ticksPerMeasure, 480, 3, true));
+                return index % 2 == 0;
             }
 
-            return voicing;
+            return index == segmentCount / 2;
         }
 
         private static int DetermineHarmonyToneCount(MoodSpec mood, VariantSpec variant, MeasureRole role)

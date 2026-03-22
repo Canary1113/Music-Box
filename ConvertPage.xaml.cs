@@ -414,8 +414,10 @@ namespace MusicBox
             }
 
             _sourceProject = CloneProject(_viewModel.Project);
+            ApplyPreviewMode();
             await RefreshPreviewAsync();
-            SetStatus(Loc("\u5df2\u4ece\u7f16\u8f91\u9875\u5bfc\u5165\u3002", "Imported from editor."));
+            string title = string.IsNullOrWhiteSpace(_sourceProject.Title) ? Loc("\u672a\u547d\u540d", "Untitled") : _sourceProject.Title.Trim();
+            SetStatus($"{Loc("\u5df2\u4ece\u4e94\u7ebf\u8c31\u9875\u5bfc\u5165", "Imported from staff")}: {title}");
         }
 
         private async Task RefreshPreviewAsync()

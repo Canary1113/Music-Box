@@ -147,7 +147,7 @@ namespace MusicBox
         private const int FallbackAutoMeasuresPerSystem = 6;
         private const float StaffMiddleGapFactor = 5.16f;
         private const float SystemSpacingFactor = 10.8f;
-        private const float PrintCompactMeasureWidthScale = 1.10f;
+        private const float PrintCompactMeasureWidthScale = 0.84f;
         private const float PrintVerticalLayoutScale = 0.90f;
         private const float PrintSideMarginScale = 0.95f;
         private const double PrintPageSidePaddingScale = 0.44d;
@@ -13162,11 +13162,11 @@ namespace MusicBox
                 // Visual zoom for all notation primitives (staff gap, noteheads, symbols, title, expressions).
                 // This controls physical size on page; render scale controls bitmap density.
                 const float printContentZoom = 1.175f;
-                float adjustedPrintContentZoom = Math.Clamp(1.08f * printContentZoom, 0.5f, 2.6f);
+                float adjustedPrintContentZoom = Math.Clamp(1.02f * printContentZoom, 0.5f, 2.6f);
                 const float printDpi = 300f;
                 const float drawSidePadding = 18f;
                 float printLeftGuardLogical = 16.0f * PrintSideMarginScale;
-                float printRightGuardLogical = 18.0f * PrintSideMarginScale;
+                float printRightGuardLogical = 22.0f * PrintSideMarginScale;
                 float printTopGuardLogical = 12.4f * PrintSideMarginScale;
                 float printBottomGuardLogical = 8.0f * PrintSideMarginScale;
                 float leftReserved = Math.Max(0f, _musicStartX - _staffLeft);
@@ -13255,7 +13255,7 @@ namespace MusicBox
                         float effectiveScale = Math.Max(0.01f, attemptScale * adjustedPrintContentZoom);
                         float actualLayoutWidthLogical = Math.Max(
                             layoutWidthForPrint,
-                            _staffLeft + _staffWidth + drawSidePadding + _staffGap * 4.0f);
+                            _staffLeft + _staffWidth + drawSidePadding + _staffGap * 6.4f);
                         int pageContentWidthPixels = Math.Max(1, (int)Math.Ceiling(actualLayoutWidthLogical * effectiveScale));
                         int leftGuardPixels = Math.Max(0, (int)Math.Ceiling(printLeftGuardLogical * effectiveScale));
                         int rightGuardPixels = Math.Max(0, (int)Math.Ceiling(printRightGuardLogical * effectiveScale));
@@ -13287,7 +13287,7 @@ namespace MusicBox
                                 : pageContentMaxHeightLogical;
                             float pageStartYLogical = systemIndex == 0
                                 ? Math.Max(0f, (float)_titleHitRect.Y - _staffGap * 2.2f)
-                                : Math.Max(0f, GetSystemTrebleTop(systemIndex) - _staffGap * 9.4f);
+                                : Math.Max(0f, GetSystemTrebleTop(systemIndex) - _staffGap * 12.4f);
                             int lastSystem = systemIndex;
                             float pageEndYLogical = GetSystemBassBottom(lastSystem) + _staffGap * 4.2f;
                             if (pageEndYLogical - pageStartYLogical > activePageHeightLogical)

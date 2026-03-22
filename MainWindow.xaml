@@ -177,7 +177,7 @@
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="NavEditor" Tag="editor" Style="{StaticResource CompactNavItemStyle}">
                     <StackPanel Spacing="4" Width="88" HorizontalAlignment="Center" Margin="3,0,3,0">
-                        <FontIcon Glyph="🎼" FontFamily="Segoe UI Emoji" FontSize="18" HorizontalAlignment="Center"/>
+                        <FontIcon Glyph="&#xE189;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
                         <TextBlock x:Name="NavEditorText" Text="五线谱" FontSize="10" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
                     </StackPanel>
                 </NavigationViewItem>

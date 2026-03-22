@@ -2,6 +2,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Windowing;
 using System;
 using System.Collections.Generic;
@@ -147,10 +148,46 @@ namespace MusicBox
             return ContentHost.MainFrame.Content as ConvertPage;
         }
 
+        private void DispatchConvertImportCommand(string command)
+        {
+            string normalized = string.IsNullOrWhiteSpace(command) ? "import_editor" : command;
+            if (GetCurrentConvertPage() is ConvertPage currentPage)
+            {
+                if (NavConvert != null && !ReferenceEquals(MainNavigation.SelectedItem, NavConvert))
+                {
+                    MainNavigation.SelectedItem = NavConvert;
+                }
+
+                currentPage.HandleTitleBarImportCommand(normalized);
+                return;
+            }
+
+            void Frame_Navigated(object sender, NavigationEventArgs args)
+            {
+                if (args.SourcePageType != typeof(ConvertPage))
+                {
+                    return;
+                }
+
+                ContentHost.MainFrame.Navigated -= Frame_Navigated;
+                GetCurrentConvertPage()?.HandleTitleBarImportCommand(normalized);
+            }
+
+            ContentHost.MainFrame.Navigated -= Frame_Navigated;
+            ContentHost.MainFrame.Navigated += Frame_Navigated;
+            if (NavConvert != null && !ReferenceEquals(MainNavigation.SelectedItem, NavConvert))
+            {
+                MainNavigation.SelectedItem = NavConvert;
+            }
+            else
+            {
+                NavigateTo("convert");
+            }
+        }
+
         public void NavigateToConvertAndImportEditor()
         {
-            NavigateToPage("convert");
-            GetCurrentConvertPage()?.HandleTitleBarImportCommand("import_editor");
+            DispatchConvertImportCommand("import_editor");
         }
 
         private void CreateDynamicNavigationAndConvertMenuItems()
@@ -182,8 +219,8 @@ namespace MusicBox
                 };
                 composePanel.Children.Add(new FontIcon
                 {
-                    Glyph = "🎨",
-                    FontFamily = new FontFamily("Segoe UI Emoji"),
+                    Glyph = "\uE790",
+                    FontFamily = new FontFamily("Segoe Fluent Icons"),
                     FontSize = 18,
                     HorizontalAlignment = HorizontalAlignment.Center
                 });
@@ -365,11 +402,11 @@ namespace MusicBox
             if (sender is MenuFlyoutItem item)
             {
                 string command = item.Tag?.ToString() ?? string.Empty;
-                GetCurrentConvertPage()?.HandleTitleBarImportCommand(command);
+                DispatchConvertImportCommand(command);
                 return;
             }
 
-            GetCurrentConvertPage()?.HandleTitleBarImportCommand("import_editor");
+            DispatchConvertImportCommand("import_editor");
         }
 
         private void ConvertTitleFormatMenuItem_Click(object sender, RoutedEventArgs e)
