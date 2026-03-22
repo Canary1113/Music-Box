@@ -33,6 +33,23 @@ Features may be incomplete, behavior may change, and some parts of the app may s
 
 ## Main Pages
 
+### Compose Workbench Page
+
+The Compose Workbench page generates multiple candidate ideas for quick songwriting.
+
+Features:
+- Generate 3 composition candidates at a time.
+- Each candidate can use its own mood-compatible random key instead of forcing all candidates into one shared tonality.
+- Build longer results with section planning instead of only looping a short phrase.
+- Add bass, harmony, expression marks, and sustain pedal marks automatically.
+- Preview each candidate and send the chosen one into the Editor page.
+
+Basic workflow:
+1. Open the Compose Workbench page.
+2. Choose mood and length.
+3. Generate 3 candidates.
+4. Preview the options, keep or retry candidates, then apply one to the Editor page.
+
 ### Editor Page
 
 The Editor page is the score-writing workspace.
@@ -40,6 +57,7 @@ The Editor page is the score-writing workspace.
 Features:
 - Create and edit notes and rests directly on the staff.
 - Change note length, accidentals, ornaments, articulation, slurs, tempo, key signature, and time signature.
+- Edit imported or generated expression marks, pedal marks, and other score symbols directly on the canvas.
 - Adjust layout-related options such as snap division, measure ratio, measures per system, and display toggles.
 - Play back the current score with timeline seeking and volume control.
 - Import and export MusicXML.
@@ -70,5 +88,7 @@ Basic workflow:
 ## Notes
 
 - The application supports both Chinese and English UI.
+- Smart composition currently focuses on practical pop/folk/ambient-style sketch generation instead of strict rule-based classical writing.
+- Candidate generation now varies tonality, section shape, and pedal usage to reduce the feeling of direct phrase looping.
 - Some features are still under active development and may change.
 - Export, conversion, and editing behavior should be treated as evolving rather than final.

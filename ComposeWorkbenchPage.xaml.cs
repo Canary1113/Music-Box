@@ -179,20 +179,20 @@ namespace MusicBox
             string lengthId = SelectedTag(LengthBox);
             int autoBpm = ResolveAutoBpm(moodId);
             (int numerator, int denominator) = ResolveAutoMeter(moodId);
-            int tonalitySeed = _seedBase ^ (_generationSerial * 104729) ^ moodId.GetHashCode(StringComparison.Ordinal);
-            (int autoKey, KeyMode autoMode) = ResolveAutoTonality(moodId, tonalitySeed);
 
             return new SmartComposeRequest
             {
                 Title = string.IsNullOrWhiteSpace(TitleBox.Text) ? T("compose.default_title") : TitleBox.Text.Trim(),
                 Bpm = autoBpm,
                 Measures = ResolveMeasureCount(lengthId),
-                KeyFifths = autoKey,
-                Mode = autoMode,
+                KeyFifths = 0,
+                Mode = KeyMode.Major,
                 TimeSignature = new TimeSignature(numerator, denominator),
                 MoodId = moodId,
                 LengthId = lengthId,
-                IncludeBass = true
+                IncludeBass = true,
+                AutoTonality = true,
+                UseSustainPedal = true
             };
         }
 
@@ -512,84 +512,6 @@ namespace MusicBox
             };
         }
 
-        private static (int KeyFifths, KeyMode Mode) ResolveAutoTonality(string moodId, int seed)
-        {
-            var random = new Random(seed == 0 ? Environment.TickCount : seed);
-            TonalityOption[] options = moodId switch
-            {
-                "sleep" => new[]
-                {
-                    new TonalityOption(-4, KeyMode.Minor),
-                    new TonalityOption(-3, KeyMode.Minor),
-                    new TonalityOption(-2, KeyMode.Minor),
-                    new TonalityOption(-1, KeyMode.Minor),
-                    new TonalityOption(0, KeyMode.Major)
-                },
-                "sad" => new[]
-                {
-                    new TonalityOption(-3, KeyMode.Minor),
-                    new TonalityOption(-2, KeyMode.Minor),
-                    new TonalityOption(-1, KeyMode.Minor),
-                    new TonalityOption(0, KeyMode.Minor),
-                    new TonalityOption(1, KeyMode.Major)
-                },
-                "nostalgic" => new[]
-                {
-                    new TonalityOption(-2, KeyMode.Minor),
-                    new TonalityOption(-1, KeyMode.Minor),
-                    new TonalityOption(0, KeyMode.Major),
-                    new TonalityOption(1, KeyMode.Major),
-                    new TonalityOption(2, KeyMode.Major)
-                },
-                "positive" => new[]
-                {
-                    new TonalityOption(0, KeyMode.Major),
-                    new TonalityOption(1, KeyMode.Major),
-                    new TonalityOption(2, KeyMode.Major),
-                    new TonalityOption(3, KeyMode.Major),
-                    new TonalityOption(4, KeyMode.Major)
-                },
-                "hopeful" => new[]
-                {
-                    new TonalityOption(-1, KeyMode.Major),
-                    new TonalityOption(0, KeyMode.Major),
-                    new TonalityOption(1, KeyMode.Major),
-                    new TonalityOption(2, KeyMode.Major),
-                    new TonalityOption(3, KeyMode.Major),
-                    new TonalityOption(0, KeyMode.Minor)
-                },
-                "dreamy" => new[]
-                {
-                    new TonalityOption(-2, KeyMode.Major),
-                    new TonalityOption(-1, KeyMode.Major),
-                    new TonalityOption(0, KeyMode.Major),
-                    new TonalityOption(1, KeyMode.Major),
-                    new TonalityOption(-1, KeyMode.Minor)
-                },
-                "tense" => new[]
-                {
-                    new TonalityOption(-1, KeyMode.Minor),
-                    new TonalityOption(0, KeyMode.Minor),
-                    new TonalityOption(1, KeyMode.Minor),
-                    new TonalityOption(2, KeyMode.Minor),
-                    new TonalityOption(3, KeyMode.Minor)
-                },
-                _ => new[]
-                {
-                    new TonalityOption(-2, KeyMode.Major),
-                    new TonalityOption(-1, KeyMode.Major),
-                    new TonalityOption(0, KeyMode.Major),
-                    new TonalityOption(1, KeyMode.Major),
-                    new TonalityOption(2, KeyMode.Major),
-                    new TonalityOption(-1, KeyMode.Minor),
-                    new TonalityOption(0, KeyMode.Minor)
-                }
-            };
-
-            TonalityOption selected = options[random.Next(options.Length)];
-            return (selected.KeyFifths, selected.Mode);
-        }
-
         private static int ResolveCandidateIndex(object sender)
         {
             return sender is FrameworkElement element
@@ -608,8 +530,6 @@ namespace MusicBox
             int result = value % modulus;
             return result < 0 ? result + modulus : result;
         }
-
-        private readonly record struct TonalityOption(int KeyFifths, KeyMode Mode);
 
         private static ScoreProject CloneProject(ScoreProject source)
         {

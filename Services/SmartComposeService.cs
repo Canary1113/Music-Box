@@ -37,10 +37,39 @@ namespace MusicBox.Services
 
             for (int index = 0; index < safeCount; index++)
             {
-                results.Add(GenerateVariant(normalized, baseSeed + index * 7919, index));
+                int candidateSeed = baseSeed + index * 7919;
+                SmartComposeRequest candidateRequest = CloneRequest(normalized);
+                if (candidateRequest.AutoTonality)
+                {
+                    (candidateRequest.KeyFifths, candidateRequest.Mode) = ResolveAutoTonality(candidateRequest.MoodId, candidateSeed + 421);
+                }
+
+                results.Add(GenerateVariant(candidateRequest, candidateSeed, index));
             }
 
             return results;
+        }
+
+        private static SmartComposeRequest CloneRequest(SmartComposeRequest source)
+        {
+            return new SmartComposeRequest
+            {
+                Title = source.Title,
+                Bpm = source.Bpm,
+                Measures = source.Measures,
+                KeyFifths = source.KeyFifths,
+                Mode = source.Mode,
+                TimeSignature = source.TimeSignature == null
+                    ? new TimeSignature(4, 4)
+                    : new TimeSignature(source.TimeSignature.Numerator, source.TimeSignature.Denominator),
+                StyleId = source.StyleId,
+                MoodId = source.MoodId,
+                LengthId = source.LengthId,
+                IncludeBass = source.IncludeBass,
+                Seed = source.Seed,
+                AutoTonality = source.AutoTonality,
+                UseSustainPedal = source.UseSustainPedal
+            };
         }
 
         private static SmartComposeResult GenerateVariant(SmartComposeRequest request, int seed, int variantIndex)
@@ -114,6 +143,14 @@ namespace MusicBox.Services
                     role);
 
                 int[] rhythm = PickRhythm(style, mood, variant, role, measureUnits, previousRhythm, repeatedRhythmCount, measure, measures, random);
+                if (hasThemeMotif
+                    && measureInSection == 0
+                    && referenceMotif?.Rhythm != null
+                    && PatternsEqual(rhythm, referenceMotif.Rhythm))
+                {
+                    rhythm = CreateRhythmVariation(rhythm, measureUnits, role);
+                }
+
                 List<int> melodyDegrees = BuildMeasureDegrees(
                     rhythm,
                     chordPlan,
@@ -165,7 +202,7 @@ namespace MusicBox.Services
                 previousHarmony = harmonyVoicing;
             }
 
-            AddExpressionMarks(project, mood, variant, measures, ticksPerMeasure);
+            AddExpressionMarks(project, mood, variant, measures, ticksPerMeasure, structure.SectionMap, request.UseSustainPedal);
             project.Notes = project.Notes
                 .OrderBy(note => note.StartTick)
                 .ThenBy(note => note.Voice)
@@ -224,13 +261,13 @@ namespace MusicBox.Services
             ThemeFamily[] themes = sectionCount switch
             {
                 1 => new[] { ThemeFamily.A },
-                2 => new[] { ThemeFamily.A, ThemeFamily.A },
+                2 => new[] { ThemeFamily.A, ThemeFamily.B },
                 3 => new[] { ThemeFamily.A, ThemeFamily.B, ThemeFamily.A },
-                4 => new[] { ThemeFamily.A, ThemeFamily.A, ThemeFamily.B, ThemeFamily.A },
-                5 => new[] { ThemeFamily.A, ThemeFamily.A, ThemeFamily.B, ThemeFamily.C, ThemeFamily.A },
-                6 => new[] { ThemeFamily.A, ThemeFamily.A, ThemeFamily.B, ThemeFamily.A, ThemeFamily.C, ThemeFamily.A },
-                7 => new[] { ThemeFamily.A, ThemeFamily.A, ThemeFamily.B, ThemeFamily.A, ThemeFamily.C, ThemeFamily.B, ThemeFamily.A },
-                _ => new[] { ThemeFamily.A, ThemeFamily.A, ThemeFamily.B, ThemeFamily.A, ThemeFamily.C, ThemeFamily.B, ThemeFamily.A, ThemeFamily.A }
+                4 => new[] { ThemeFamily.A, ThemeFamily.B, ThemeFamily.C, ThemeFamily.A },
+                5 => new[] { ThemeFamily.A, ThemeFamily.B, ThemeFamily.A, ThemeFamily.C, ThemeFamily.A },
+                6 => new[] { ThemeFamily.A, ThemeFamily.B, ThemeFamily.C, ThemeFamily.A, ThemeFamily.B, ThemeFamily.A },
+                7 => new[] { ThemeFamily.A, ThemeFamily.B, ThemeFamily.A, ThemeFamily.C, ThemeFamily.B, ThemeFamily.C, ThemeFamily.A },
+                _ => new[] { ThemeFamily.A, ThemeFamily.B, ThemeFamily.C, ThemeFamily.A, ThemeFamily.B, ThemeFamily.C, ThemeFamily.A, ThemeFamily.B }
             };
 
             SectionEnergy[] energies = sectionCount switch
@@ -454,6 +491,35 @@ namespace MusicBox.Services
             return copy;
         }
 
+        private static int[] CreateRhythmVariation(IReadOnlyList<int> source, int measureUnits, MeasureRole role)
+        {
+            int[] varied = source.ToArray();
+            if (varied.Length <= 1)
+            {
+                return varied;
+            }
+
+            int pivot = Math.Clamp(varied.Length / 2, 1, varied.Length - 1);
+            if (varied[pivot - 1] > 1)
+            {
+                varied[pivot - 1]--;
+                varied[pivot]++;
+            }
+            else if (varied[pivot] > 1)
+            {
+                varied[pivot]--;
+                varied[pivot - 1]++;
+            }
+
+            if (role is MeasureRole.Cadence or MeasureRole.FinalCadence)
+            {
+                varied[^1] = Math.Min(measureUnits - 1, varied[^1] + 1);
+                varied[0] = Math.Max(1, measureUnits - varied.Skip(1).Sum());
+            }
+
+            return NormalizePattern(varied, measureUnits);
+        }
+
         private static bool PatternsEqual(IReadOnlyList<int>? left, IReadOnlyList<int>? right)
         {
             if (left == null || right == null || left.Count != right.Count)
@@ -594,7 +660,7 @@ namespace MusicBox.Services
                 && referenceRhythm != null
                 && referenceRhythm.Count == noteCount)
             {
-                List<int> reused = RecastMotif(referenceMotif, chordPlan, style, variant);
+                List<int> reused = RecastMotif(referenceMotif, chordPlan, style, variant, role, random);
                 ApplyCadenceContour(reused, chordPlan, role);
                 state.PreviousDegree = reused[^1];
                 return reused;
@@ -632,7 +698,7 @@ namespace MusicBox.Services
             return result;
         }
 
-        private static List<int> RecastMotif(IReadOnlyList<int> motif, ChordPlan chordPlan, StyleSpec style, VariantSpec variant)
+        private static List<int> RecastMotif(IReadOnlyList<int> motif, ChordPlan chordPlan, StyleSpec style, VariantSpec variant, MeasureRole role, Random random)
         {
             var result = new List<int>(motif.Count);
             int first = Math.Clamp(ChooseNearest(motif[0], chordPlan.StrongDegrees), style.MinDegree, style.MaxDegree);
@@ -647,7 +713,37 @@ namespace MusicBox.Services
                 result.Add(candidate);
             }
 
+            ApplyMotifVariation(result, chordPlan, style, role, variant, random);
             return result;
+        }
+
+        private static void ApplyMotifVariation(List<int> motif, ChordPlan chordPlan, StyleSpec style, MeasureRole role, VariantSpec variant, Random random)
+        {
+            if (motif.Count <= 2)
+            {
+                return;
+            }
+
+            int pivot = Math.Clamp(motif.Count / 2, 1, motif.Count - 2);
+            IReadOnlyList<int> pivotPool = IsStrongBeat(pivot, motif.Count) ? chordPlan.StrongDegrees : chordPlan.WeakDegrees;
+            int pivotTarget = motif[pivot] + (random.Next(0, 2) == 0 ? -1 : 1);
+            motif[pivot] = Math.Clamp(ChooseNearest(pivotTarget, pivotPool), style.MinDegree, style.MaxDegree);
+
+            if (role == MeasureRole.Return && motif.Count >= 4)
+            {
+                int tailIndex = motif.Count - 2;
+                int tailTarget = motif[tailIndex] + (variant.Texture == VariantTexture.Anthem ? 1 : -1);
+                motif[tailIndex] = Math.Clamp(ChooseNearest(tailTarget, chordPlan.WeakDegrees), style.MinDegree, style.MaxDegree);
+            }
+
+            for (int index = 1; index < motif.Count; index++)
+            {
+                int delta = motif[index] - motif[index - 1];
+                if (Math.Abs(delta) > 3)
+                {
+                    motif[index] = motif[index - 1] + Math.Sign(delta) * 3;
+                }
+            }
         }
 
         private static void ApplyCadenceContour(List<int> degrees, ChordPlan chordPlan, MeasureRole role)
@@ -1144,7 +1240,14 @@ namespace MusicBox.Services
             return melodyAnchor + offset + (variant.Texture == VariantTexture.Atmosphere && role == MeasureRole.Climax ? 2 : 0);
         }
 
-        private static void AddExpressionMarks(ScoreProject project, MoodSpec mood, VariantSpec variant, int measures, int ticksPerMeasure)
+        private static void AddExpressionMarks(
+            ScoreProject project,
+            MoodSpec mood,
+            VariantSpec variant,
+            int measures,
+            int ticksPerMeasure,
+            IReadOnlyList<SectionPlan> sectionMap,
+            bool useSustainPedal)
         {
             int totalTicks = measures * ticksPerMeasure;
             string openingDynamic = variant.Texture == VariantTexture.Atmosphere ? "p" : variant.Texture == VariantTexture.Tension ? "mf" : "mp";
@@ -1157,15 +1260,21 @@ namespace MusicBox.Services
             project.ExpressionMarks.Add(new ExpressionMark { Code = "rit", StartTick = Math.Max(0, totalTicks - ticksPerMeasure * 2), StaffStepOffset = centerGapStaffOffset, SpanBeats = 2.4f });
             project.ExpressionMarks.Add(new ExpressionMark { Code = closingDynamic, StartTick = Math.Max(0, totalTicks - ticksPerMeasure), StaffStepOffset = centerGapStaffOffset });
 
-            if (!mood.PedalFriendly && !variant.ForcePedal)
+            if (!useSustainPedal && !mood.PedalFriendly && !variant.ForcePedal)
             {
                 return;
             }
 
-            for (int measure = 0; measure < measures; measure += 2)
+            int pedalSpanMeasures = variant.Texture == VariantTexture.Atmosphere || mood.Texture is MoodTexture.Calm or MoodTexture.Airy
+                ? 2
+                : 1;
+
+            for (int measure = 0; measure < measures; measure += pedalSpanMeasures)
             {
+                SectionEnergy energy = sectionMap.Count > measure ? sectionMap[measure].Energy : SectionEnergy.Statement;
                 int start = measure * ticksPerMeasure;
-                int end = Math.Min(totalTicks, start + ticksPerMeasure * 2);
+                int spanMeasures = energy is SectionEnergy.Climax or SectionEnergy.Contrast ? 1 : pedalSpanMeasures;
+                int end = Math.Min(totalTicks, start + ticksPerMeasure * spanMeasures);
                 project.ExpressionMarks.Add(new ExpressionMark { Code = "ped", StartTick = start, StaffStepOffset = pedalStaffOffset });
                 project.ExpressionMarks.Add(new ExpressionMark { Code = "ped_release", StartTick = end, StaffStepOffset = pedalStaffOffset });
             }
@@ -1374,6 +1483,84 @@ namespace MusicBox.Services
             return energy == SectionEnergy.Contrast ? MeasureRole.Contrast : MeasureRole.Answer;
         }
 
+        private static (int KeyFifths, KeyMode Mode) ResolveAutoTonality(string? moodId, int seed)
+        {
+            var random = new Random(seed == 0 ? Environment.TickCount : seed);
+            TonalityOption[] options = (moodId ?? "calm").Trim().ToLowerInvariant() switch
+            {
+                "sleep" => new[]
+                {
+                    new TonalityOption(-4, KeyMode.Minor),
+                    new TonalityOption(-3, KeyMode.Minor),
+                    new TonalityOption(-2, KeyMode.Minor),
+                    new TonalityOption(-1, KeyMode.Minor),
+                    new TonalityOption(0, KeyMode.Major)
+                },
+                "sad" => new[]
+                {
+                    new TonalityOption(-3, KeyMode.Minor),
+                    new TonalityOption(-2, KeyMode.Minor),
+                    new TonalityOption(-1, KeyMode.Minor),
+                    new TonalityOption(0, KeyMode.Minor),
+                    new TonalityOption(1, KeyMode.Major)
+                },
+                "nostalgic" => new[]
+                {
+                    new TonalityOption(-2, KeyMode.Minor),
+                    new TonalityOption(-1, KeyMode.Minor),
+                    new TonalityOption(0, KeyMode.Major),
+                    new TonalityOption(1, KeyMode.Major),
+                    new TonalityOption(2, KeyMode.Major)
+                },
+                "positive" => new[]
+                {
+                    new TonalityOption(0, KeyMode.Major),
+                    new TonalityOption(1, KeyMode.Major),
+                    new TonalityOption(2, KeyMode.Major),
+                    new TonalityOption(3, KeyMode.Major),
+                    new TonalityOption(4, KeyMode.Major)
+                },
+                "hopeful" => new[]
+                {
+                    new TonalityOption(-1, KeyMode.Major),
+                    new TonalityOption(0, KeyMode.Major),
+                    new TonalityOption(1, KeyMode.Major),
+                    new TonalityOption(2, KeyMode.Major),
+                    new TonalityOption(3, KeyMode.Major),
+                    new TonalityOption(0, KeyMode.Minor)
+                },
+                "dreamy" => new[]
+                {
+                    new TonalityOption(-2, KeyMode.Major),
+                    new TonalityOption(-1, KeyMode.Major),
+                    new TonalityOption(0, KeyMode.Major),
+                    new TonalityOption(1, KeyMode.Major),
+                    new TonalityOption(-1, KeyMode.Minor)
+                },
+                "tense" => new[]
+                {
+                    new TonalityOption(-1, KeyMode.Minor),
+                    new TonalityOption(0, KeyMode.Minor),
+                    new TonalityOption(1, KeyMode.Minor),
+                    new TonalityOption(2, KeyMode.Minor),
+                    new TonalityOption(3, KeyMode.Minor)
+                },
+                _ => new[]
+                {
+                    new TonalityOption(-2, KeyMode.Major),
+                    new TonalityOption(-1, KeyMode.Major),
+                    new TonalityOption(0, KeyMode.Major),
+                    new TonalityOption(1, KeyMode.Major),
+                    new TonalityOption(2, KeyMode.Major),
+                    new TonalityOption(-1, KeyMode.Minor),
+                    new TonalityOption(0, KeyMode.Minor)
+                }
+            };
+
+            TonalityOption selected = options[random.Next(options.Length)];
+            return (selected.KeyFifths, selected.Mode);
+        }
+
         private static int FloorDiv(int value, int divisor)
         {
             int quotient = value / divisor;
@@ -1516,6 +1703,8 @@ namespace MusicBox.Services
 
         private sealed record StructurePlan(int[] Progression, SectionPlan[] SectionMap);
 
+        private readonly record struct TonalityOption(int KeyFifths, KeyMode Mode);
+
         private sealed class MelodyState
         {
             public MelodyState(int previousDegree)
@@ -1542,6 +1731,8 @@ namespace MusicBox.Services
         public string MoodId { get; set; } = "calm";
         public string LengthId { get; set; } = "short";
         public bool IncludeBass { get; set; } = true;
+        public bool AutoTonality { get; set; }
+        public bool UseSustainPedal { get; set; } = true;
         public int Seed { get; set; }
     }
 
