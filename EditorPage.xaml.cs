@@ -43,6 +43,7 @@ namespace MusicBox
             public float X { get; init; }
             public float Y { get; init; }
             public bool PreferTrebleStaff { get; init; }
+            public int OttavaShiftOctaves { get; init; }
             public float HeadWidth { get; init; }
             public int VisualDurationTicks { get; init; }
             public int Beams { get; init; }
@@ -402,11 +403,13 @@ namespace MusicBox
         private static int _persistedPlaybackTick;
         private bool _isPreparingPrintPreview;
         private bool _forcePrintInkOnWhite;
+        private readonly RasterPdfExportService _pdfExporter = new();
         private PrintManager? _printManager;
         private PrintDocument? _printDocument;
         private IPrintDocumentSource? _printDocumentSource;
         private readonly List<UIElement> _printPages = new();
         private readonly List<UIElement> _pendingPrintPages = new();
+        private readonly List<RasterPdfPage> _pendingPdfPages = new();
         private readonly List<EditorHistoryState> _historyStates = new();
         private int _historyIndex = -1;
         private bool _isApplyingHistory;
@@ -2596,6 +2599,11 @@ namespace MusicBox
                 if (x > maxX) continue;
 
                 float y = GetNoteVisualY(note, systemIndex);
+                int ottavaShiftOctaves = 0;
+                if (!note.IsRest)
+                {
+                    y = GetRenderedNoteY(note, systemIndex, out ottavaShiftOctaves);
+                }
 
                 int visualDurationTicks = note.BaseDurationTicks > 0 ? note.BaseDurationTicks : note.DurationTicks;
                 int dotCount = Math.Clamp(note.AugmentationDots, 0, 2);
@@ -2647,6 +2655,7 @@ namespace MusicBox
                     X = x + (isWhole && !note.IsRest ? SymbolSizeGap * 0.375f : 0f),
                     Y = y,
                     PreferTrebleStaff = note.PreferTrebleStaff ?? ShouldPreferTrebleByPosition(systemIndex, note.Midi, note.Accidental),
+                    OttavaShiftOctaves = ottavaShiftOctaves,
                     HeadWidth = headWidth,
                     VisualDurationTicks = Math.Max(1, visualDurationTicks),
                     Beams = beams,
@@ -2665,6 +2674,7 @@ namespace MusicBox
                 .OrderBy(n => n.Note.StartTick)
                 .ThenBy(n => n.Y)
                 .ToList();
+            var drawnOttavaAnchors = new HashSet<(int Tick, bool Treble, int Shift)>();
 
             var eligibleChordGroups = noteInfos
                 .Where(n => !n.Note.IsRest
@@ -2800,6 +2810,7 @@ namespace MusicBox
                     DrawNoteDots(ds, info, noteColor, noteheadScale);
                     DrawNoteArticulation(ds, info, noteColor);
                 DrawNoteOrnament(ds, info, noteColor);
+                    DrawAutoOttavaHint(ds, info, noteColor, drawnOttavaAnchors);
 
                     if (!info.IsWhole && (!drawnAsCompleteGlyph || isBeamedGroupNote))
                     {
@@ -4879,6 +4890,44 @@ namespace MusicBox
             ds.DrawText(fallback, fallbackX, fallbackY, color, fallbackFormat);
         }
 
+        private void DrawAutoOttavaHint(
+            Microsoft.Graphics.Canvas.CanvasDrawingSession ds,
+            NoteDrawInfo info,
+            Color color,
+            ISet<(int Tick, bool Treble, int Shift)> drawnAnchors)
+        {
+            if (info.Note.IsRest || info.OttavaShiftOctaves == 0)
+            {
+                return;
+            }
+
+            var key = (info.Note.StartTick, info.PreferTrebleStaff, info.OttavaShiftOctaves);
+            if (!drawnAnchors.Add(key))
+            {
+                return;
+            }
+
+            string label = info.OttavaShiftOctaves switch
+            {
+                >= 2 => "15ma",
+                <= -2 => "15mb",
+                > 0 => "8va",
+                _ => "8vb"
+            };
+
+            float y = info.OttavaShiftOctaves > 0
+                ? info.Y - SymbolSizeGap * 3.7f
+                : info.Y + SymbolSizeGap * 3.0f;
+            var format = new CanvasTextFormat
+            {
+                FontFamily = "Times New Roman",
+                FontSize = Math.Max(12f, SymbolSizeGap * 0.82f),
+                FontStyle = Windows.UI.Text.FontStyle.Italic,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+            };
+            ds.DrawText(label, info.X - SymbolSizeGap * 0.42f, y, color, format);
+        }
+
         private static bool IsGraceOrnament(NoteOrnament ornament)
         {
             return ornament is NoteOrnament.Appoggiatura or NoteOrnament.Acciaccatura;
@@ -6010,6 +6059,7 @@ namespace MusicBox
             if (FileNewMenuItem != null) FileNewMenuItem.Text = LocalizationService.Translate("editor.menu.new");
             if (FileImportMusicXmlMenuItem != null) FileImportMusicXmlMenuItem.Text = LocalizationService.Translate("editor.menu.import_musicxml");
             if (FileExportMusicXmlMenuItem != null) FileExportMusicXmlMenuItem.Text = LocalizationService.Translate("editor.menu.export_musicxml");
+            if (FileExportPdfMenuItem != null) FileExportPdfMenuItem.Text = LocalizationService.Translate("editor.menu.export_pdf");
             if (FilePrintMenuItem != null) FilePrintMenuItem.Text = LocalizationService.Translate("editor.menu.print");
             if (TimeSignatureMenu != null) TimeSignatureMenu.Title = LocalizationService.Translate("editor.menu.time_signature");
             if (KeySignatureMenu != null) KeySignatureMenu.Title = LocalizationService.Translate("editor.menu.key_signature");
@@ -9054,6 +9104,39 @@ namespace MusicBox
         private float GetNoteVisualY(NoteEvent note, int systemIndex)
         {
             return note.IsRest ? GetRestY(note, systemIndex) : MidiToY(note, systemIndex);
+        }
+
+        private float GetRenderedNoteY(NoteEvent note, int systemIndex, out int ottavaShiftOctaves)
+        {
+            int naturalMidi = GetNaturalMidiForDisplay(note.Midi, note.Accidental);
+            bool preferTreble = ResolveNoteStaffPreference(note, systemIndex, naturalMidi);
+            int displayMidi = ResolveDisplayMidiForRender(naturalMidi, preferTreble, out ottavaShiftOctaves);
+            return MidiToY(displayMidi, systemIndex, preferTreble);
+        }
+
+        private static int ResolveDisplayMidiForRender(int naturalMidi, bool preferTreble, out int ottavaShiftOctaves)
+        {
+            int displayMidi = Math.Clamp(naturalMidi, 0, 127);
+            int diatonicIndex = NaturalMidiToDiatonicIndex(displayMidi);
+            int lowerThreshold = preferTreble ? TrebleLowerSwitchDiatonic : BassBottomDiatonic - 8;
+            int upperThreshold = preferTreble ? TrebleBottomDiatonic + 16 : BassUpperSwitchDiatonic;
+            ottavaShiftOctaves = 0;
+
+            while (diatonicIndex > upperThreshold && displayMidi - 12 >= 0 && ottavaShiftOctaves < 2)
+            {
+                displayMidi -= 12;
+                diatonicIndex -= 7;
+                ottavaShiftOctaves++;
+            }
+
+            while (diatonicIndex < lowerThreshold && displayMidi + 12 <= 127 && ottavaShiftOctaves > -2)
+            {
+                displayMidi += 12;
+                diatonicIndex += 7;
+                ottavaShiftOctaves--;
+            }
+
+            return displayMidi;
         }
 
         private float MidiToY(NoteEvent note, int systemIndex)
@@ -12620,6 +12703,9 @@ namespace MusicBox
                 case "export_musicxml":
                     ExportMusicXmlMenuItem_Click(this, new RoutedEventArgs());
                     break;
+                case "export_pdf":
+                    ExportPdfMenuItem_Click(this, new RoutedEventArgs());
+                    break;
                 case "print":
                     PrintMenuItem_Click(this, new RoutedEventArgs());
                     break;
@@ -12843,6 +12929,48 @@ namespace MusicBox
             StaffCanvas.Invalidate();
         }
 
+        private async void ExportPdfMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (_viewModel == null) return;
+            if (_isPreparingPrintPreview)
+            {
+                _viewModel.SetStatus("正在准备打印页面，请稍后...");
+                return;
+            }
+
+            try
+            {
+                _isPreparingPrintPreview = true;
+                ShowPrintBusyOverlay();
+                await System.Threading.Tasks.Task.Delay(50);
+                await PreparePrintPageAsync();
+                if (_pendingPdfPages.Count == 0)
+                {
+                    throw new InvalidOperationException("No PDF page was generated.");
+                }
+
+                string suggested = GetSuggestedProjectName(".pdf");
+                string? path = await PickSavePathAsync(".pdf", "PDF Document", suggested);
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    _viewModel.SetStatus("已取消导出。");
+                    return;
+                }
+
+                _pdfExporter.ExportJpegPages(path, _pendingPdfPages.ToList());
+                _viewModel.SetStatus($"已导出 PDF: {Path.GetFileName(path)}");
+            }
+            catch (Exception ex)
+            {
+                _viewModel.SetStatus($"导出 PDF 失败: {ex.Message}");
+            }
+            finally
+            {
+                _isPreparingPrintPreview = false;
+                HidePrintBusyOverlay();
+            }
+        }
+
         private async void PrintMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (_viewModel == null) return;
@@ -12996,12 +13124,14 @@ namespace MusicBox
 
             _printDocumentSource = null;
             _pendingPrintPages.Clear();
+            _pendingPdfPages.Clear();
             _printPages.Clear();
         }
 
         private async System.Threading.Tasks.Task PreparePrintPageAsync()
         {
             _pendingPrintPages.Clear();
+            _pendingPdfPages.Clear();
 
             try
             {
@@ -13197,6 +13327,7 @@ namespace MusicBox
                                 pageSession.Transform = System.Numerics.Matrix3x2.Identity;
                             }
 
+                            _pendingPdfPages.Add(await CreateRasterPdfPageAsync(pageRenderTarget));
                             _pendingPrintPages.Add(await CreatePrintImagePageAsync(pageRenderTarget, 10));
                             systemIndex = lastSystem + 1;
                         }
@@ -13228,6 +13359,7 @@ namespace MusicBox
             {
                 _viewModel?.SetStatus($"鎵撳嵃棰勮鐢熸垚澶辫触: {ex.Message}");
                 _pendingPrintPages.Clear();
+                _pendingPdfPages.Clear();
                 _pendingPrintPages.Add(new Grid
                 {
                     Background = new SolidColorBrush(Colors.White),
@@ -13289,6 +13421,29 @@ namespace MusicBox
                     }
                 }
             };
+        }
+
+        private static async System.Threading.Tasks.Task<RasterPdfPage> CreateRasterPdfPageAsync(CanvasRenderTarget renderTarget)
+        {
+            using var stream = new InMemoryRandomAccessStream();
+            await renderTarget.SaveAsync(stream, CanvasBitmapFileFormat.Jpeg);
+            stream.Seek(0);
+
+            byte[] bytes = new byte[stream.Size];
+            using Stream managed = stream.AsStreamForRead();
+            int offset = 0;
+            while (offset < bytes.Length)
+            {
+                int read = await managed.ReadAsync(bytes, offset, bytes.Length - offset).ConfigureAwait(false);
+                if (read <= 0)
+                {
+                    break;
+                }
+
+                offset += read;
+            }
+
+            return new RasterPdfPage(bytes, (int)renderTarget.SizeInPixels.Width, (int)renderTarget.SizeInPixels.Height);
         }
 
         private void AppendPrintPageNumbers()

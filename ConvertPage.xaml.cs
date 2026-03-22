@@ -1,17 +1,24 @@
 ﻿using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI.Xaml;
+using Microsoft.Graphics.Canvas;
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
-using Microsoft.Web.WebView2.Core;
+using Microsoft.UI.Xaml.Printing;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Threading.Tasks;
 using Windows.Foundation;
+using Windows.Graphics.Printing;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.Storage.Streams;
 using Windows.UI;
 using MusicBox.Models;
 using MusicBox.Services;
@@ -27,9 +34,9 @@ namespace MusicBox
         private readonly JianpuConverter _jianpuConverter = new();
         private readonly GuitarTabConverter _guitarTabConverter = new();
         private readonly MusicXmlExporter _musicXmlExporter = new();
+        private readonly RasterPdfExportService _pdfExporter = new();
         private JianpuConverter.NativePreviewModel? _nativePreview;
         private TabPreviewModel? _guitarPreview;
-        private string _latestPreviewHtml = string.Empty;
         private string _latestGuitarTabText = string.Empty;
         private bool _previewLoaded;
         private ScoreProject? _sourceProject;
@@ -38,6 +45,12 @@ namespace MusicBox
         private ScrollViewer? _guitarPreviewScrollViewer;
         private CanvasControl? _guitarTabCanvas;
         private string _activeFormat = "jianpu";
+        private bool _isPreparingPrintPreview;
+        private PrintManager? _printManager;
+        private PrintDocument? _printDocument;
+        private IPrintDocumentSource? _printDocumentSource;
+        private readonly List<UIElement> _printPages = new();
+        private readonly List<RenderedPage> _renderedPages = new();
 
         private readonly CanvasTextFormat _titleFormat = new()
         {
@@ -149,12 +162,15 @@ namespace MusicBox
             VerticalAlignment = CanvasVerticalAlignment.Center
         };
 
+        private sealed record RenderedPage(byte[] JpegBytes, int PixelWidth, int PixelHeight);
+
         public ConvertPage()
         {
             InitializeComponent();
             BuildDynamicPreviewSurface();
             NavigationCacheMode = NavigationCacheMode.Required;
             Loaded += ConvertPage_Loaded;
+            Unloaded += ConvertPage_Unloaded;
             ActualThemeChanged += ConvertPage_ActualThemeChanged;
         }
 
@@ -193,6 +209,11 @@ namespace MusicBox
             }
 
             await RefreshPreviewAsync();
+        }
+
+        private void ConvertPage_Unloaded(object sender, RoutedEventArgs e)
+        {
+            UnregisterPrintManager();
         }
 
         private async void ConvertPage_ActualThemeChanged(FrameworkElement sender, object args)
@@ -319,6 +340,12 @@ namespace MusicBox
         public void HandleTitleBarExportCommand(string command)
         {
             string normalized = command?.Trim().ToLowerInvariant() ?? string.Empty;
+            if (normalized == "print")
+            {
+                _ = PrintPreviewAsync();
+                return;
+            }
+
             if (normalized == "export_pdf")
             {
                 _ = ExportPreviewToPdfAsync();
@@ -398,7 +425,6 @@ namespace MusicBox
                 _previewLoaded = false;
                 _nativePreview = null;
                 _guitarPreview = null;
-                _latestPreviewHtml = string.Empty;
                 _latestGuitarTabText = string.Empty;
                 JianpuCanvas?.Invalidate();
                 _guitarTabCanvas?.Invalidate();
@@ -416,10 +442,8 @@ namespace MusicBox
             try
             {
                 SetStatus(Loc("正在转换简谱与吉他谱...", "Converting to jianpu and guitar tab..."));
-                bool darkTheme = ActualTheme == ElementTheme.Dark;
                 float viewportWidth = (float)Math.Max(760d, (PreviewScrollViewer?.ActualWidth ?? RootGrid?.ActualWidth ?? 1200d) - 92d);
 
-                _latestPreviewHtml = _jianpuConverter.BuildPreviewHtml(_sourceProject, darkTheme);
                 _latestGuitarTabText = _guitarTabConverter.BuildAsciiTab(_sourceProject);
                 _nativePreview = _jianpuConverter.BuildNativePreviewModel(_sourceProject, viewportWidth);
                 _guitarPreview = _guitarTabConverter.BuildPreviewModel(_sourceProject, viewportWidth);
@@ -557,33 +581,346 @@ namespace MusicBox
 
         private void GuitarTabCanvas_Draw(CanvasControl sender, CanvasDrawEventArgs args)
         {
-            var ds = args.DrawingSession;
-            Color ink = GetInkColor();
-            Color subInk = Color.FromArgb((byte)(ink.A == 255 ? 190 : ink.A), ink.R, ink.G, ink.B);
-            Color stringLine = ActualTheme == ElementTheme.Dark
-                ? Color.FromArgb(255, 190, 190, 190)
-                : Color.FromArgb(255, 70, 70, 70);
-            Color fretFill = ActualTheme == ElementTheme.Dark
-                ? Color.FromArgb(255, 28, 28, 28)
-                : Color.FromArgb(255, 250, 250, 250);
+            DrawGuitarPreview(args.DrawingSession, (float)Math.Max(200d, _guitarTabCanvas?.ActualWidth ?? 0d), printMode: false);
+        }
 
-            if (_guitarPreview == null || _guitarPreview.Systems.Count == 0)
+        private float EstimateGuitarContentHeight()
+        {
+            if (_guitarPreview == null)
             {
-                float emptyCanvasWidth = (float)Math.Max(200d, _guitarTabCanvas?.ActualWidth ?? 0d);
-                float emptyCanvasHeight = (float)Math.Max(160d, _guitarTabCanvas?.ActualHeight ?? 0d);
-                var centeredStatusFormat = new CanvasTextFormat
+                return 720f;
+            }
+
+            return Math.Max(720f, 214f + _guitarPreview.Systems.Count * 214f + 40f);
+        }
+        private void JianpuCanvas_Draw(CanvasControl sender, CanvasDrawEventArgs args)
+        {
+            DrawJianpuPreview(args.DrawingSession, (float)Math.Max(200d, JianpuCanvas.ActualWidth), printMode: false);
+        }
+
+        private float EstimateNativeContentHeight()
+        {
+            if (_nativePreview == null)
+            {
+                return 720f;
+            }
+
+            float systemTop = 226f;
+            foreach (var system in _nativePreview.Systems)
+            {
+                float upperExtraRise = EstimateUpperChordRise(system);
+                float extraSystemPadding = Math.Max(0f, upperExtraRise - 10f);
+                systemTop += 188f + extraSystemPadding;
+            }
+
+            return Math.Max(720f, systemTop + 40f);
+        }
+
+        private async Task<IReadOnlyList<RenderedPage>> BuildRenderedPagesAsync()
+        {
+            await RefreshPreviewAsync();
+
+            bool showGuitar = string.Equals(_activeFormat, "guitar", StringComparison.OrdinalIgnoreCase);
+            if (showGuitar && (_guitarPreview == null || _guitarPreview.Systems.Count == 0))
+            {
+                throw new InvalidOperationException(Loc("吉他谱预览尚未就绪。", "Guitar tab preview is not ready."));
+            }
+
+            if (!showGuitar && _nativePreview == null)
+            {
+                throw new InvalidOperationException(Loc("简谱预览尚未就绪。", "Jianpu preview is not ready."));
+            }
+
+            const int pagePixelWidth = 2480;
+            const int pagePixelHeight = 3508;
+            const float printDpi = 300f;
+            const float sidePadding = 110f;
+            const float topPadding = 96f;
+            const float bottomPadding = 136f;
+
+            float contentWidth = showGuitar
+                ? Math.Max(900f, _guitarPreview?.ContentWidth ?? 900f)
+                : Math.Max(900f, _nativePreview?.ContentWidth ?? 900f);
+            float contentHeight = showGuitar
+                ? EstimateGuitarContentHeight()
+                : EstimateNativeContentHeight();
+            float scale = Math.Clamp((pagePixelWidth - sidePadding * 2f) / Math.Max(1f, contentWidth), 0.58f, 2.1f);
+            float logicalPageHeight = (pagePixelHeight - topPadding - bottomPadding) / Math.Max(0.01f, scale);
+            IReadOnlyList<(float Top, float Bottom)> systems = showGuitar
+                ? BuildGuitarSystemSpans()
+                : BuildJianpuSystemSpans();
+
+            if (systems.Count == 0)
+            {
+                systems = new[] { (0f, Math.Max(400f, contentHeight)) };
+            }
+
+            var pages = new List<RenderedPage>();
+            for (int systemIndex = 0; systemIndex < systems.Count;)
+            {
+                float pageStartY = pages.Count == 0
+                    ? 0f
+                    : Math.Max(0f, systems[systemIndex].Top - 24f);
+                float pageEndY = systems[systemIndex].Bottom;
+                int lastSystem = systemIndex;
+
+                while (lastSystem + 1 < systems.Count && systems[lastSystem + 1].Bottom - pageStartY <= logicalPageHeight)
                 {
-                    FontFamily = _statusFormat.FontFamily,
-                    FontSize = _statusFormat.FontSize,
-                    FontWeight = _statusFormat.FontWeight,
-                    HorizontalAlignment = CanvasHorizontalAlignment.Center,
-                    VerticalAlignment = CanvasVerticalAlignment.Center
-                };
-                ds.DrawText(Loc("当前工程没有可转换的吉他谱音符。", "No guitar tab notes in current project."), 0f, 0f, emptyCanvasWidth, emptyCanvasHeight, subInk, centeredStatusFormat);
+                    lastSystem++;
+                    pageEndY = systems[lastSystem].Bottom;
+                }
+
+                using var renderTarget = new CanvasRenderTarget(CanvasDevice.GetSharedDevice(), pagePixelWidth, pagePixelHeight, printDpi);
+                using (CanvasDrawingSession ds = renderTarget.CreateDrawingSession())
+                {
+                    ds.Clear(Colors.White);
+                    ds.Transform = System.Numerics.Matrix3x2.CreateScale(scale)
+                        * System.Numerics.Matrix3x2.CreateTranslation(sidePadding, topPadding - pageStartY * scale);
+
+                    if (showGuitar)
+                    {
+                        DrawGuitarPreview(ds, contentWidth, printMode: true);
+                    }
+                    else
+                    {
+                        DrawJianpuPreview(ds, contentWidth, printMode: true);
+                    }
+
+                    ds.Transform = System.Numerics.Matrix3x2.Identity;
+                    string footerText = (pages.Count + 1).ToString();
+                    ds.DrawText(
+                        footerText,
+                        0f,
+                        pagePixelHeight - 74f,
+                        pagePixelWidth,
+                        28f,
+                        Colors.Black,
+                        new CanvasTextFormat
+                        {
+                            FontFamily = "Times New Roman",
+                            FontSize = 24f,
+                            HorizontalAlignment = CanvasHorizontalAlignment.Center,
+                            VerticalAlignment = CanvasVerticalAlignment.Center
+                        });
+                }
+
+                pages.Add(await EncodeRenderTargetAsync(renderTarget));
+                systemIndex = lastSystem + 1;
+            }
+
+            return pages;
+        }
+
+        private async Task PreparePrintPagesAsync()
+        {
+            _renderedPages.Clear();
+            _printPages.Clear();
+
+            IReadOnlyList<RenderedPage> pages = await BuildRenderedPagesAsync();
+            foreach (RenderedPage page in pages)
+            {
+                _renderedPages.Add(page);
+                _printPages.Add(await CreatePrintPageElementAsync(page));
+            }
+        }
+
+        private void EnsurePrintManager()
+        {
+            if (_printDocument != null && _printManager != null)
+            {
                 return;
             }
 
-            float canvasWidth = (float)Math.Max(200d, _guitarTabCanvas?.ActualWidth ?? 0d);
+            IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+            _printDocument = new PrintDocument();
+            _printDocument.Paginate += PrintDocument_Paginate;
+            _printDocument.GetPreviewPage += PrintDocument_GetPreviewPage;
+            _printDocument.AddPages += PrintDocument_AddPages;
+            _printDocumentSource = _printDocument.DocumentSource;
+
+            _printManager = PrintManagerInterop.GetForWindow(hwnd);
+            _printManager.PrintTaskRequested += PrintManager_PrintTaskRequested;
+        }
+
+        private void UnregisterPrintManager()
+        {
+            if (_printManager != null)
+            {
+                _printManager.PrintTaskRequested -= PrintManager_PrintTaskRequested;
+                _printManager = null;
+            }
+
+            if (_printDocument != null)
+            {
+                _printDocument.Paginate -= PrintDocument_Paginate;
+                _printDocument.GetPreviewPage -= PrintDocument_GetPreviewPage;
+                _printDocument.AddPages -= PrintDocument_AddPages;
+                _printDocument = null;
+            }
+
+            _printDocumentSource = null;
+            _printPages.Clear();
+            _renderedPages.Clear();
+        }
+
+        private async Task<RenderedPage> EncodeRenderTargetAsync(CanvasRenderTarget renderTarget)
+        {
+            using var stream = new InMemoryRandomAccessStream();
+            await renderTarget.SaveAsync(stream, CanvasBitmapFileFormat.Jpeg);
+            stream.Seek(0);
+
+            byte[] bytes = new byte[stream.Size];
+            using (Stream managed = stream.AsStreamForRead())
+            {
+                int offset = 0;
+                while (offset < bytes.Length)
+                {
+                    int read = await managed.ReadAsync(bytes, offset, bytes.Length - offset).ConfigureAwait(false);
+                    if (read <= 0)
+                    {
+                        break;
+                    }
+
+                    offset += read;
+                }
+            }
+
+            return new RenderedPage(bytes, (int)renderTarget.SizeInPixels.Width, (int)renderTarget.SizeInPixels.Height);
+        }
+
+        private async Task<UIElement> CreatePrintPageElementAsync(RenderedPage page)
+        {
+            using var stream = new InMemoryRandomAccessStream();
+            await stream.WriteAsync(page.JpegBytes.AsBuffer());
+            stream.Seek(0);
+
+            var bitmap = new BitmapImage();
+            await bitmap.SetSourceAsync(stream);
+
+            return new Grid
+            {
+                Background = new SolidColorBrush(Colors.White),
+                Children =
+                {
+                    new Image
+                    {
+                        Source = bitmap,
+                        Stretch = Stretch.Uniform,
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                        VerticalAlignment = VerticalAlignment.Stretch
+                    }
+                }
+            };
+        }
+
+        private void PrintManager_PrintTaskRequested(PrintManager sender, PrintTaskRequestedEventArgs args)
+        {
+            args.Request.CreatePrintTask(" ", requestArgs =>
+            {
+                if (_printDocumentSource != null)
+                {
+                    requestArgs.SetSource(_printDocumentSource);
+                }
+            });
+        }
+
+        private void PrintDocument_Paginate(object sender, PaginateEventArgs e)
+        {
+            if (_printDocument == null)
+            {
+                return;
+            }
+
+            _printDocument.SetPreviewPageCount(Math.Max(1, _printPages.Count), PreviewPageCountType.Final);
+        }
+
+        private void PrintDocument_GetPreviewPage(object sender, GetPreviewPageEventArgs e)
+        {
+            if (_printDocument == null || _printPages.Count == 0)
+            {
+                return;
+            }
+
+            int index = Math.Clamp((int)e.PageNumber - 1, 0, _printPages.Count - 1);
+            _printDocument.SetPreviewPage((int)e.PageNumber, _printPages[index]);
+        }
+
+        private void PrintDocument_AddPages(object sender, AddPagesEventArgs e)
+        {
+            if (_printDocument == null)
+            {
+                return;
+            }
+
+            foreach (UIElement page in _printPages)
+            {
+                _printDocument.AddPage(page);
+            }
+
+            _printDocument.AddPagesComplete();
+        }
+
+        private IReadOnlyList<(float Top, float Bottom)> BuildGuitarSystemSpans()
+        {
+            if (_guitarPreview == null || _guitarPreview.Systems.Count == 0)
+            {
+                return Array.Empty<(float Top, float Bottom)>();
+            }
+
+            var spans = new List<(float Top, float Bottom)>(_guitarPreview.Systems.Count);
+            float systemTop = 214f;
+            foreach (TabSystem _ in _guitarPreview.Systems)
+            {
+                spans.Add((Math.Max(0f, systemTop - 26f), systemTop + 178f));
+                systemTop += 214f;
+            }
+
+            return spans;
+        }
+
+        private IReadOnlyList<(float Top, float Bottom)> BuildJianpuSystemSpans()
+        {
+            if (_nativePreview == null || _nativePreview.Systems.Count == 0)
+            {
+                return Array.Empty<(float Top, float Bottom)>();
+            }
+
+            var spans = new List<(float Top, float Bottom)>(_nativePreview.Systems.Count);
+            float systemTop = 226f;
+            foreach (JianpuConverter.NativeSystem system in _nativePreview.Systems)
+            {
+                float upperExtraRise = EstimateUpperChordRise(system);
+                float extraSystemPadding = Math.Max(0f, upperExtraRise - 10f);
+                float upperRowTop = systemTop + 26f + extraSystemPadding;
+                float lowerRowTop = upperRowTop + 70f;
+                spans.Add((Math.Max(0f, systemTop - 24f), lowerRowTop + 62f));
+                systemTop += 188f + extraSystemPadding;
+            }
+
+            return spans;
+        }
+
+        private void DrawGuitarPreview(CanvasDrawingSession ds, float canvasWidth, bool printMode)
+        {
+            Color ink = printMode ? Colors.Black : GetInkColor();
+            Color subInk = printMode
+                ? Color.FromArgb(255, 72, 72, 72)
+                : Color.FromArgb((byte)(ink.A == 255 ? 190 : ink.A), ink.R, ink.G, ink.B);
+            Color stringLine = printMode
+                ? Color.FromArgb(255, 70, 70, 70)
+                : (ActualTheme == ElementTheme.Dark ? Color.FromArgb(255, 190, 190, 190) : Color.FromArgb(255, 70, 70, 70));
+            Color fretFill = printMode
+                ? Color.FromArgb(255, 250, 250, 250)
+                : (ActualTheme == ElementTheme.Dark ? Color.FromArgb(255, 28, 28, 28) : Color.FromArgb(255, 250, 250, 250));
+
+            if (_guitarPreview == null || _guitarPreview.Systems.Count == 0)
+            {
+                float emptyCanvasWidth = Math.Max(200f, canvasWidth);
+                float emptyCanvasHeight = 160f;
+                ds.DrawText(Loc("当前工程没有可转换的吉他谱音符。", "No guitar tab notes in current project."), 0f, 0f, emptyCanvasWidth, emptyCanvasHeight, subInk, CreateCenteredStatusFormat());
+                return;
+            }
+
             float left = 30f;
             float stringsLeft = 86f;
             float systemTop = 214f;
@@ -619,8 +956,11 @@ namespace MusicBox
                         ds.DrawLine(measureX, y, measureX + measure.Width, y, stringLine, 1f);
                     }
 
-                    ds.DrawLine(measureX, stringsTop, measureX, stringsBottom, stringLine, 1.2f);
-                    ds.DrawLine(measureX + measure.Width, stringsTop, measureX + measure.Width, stringsBottom, stringLine, 1.2f);
+                    if (measureIndex == 0)
+                    {
+                        DrawTabBarline(ds, measure.LeftBarText, measureX, stringsTop, stringsBottom, stringLine);
+                    }
+                    DrawTabBarline(ds, measure.RightBarText, measureX + measure.Width, stringsTop, stringsBottom, stringLine);
 
                     foreach (TabPlacement placement in measure.Placements)
                     {
@@ -651,49 +991,25 @@ namespace MusicBox
             }
         }
 
-        private float EstimateGuitarContentHeight()
+        private void DrawJianpuPreview(CanvasDrawingSession ds, float canvasWidth, bool printMode)
         {
-            if (_guitarPreview == null)
-            {
-                return 720f;
-            }
-
-            return Math.Max(720f, 214f + _guitarPreview.Systems.Count * 214f + 40f);
-        }
-        private void JianpuCanvas_Draw(CanvasControl sender, CanvasDrawEventArgs args)
-        {
-            Color ink = GetInkColor();
-            Color subInk = Color.FromArgb((byte)(ink.A == 255 ? 190 : ink.A), ink.R, ink.G, ink.B);
-            Color barInk = ActualTheme == ElementTheme.Dark
-                ? Color.FromArgb(255, 255, 255, 255)
-                : Color.FromArgb(255, 0, 0, 0);
+            Color ink = printMode ? Colors.Black : GetInkColor();
+            Color subInk = printMode
+                ? Color.FromArgb(255, 72, 72, 72)
+                : Color.FromArgb((byte)(ink.A == 255 ? 190 : ink.A), ink.R, ink.G, ink.B);
+            Color barInk = printMode
+                ? Colors.Black
+                : (ActualTheme == ElementTheme.Dark ? Color.FromArgb(255, 255, 255, 255) : Color.FromArgb(255, 0, 0, 0));
             Color measureInk = barInk;
-            var ds = args.DrawingSession;
 
             if (_nativePreview == null)
             {
-                float emptyCanvasWidth = (float)Math.Max(200d, JianpuCanvas.ActualWidth);
-                float emptyCanvasHeight = (float)Math.Max(160d, JianpuCanvas.ActualHeight);
-                var centeredStatusFormat = new CanvasTextFormat
-                {
-                    FontFamily = _statusFormat.FontFamily,
-                    FontSize = _statusFormat.FontSize,
-                    FontWeight = _statusFormat.FontWeight,
-                    HorizontalAlignment = CanvasHorizontalAlignment.Center,
-                    VerticalAlignment = CanvasVerticalAlignment.Center
-                };
-                ds.DrawText(
-                    Loc("\u5f53\u524d\u5de5\u7a0b\u6ca1\u6709\u97f3\u7b26\u3002", "No notes in current project."),
-                    0f,
-                    0f,
-                    emptyCanvasWidth,
-                    emptyCanvasHeight,
-                    subInk,
-                    centeredStatusFormat);
+                float emptyCanvasWidth = Math.Max(200f, canvasWidth);
+                float emptyCanvasHeight = 160f;
+                ds.DrawText(Loc("当前工程没有音符。", "No notes in current project."), 0f, 0f, emptyCanvasWidth, emptyCanvasHeight, subInk, CreateCenteredStatusFormat());
                 return;
             }
 
-            float canvasWidth = (float)Math.Max(200d, JianpuCanvas.ActualWidth);
             float left = 34f;
             float braceX = left + 14f;
             float rowStartX = left + 50f;
@@ -703,43 +1019,294 @@ namespace MusicBox
             ds.DrawText(meta, rowStartX, 154f, subInk, _metaFormat);
 
             float systemTop = 226f;
-            foreach (var system in _nativePreview.Systems)
+            foreach (JianpuConverter.NativeSystem system in _nativePreview.Systems)
             {
+                int systemStartMeasureIndex = Math.Max(0, system.StartMeasureNumber - 1);
                 float upperExtraRise = EstimateUpperChordRise(system);
                 float extraSystemPadding = Math.Max(0f, upperExtraRise - 10f);
                 float upperRowTop = systemTop + 26f + extraSystemPadding;
                 float lowerRowTop = upperRowTop + 70f;
+                float braceSize = Math.Max(84f, (lowerRowTop - upperRowTop) * 2.12f);
+                var braceFormat = new CanvasTextFormat
+                {
+                    FontFamily = _braceFormat.FontFamily,
+                    FontSize = braceSize,
+                    FontWeight = _braceFormat.FontWeight,
+                    HorizontalAlignment = CanvasHorizontalAlignment.Center,
+                    VerticalAlignment = CanvasVerticalAlignment.Top
+                };
 
                 ds.DrawText(system.StartMeasureNumber.ToString(), left + 18f, systemTop - 13f, measureInk, _measureNumberFormat);
-                ds.DrawText("{", braceX + 4f, systemTop + 18f, measureInk, _braceFormat);
+                ds.DrawText("{", braceX + 4f, upperRowTop - braceSize * 0.19f, measureInk, braceFormat);
 
                 DrawStaffRow(ds, system, upperRowTop, isUpper: true, ink, subInk, barInk, rowStartX, canvasWidth);
                 DrawStaffRow(ds, system, lowerRowTop, isUpper: false, ink, subInk, barInk, rowStartX, canvasWidth);
+                DrawJianpuExpressionMarks(ds, system, systemStartMeasureIndex, upperRowTop, lowerRowTop, rowStartX, canvasWidth, barInk, subInk);
 
                 systemTop += 188f + extraSystemPadding;
             }
+
             if (!_previewLoaded)
             {
-                ds.DrawText(Loc("姝ｅ湪鍑嗗棰勮...", "Preparing preview..."), left, systemTop + 8f, subInk, _statusFormat);
+                ds.DrawText(Loc("正在准备预览...", "Preparing preview..."), left, systemTop + 8f, subInk, _statusFormat);
             }
         }
 
-        private float EstimateNativeContentHeight()
+        private CanvasTextFormat CreateCenteredStatusFormat()
         {
-            if (_nativePreview == null)
+            return new CanvasTextFormat
             {
-                return 720f;
+                FontFamily = _statusFormat.FontFamily,
+                FontSize = _statusFormat.FontSize,
+                FontWeight = _statusFormat.FontWeight,
+                HorizontalAlignment = CanvasHorizontalAlignment.Center,
+                VerticalAlignment = CanvasVerticalAlignment.Center
+            };
+        }
+
+        private void DrawTabBarline(CanvasDrawingSession ds, string text, float x, float top, float bottom, Color color)
+        {
+            string safe = string.IsNullOrWhiteSpace(text) ? "|" : text;
+            float thin = 1.15f;
+            float thick = 2.2f;
+
+            void DrawVertical(float cx, float thickness)
+            {
+                ds.DrawLine(cx, top, cx, bottom, color, thickness);
             }
 
-            float systemTop = 226f;
-            foreach (var system in _nativePreview.Systems)
+            void DrawRepeatDots(float cx)
             {
-                float upperExtraRise = EstimateUpperChordRise(system);
-                float extraSystemPadding = Math.Max(0f, upperExtraRise - 10f);
-                systemTop += 188f + extraSystemPadding;
+                ds.FillCircle(cx, top + 34f, 1.45f, color);
+                ds.FillCircle(cx, top + 58f, 1.45f, color);
             }
 
-            return Math.Max(720f, systemTop + 40f);
+            switch (safe)
+            {
+                case "||":
+                    DrawVertical(x - 2.1f, thin);
+                    DrawVertical(x + 1.3f, thick);
+                    break;
+                case ":|":
+                    DrawRepeatDots(x - 4.4f);
+                    DrawVertical(x + 1.2f, thick);
+                    break;
+                case "|:":
+                    DrawVertical(x - 1.2f, thick);
+                    DrawRepeatDots(x + 4.4f);
+                    break;
+                default:
+                    DrawVertical(x, thin);
+                    break;
+            }
+        }
+
+        private void DrawJianpuExpressionMarks(
+            CanvasDrawingSession ds,
+            JianpuConverter.NativeSystem system,
+            int systemStartMeasureIndex,
+            float upperRowTop,
+            float lowerRowTop,
+            float rowStartX,
+            float canvasWidth,
+            Color ink,
+            Color subInk)
+        {
+            if (_sourceProject?.ExpressionMarks == null || system.Measures.Count == 0)
+            {
+                return;
+            }
+
+            int measureTicks = Math.Max(1, system.Measures[0].MeasureTicks);
+            int beatTicks = Math.Max(1, system.Measures[0].BeatTicks);
+            int systemStartTick = systemStartMeasureIndex * measureTicks;
+            int systemEndTick = systemStartTick + system.Measures.Count * measureTicks;
+
+            foreach (ExpressionMark mark in _sourceProject.ExpressionMarks.OrderBy(mark => mark.StartTick))
+            {
+                string code = ScorePreviewLayoutHelper.NormalizeExpressionCode(mark.Code);
+                if (code is "score_repeat_barline" or "score_final_barline")
+                {
+                    continue;
+                }
+
+                int spanTicks = Math.Max(1, (int)Math.Round(Math.Max(0.2f, mark.SpanBeats) * beatTicks));
+                if (mark.StartTick >= systemEndTick || mark.StartTick + spanTicks <= systemStartTick)
+                {
+                    continue;
+                }
+
+                if (code is "score_ending_1" or "score_ending_2")
+                {
+                    if (!TryResolveJianpuTickX(system, systemStartMeasureIndex, rowStartX, mark.StartTick, out float startX))
+                    {
+                        continue;
+                    }
+
+                    int endTick = mark.StartTick + spanTicks;
+                    float endX = TryResolveJianpuTickX(system, systemStartMeasureIndex, rowStartX, endTick, out float resolvedEndX)
+                        ? resolvedEndX
+                        : GetJianpuSystemEndX(system, rowStartX);
+                    endX = Math.Max(startX + 24f, endX);
+
+                    float y = upperRowTop - 18f;
+                    float hookY = y + 18f;
+                    ds.DrawLine(startX, y, endX, y, ink, 1.05f);
+                    ds.DrawLine(startX, y, startX, hookY, ink, 1.05f);
+                    if (endTick <= systemEndTick)
+                    {
+                        ds.DrawLine(endX, y, endX, hookY, ink, 1.05f);
+                    }
+
+                    string label = code.EndsWith("_2", StringComparison.Ordinal) ? "2" : "1";
+                    ds.DrawText(label, startX + 4f, y - 1f, ink, new CanvasTextFormat
+                    {
+                        FontFamily = "Times New Roman",
+                        FontSize = 18f,
+                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                    });
+                    continue;
+                }
+
+                if (!TryResolveJianpuTickX(system, systemStartMeasureIndex, rowStartX, mark.StartTick, out float x))
+                {
+                    continue;
+                }
+
+                float drawY = mark.StaffStepOffset > 12f
+                    ? lowerRowTop + 36f
+                    : upperRowTop + 38f;
+
+                if (code == "cresc")
+                {
+                    float width = Math.Max(24f, Math.Min(92f, spanTicks / (float)beatTicks * 26f));
+                    ds.DrawLine(x, drawY + 10f, x + width, drawY + 4f, subInk, 1.05f);
+                    ds.DrawLine(x, drawY + 10f, x + width, drawY + 16f, subInk, 1.05f);
+                    continue;
+                }
+
+                string? textLabel = code switch
+                {
+                    "rit" => "rit.",
+                    "cresc_text" => "cresc.",
+                    "dim_text" => "dim.",
+                    "pp" => "pp",
+                    "p" => "p",
+                    "mp" => "mp",
+                    "mf" => "mf",
+                    "f" => "f",
+                    "ff" => "ff",
+                    "segno" or "score_segno" => "segno",
+                    _ => null
+                };
+
+                if (string.IsNullOrWhiteSpace(textLabel))
+                {
+                    continue;
+                }
+
+                ds.DrawText(textLabel, x - 2f, Math.Min(drawY, lowerRowTop + 52f), subInk, new CanvasTextFormat
+                {
+                    FontFamily = "Times New Roman",
+                    FontSize = code is "rit" or "cresc_text" or "dim_text" ? 15.5f : 17f,
+                    FontStyle = code is "rit" or "cresc_text" or "dim_text"
+                        ? Windows.UI.Text.FontStyle.Italic
+                        : Windows.UI.Text.FontStyle.Normal,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                });
+            }
+        }
+
+        private bool TryResolveJianpuTickX(
+            JianpuConverter.NativeSystem system,
+            int systemStartMeasureIndex,
+            float rowStartX,
+            int tick,
+            out float x)
+        {
+            x = 0f;
+            if (system.Measures.Count == 0)
+            {
+                return false;
+            }
+
+            int measureTicks = Math.Max(1, system.Measures[0].MeasureTicks);
+            int absoluteMeasureIndex = Math.Max(0, tick / measureTicks);
+            int localMeasureIndex = absoluteMeasureIndex - systemStartMeasureIndex;
+            if (localMeasureIndex < 0)
+            {
+                return false;
+            }
+
+            float cursor = rowStartX;
+            if (!string.IsNullOrWhiteSpace(system.LeftKeyText))
+            {
+                cursor += 56f;
+            }
+
+            cursor += 22f;
+            for (int i = 0; i < system.Measures.Count; i++)
+            {
+                JianpuConverter.NativeMeasure measure = system.Measures[i];
+                if (localMeasureIndex == i)
+                {
+                    bool hasLeftBoundaryKey = i == 0
+                        ? !string.IsNullOrWhiteSpace(system.LeftKeyText)
+                        : !string.IsNullOrWhiteSpace(system.Measures[i - 1].RightKeyText);
+                    bool hasRightBoundaryKey = !string.IsNullOrWhiteSpace(measure.RightKeyText);
+                    float leftInset = hasLeftBoundaryKey ? 8f : 5f;
+                    float rightInset = hasRightBoundaryKey ? 11f : 7f;
+                    float innerX = cursor + leftInset;
+                    float available = Math.Max(24f, measure.Width - leftInset - rightInset);
+                    int safeBeatTicks = Math.Max(1, measure.BeatTicks);
+                    int beatCount = Math.Max(1, (int)Math.Ceiling(measure.MeasureTicks / (double)safeBeatTicks));
+                    float beatGap = 7.2f;
+                    float timelineWidth = Math.Max(18f, available - Math.Max(0, beatCount - 1) * beatGap);
+                    int localTick = Math.Clamp(tick - absoluteMeasureIndex * measureTicks, 0, measure.MeasureTicks);
+                    int beatIndex = Math.Min(Math.Max(0, beatCount - 1), localTick / safeBeatTicks);
+                    x = innerX + timelineWidth * (localTick / (float)Math.Max(1, measure.MeasureTicks)) + beatIndex * beatGap;
+                    return true;
+                }
+
+                cursor += measure.Width;
+                if (!string.IsNullOrWhiteSpace(measure.RightKeyText))
+                {
+                    cursor += 56f;
+                }
+
+                cursor += 22f;
+            }
+
+            if (localMeasureIndex == system.Measures.Count)
+            {
+                x = GetJianpuSystemEndX(system, rowStartX);
+                return true;
+            }
+
+            return false;
+        }
+
+        private float GetJianpuSystemEndX(JianpuConverter.NativeSystem system, float rowStartX)
+        {
+            float cursor = rowStartX;
+            if (!string.IsNullOrWhiteSpace(system.LeftKeyText))
+            {
+                cursor += 56f;
+            }
+
+            cursor += 22f;
+            foreach (JianpuConverter.NativeMeasure measure in system.Measures)
+            {
+                cursor += measure.Width;
+                if (!string.IsNullOrWhiteSpace(measure.RightKeyText))
+                {
+                    cursor += 56f;
+                }
+
+                cursor += 11f;
+            }
+
+            return cursor;
         }
 
         private static float EstimateUpperChordRise(JianpuConverter.NativeSystem system)
@@ -1516,15 +2083,8 @@ namespace MusicBox
 
             try
             {
-                await RefreshPreviewAsync();
-
-                if (string.IsNullOrWhiteSpace(_latestPreviewHtml))
-                {
-                    SetStatus(Loc("\u9884\u89c8\u5c1a\u672a\u5c31\u7eea\uff0c\u65e0\u6cd5\u5bfc\u51fa PDF\u3002", "Preview not ready. Cannot export PDF."));
-                    return;
-                }
-
-                string suggested = GetSuggestedExportName("pdf", "\u7b80\u8c31");
+                IReadOnlyList<RenderedPage> pages = await BuildRenderedPagesAsync();
+                string suggested = GetSuggestedExportName("pdf", string.Equals(_activeFormat, "guitar", StringComparison.OrdinalIgnoreCase) ? "\u5409\u4ed6\u8c31" : "\u7b80\u8c31");
                 string? path = await PickSavePathAsync(".pdf", "PDF \u6587\u6863", suggested);
                 if (string.IsNullOrWhiteSpace(path))
                 {
@@ -1532,38 +2092,8 @@ namespace MusicBox
                     return;
                 }
 
-                await EnsurePdfExportWebViewReadyAsync();
-                CoreWebView2? core = PdfExportWebView.CoreWebView2;
-                if (core == null)
-                {
-                    SetStatus(Loc("PDF \u5bfc\u51fa\u5185\u6838\u672a\u5c31\u7eea\u3002", "PDF export core is not ready."));
-                    return;
-                }
-
-                var tcs = new TaskCompletionSource<bool>();
-                void Handler(CoreWebView2 _, CoreWebView2NavigationCompletedEventArgs __)
-                {
-                    core.NavigationCompleted -= Handler;
-                    tcs.TrySetResult(true);
-                }
-
-                core.NavigationCompleted += Handler;
-                PdfExportWebView.NavigateToString(_latestPreviewHtml);
-                _ = Task.Delay(5000).ContinueWith(_ => tcs.TrySetResult(false));
-                await tcs.Task;
-
-                CoreWebView2PrintSettings printSettings = core.Environment.CreatePrintSettings();
-                printSettings.ShouldPrintBackgrounds = true;
-                printSettings.ShouldPrintHeaderAndFooter = false;
-
-                bool ok = await core.PrintToPdfAsync(path, printSettings);
-                if (!ok)
-                {
-                    SetStatus(Loc("\u5bfc\u51fa\u5931\u8d25\uff1aWebView2 \u672a\u751f\u6210 PDF\u3002", "Export failed: WebView2 did not generate PDF."));
-                    return;
-                }
-
-                _viewModel.SetStatus($"{Loc("\u5df2\u5bfc\u51fa\u7b80\u8c31 PDF", "Jianpu PDF exported")}: {Path.GetFileName(path)}");
+                _pdfExporter.ExportJpegPages(path, pages.Select(page => new RasterPdfPage(page.JpegBytes, page.PixelWidth, page.PixelHeight)).ToList());
+                _viewModel.SetStatus($"{Loc("\u5df2\u5bfc\u51fa PDF", "PDF exported")}: {Path.GetFileName(path)}");
                 SetStatus($"{Loc("\u5df2\u5bfc\u51fa", "Exported")}: {path}");
             }
             catch (Exception ex)
@@ -1572,12 +2102,28 @@ namespace MusicBox
             }
         }
 
-        private async Task EnsurePdfExportWebViewReadyAsync()
+        private async Task PrintPreviewAsync()
         {
-            PdfExportWebView.DefaultBackgroundColor = Color.FromArgb(255, 255, 255, 255);
-            if (PdfExportWebView.CoreWebView2 == null)
+            if (_isPreparingPrintPreview)
             {
-                await PdfExportWebView.EnsureCoreWebView2Async();
+                return;
+            }
+
+            try
+            {
+                _isPreparingPrintPreview = true;
+                EnsurePrintManager();
+                await PreparePrintPagesAsync();
+                IntPtr hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+                await PrintManagerInterop.ShowPrintUIForWindowAsync(hwnd);
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"{Loc("\u6253\u5370\u5931\u8d25", "Print failed")}: {ex.Message}");
+            }
+            finally
+            {
+                _isPreparingPrintPreview = false;
             }
         }
 
@@ -1661,7 +2207,6 @@ namespace MusicBox
             }
 
             _sourceProject = s_cache.SourceProject != null ? CloneProject(s_cache.SourceProject) : null;
-            _latestPreviewHtml = s_cache.LatestPreviewHtml ?? string.Empty;
             _latestGuitarTabText = s_cache.LatestGuitarTabText ?? string.Empty;
             _activeFormat = string.Equals(s_cache.ActiveFormat, "guitar", StringComparison.OrdinalIgnoreCase) ? "guitar" : "jianpu";
             _previewLoaded = false;
@@ -1675,7 +2220,6 @@ namespace MusicBox
             s_cache = new ConvertPageStateCache
             {
                 SourceProject = _sourceProject != null ? CloneProject(_sourceProject) : null,
-                LatestPreviewHtml = _latestPreviewHtml,
                 LatestGuitarTabText = _latestGuitarTabText,
                 ActiveFormat = _activeFormat,
                 PreviewLoaded = _previewLoaded
@@ -1707,7 +2251,6 @@ namespace MusicBox
         private sealed class ConvertPageStateCache
         {
             public ScoreProject? SourceProject { get; set; }
-            public string? LatestPreviewHtml { get; set; }
             public string? LatestGuitarTabText { get; set; }
             public string? ActiveFormat { get; set; }
             public bool PreviewLoaded { get; set; }

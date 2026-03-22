@@ -58,6 +58,7 @@
                             <MenuFlyoutItem Text="导入 MusicXML" Tag="import_musicxml" Click="EditorTitleFileMenuItem_Click"/>
                             <MenuFlyoutItem Text="导出 MusicXML" Tag="export_musicxml" Click="EditorTitleFileMenuItem_Click"/>
                             <MenuFlyoutSeparator/>
+                            <MenuFlyoutItem Text="导出 PDF" Tag="export_pdf" Click="EditorTitleFileMenuItem_Click"/>
                             <MenuFlyoutItem Text="打印..." Tag="print" Click="EditorTitleFileMenuItem_Click"/>
                         </MenuBarItem>
                         <MenuBarItem x:Name="EditorTimeMenu" Title="拍号">
@@ -145,6 +146,7 @@
                             <RadioMenuFlyoutItem x:Name="ConvertStaffToJianpuMenuItem" Text="五线谱 → 简谱" Tag="staff_to_jianpu" GroupName="ConvertFormat" IsChecked="True" Click="ConvertTitleFormatMenuItem_Click"/>
                         </MenuBarItem>
                         <MenuBarItem x:Name="ConvertExportMenu" Title="导出">
+                            <MenuFlyoutItem x:Name="ConvertPrintMenuItem" Text="打印..." Tag="print" Click="ConvertTitleExportMenuItem_Click"/>
                             <MenuFlyoutItem x:Name="ConvertExportPdfMenuItem" Text="PDF" Tag="export_pdf" Click="ConvertTitleExportMenuItem_Click"/>
                             <MenuFlyoutItem x:Name="ConvertExportMusicXmlMenuItem" Text="MusicXML" Tag="export_musicxml" Click="ConvertTitleExportMenuItem_Click"/>
                         </MenuBarItem>

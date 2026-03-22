@@ -467,7 +467,8 @@ namespace MusicBox
             if (ConvertImportFromFileMenuItem != null) ConvertImportFromFileMenuItem.Text = isEnglish ? "Import From File" : "\u4ece\u6587\u4ef6\u5bfc\u5165";
             if (ConvertStaffToJianpuMenuItem != null) ConvertStaffToJianpuMenuItem.Text = isEnglish ? "Staff -> Jianpu" : "\u4e94\u7ebf\u8c31 \u2192 \u7b80\u8c31";
             if (ConvertStaffToGuitarTabMenuItem != null) ConvertStaffToGuitarTabMenuItem.Text = isEnglish ? "Staff -> Guitar Tab" : "\u4e94\u7ebf\u8c31 \u2192 \u5409\u4ed6\u8c31";
-            if (ConvertExportPdfMenuItem != null) ConvertExportPdfMenuItem.Text = "PDF";
+            if (ConvertPrintMenuItem != null) ConvertPrintMenuItem.Text = isEnglish ? "Print..." : "\u6253\u5370...";
+            if (ConvertExportPdfMenuItem != null) ConvertExportPdfMenuItem.Text = isEnglish ? "Export PDF" : "\u5bfc\u51fa PDF";
             if (ConvertExportMusicXmlMenuItem != null) ConvertExportMusicXmlMenuItem.Text = "MusicXML";
             if (ConvertExportGuitarTabMenuItem != null) ConvertExportGuitarTabMenuItem.Text = isEnglish ? "Guitar Tab TXT" : "\u5409\u4ed6\u8c31 TXT";
 
@@ -508,6 +509,7 @@ namespace MusicBox
                 ["saveas"] = isEnglish ? "Save As" : "\u53e6\u5b58\u4e3a",
                 ["import_musicxml"] = isEnglish ? "Import MusicXML" : "\u5bfc\u5165 MusicXML",
                 ["export_musicxml"] = isEnglish ? "Export MusicXML" : "\u5bfc\u51fa MusicXML",
+                ["export_pdf"] = isEnglish ? "Export PDF" : "\u5bfc\u51fa PDF",
                 ["print"] = isEnglish ? "Print..." : "\u6253\u5370..."
             };
 

@@ -1083,7 +1083,7 @@ namespace MusicBox.Services
             SpreadLowRegisterIntervals(resolved);
 
             int[] voicing = resolved
-                .Select(midi => ClampToRange(midi, 48, 92))
+                .Select(midi => ClampToRange(midi, 50, 86))
                 .Distinct()
                 .OrderBy(midi => midi)
                 .ToArray();
@@ -1283,6 +1283,12 @@ namespace MusicBox.Services
         private static NoteEvent CreateNote(int midi, int startTick, int durationTicks, int ppq, int voice, bool preferTrebleStaff)
         {
             DurationSpec notation = ResolveNotationDuration(durationTicks, ppq);
+            bool resolvedStaff = voice switch
+            {
+                1 => true,
+                2 => false,
+                _ => preferTrebleStaff && midi >= 60
+            };
             return new NoteEvent
             {
                 Midi = midi,
@@ -1291,7 +1297,7 @@ namespace MusicBox.Services
                 BaseDurationTicks = notation.BaseTicks,
                 AugmentationDots = notation.Dots,
                 Voice = voice,
-                PreferTrebleStaff = preferTrebleStaff
+                PreferTrebleStaff = resolvedStaff
             };
         }
 

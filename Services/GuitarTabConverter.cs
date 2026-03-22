@@ -29,6 +29,9 @@ namespace MusicBox.Services
                 return string.Empty;
             }
 
+            Dictionary<int, ScorePreviewLayoutHelper.PreviewBoundaryDecoration> barlineMap =
+                ScorePreviewLayoutHelper.BuildBarlineMap(project.ExpressionMarks, source.TicksPerMeasure, source.MeasureCount);
+
             var sb = new StringBuilder();
             sb.AppendLine($"Title: {SanitizeTitle(project.Title)}");
             sb.AppendLine($"Tempo: {project.Bpm} BPM    Time: {source.TimeNumerator}/{source.TimeDenominator}    Tuning: E A D G B e");
@@ -65,9 +68,10 @@ namespace MusicBox.Services
                     }
 
                     AppendGap(builders, measureEndTick - currentTick, source.Ppq, source.TimeDenominator);
+                    string rightBar = ResolveBarlineText(measureIndex + 1, barlineMap);
                     foreach (StringBuilder builder in builders)
                     {
-                        builder.Append('|');
+                        builder.Append(rightBar == "||" ? "||" : "|");
                     }
                 }
 
@@ -93,6 +97,9 @@ namespace MusicBox.Services
             {
                 return null;
             }
+
+            Dictionary<int, ScorePreviewLayoutHelper.PreviewBoundaryDecoration> barlineMap =
+                ScorePreviewLayoutHelper.BuildBarlineMap(project.ExpressionMarks, source.TicksPerMeasure, source.MeasureCount);
 
             const float leftMargin = 92f;
             const float rightMargin = 44f;
@@ -121,7 +128,13 @@ namespace MusicBox.Services
                         .Where(placement => placement.Positions.Count > 0)
                         .ToList();
 
-                    measures.Add(new TabMeasure(measureIndex + 1, source.TicksPerMeasure, measureWidth, placements));
+                    measures.Add(new TabMeasure(
+                        measureIndex + 1,
+                        source.TicksPerMeasure,
+                        measureWidth,
+                        ResolveBarlineText(measureIndex, barlineMap),
+                        ResolveBarlineText(measureIndex + 1, barlineMap),
+                        placements));
                 }
 
                 systems.Add(new TabSystem(blockStart + 1, measures));
@@ -156,7 +169,11 @@ namespace MusicBox.Services
             int totalTicks = notes.Count == 0
                 ? ticksPerMeasure
                 : Math.Max(ticksPerMeasure, notes.Max(note => note.StartTick + Math.Max(1, note.DurationTicks)));
-            int measureCount = Math.Max(1, (int)Math.Ceiling(totalTicks / (double)ticksPerMeasure));
+            int measureCount = Math.Max(
+                1,
+                Math.Max(
+                    (int)Math.Ceiling(totalTicks / (double)ticksPerMeasure),
+                    ScorePreviewLayoutHelper.GetContentMeasureCount(project)));
             List<OnsetGroup> onsets = notes
                 .GroupBy(note => note.StartTick)
                 .OrderBy(group => group.Key)
@@ -266,6 +283,34 @@ namespace MusicBox.Services
             return string.IsNullOrWhiteSpace(title) ? "Untitled" : title.Trim();
         }
 
+        private static string ResolveBarlineText(
+            int boundaryIndex,
+            IReadOnlyDictionary<int, ScorePreviewLayoutHelper.PreviewBoundaryDecoration> barlineByBoundary)
+        {
+            barlineByBoundary.TryGetValue(boundaryIndex, out ScorePreviewLayoutHelper.PreviewBoundaryDecoration mark);
+            if (mark.Final)
+            {
+                return "||";
+            }
+
+            if (mark.StartRepeat && mark.EndRepeat)
+            {
+                return ":|:";
+            }
+
+            if (mark.StartRepeat)
+            {
+                return "|:";
+            }
+
+            if (mark.EndRepeat)
+            {
+                return ":|";
+            }
+
+            return "|";
+        }
+
         private sealed record TabSource(
             int Ppq,
             int TimeNumerator,
@@ -289,7 +334,13 @@ namespace MusicBox.Services
 
     public sealed record TabSystem(int StartMeasureNumber, List<TabMeasure> Measures);
 
-    public sealed record TabMeasure(int MeasureNumber, int MeasureTicks, float Width, List<TabPlacement> Placements);
+public sealed record TabMeasure(
+    int MeasureNumber,
+    int MeasureTicks,
+    float Width,
+    string LeftBarText,
+    string RightBarText,
+    List<TabPlacement> Placements);
 
     public sealed record TabPlacement(int TickInMeasure, List<TabPosition> Positions);
 
