@@ -1,6 +1,7 @@
 ﻿using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -111,15 +112,6 @@ namespace MusicBox
             FontFamily = "Times New Roman",
             FontSize = 28f,
             FontWeight = Microsoft.UI.Text.FontWeights.Normal,
-            HorizontalAlignment = CanvasHorizontalAlignment.Center,
-            VerticalAlignment = CanvasVerticalAlignment.Top
-        };
-
-        private readonly CanvasTextFormat _braceFormat = new()
-        {
-            FontFamily = "Times New Roman",
-            FontSize = 80f,
-            FontWeight = Microsoft.UI.Text.FontWeights.Light,
             HorizontalAlignment = CanvasHorizontalAlignment.Center,
             VerticalAlignment = CanvasVerticalAlignment.Top
         };
@@ -1039,7 +1031,7 @@ namespace MusicBox
 
             float left = 34f;
             float braceX = left + 14f;
-            float rowStartX = left + 50f;
+            float rowStartX = left + 44f;
 
             ds.DrawText(preview.Title, 0f, 62f, canvasWidth, 60f, ink, _titleFormat);
             string meta = $"1={preview.KeyText}   {preview.MeterText}   {preview.Bpm} BPM";
@@ -1053,18 +1045,11 @@ namespace MusicBox
                 float extraSystemPadding = Math.Max(0f, upperExtraRise - 10f);
                 float upperRowTop = systemTop + 26f + extraSystemPadding;
                 float lowerRowTop = upperRowTop + 70f;
-                float braceSize = Math.Max(68f, (lowerRowTop - upperRowTop) * 1.56f);
-                var braceFormat = new CanvasTextFormat
-                {
-                    FontFamily = _braceFormat.FontFamily,
-                    FontSize = braceSize,
-                    FontWeight = _braceFormat.FontWeight,
-                    HorizontalAlignment = CanvasHorizontalAlignment.Center,
-                    VerticalAlignment = CanvasVerticalAlignment.Top
-                };
+                float braceTop = upperRowTop - 3f;
+                float braceBottom = lowerRowTop + 31f;
 
-                ds.DrawText(system.StartMeasureNumber.ToString(), left + 18f, systemTop - 13f, measureInk, _measureNumberFormat);
-                ds.DrawText("{", braceX + 3f, upperRowTop - braceSize * 0.135f, measureInk, braceFormat);
+                ds.DrawText(system.StartMeasureNumber.ToString(), braceX - 7f, upperRowTop - 11f, measureInk, _measureNumberFormat);
+                DrawJianpuSystemBrace(ds, braceX, braceTop, braceBottom, measureInk);
 
                 DrawStaffRow(ds, system, upperRowTop, isUpper: true, ink, subInk, barInk, rowStartX, canvasWidth);
                 DrawStaffRow(ds, system, lowerRowTop, isUpper: false, ink, subInk, barInk, rowStartX, canvasWidth);
@@ -1089,6 +1074,39 @@ namespace MusicBox
                 HorizontalAlignment = CanvasHorizontalAlignment.Center,
                 VerticalAlignment = CanvasVerticalAlignment.Center
             };
+        }
+
+        private static void DrawJianpuSystemBrace(CanvasDrawingSession ds, float x, float top, float bottom, Color color)
+        {
+            float height = Math.Max(40f, bottom - top);
+            float width = Math.Clamp(height * 0.11f, 8f, 12.5f);
+            float mid = (top + bottom) * 0.5f;
+            float lobe = height * 0.19f;
+            float neck = Math.Max(6f, height * 0.07f);
+            float thickness = Math.Clamp(width * 0.13f, 1.05f, 1.55f);
+
+            using var pathBuilder = new CanvasPathBuilder(ds.Device);
+            pathBuilder.BeginFigure(x + width, top);
+            pathBuilder.AddCubicBezier(
+                new System.Numerics.Vector2(x + width * 0.12f, top + height * 0.02f),
+                new System.Numerics.Vector2(x + width * 0.08f, top + lobe * 0.72f),
+                new System.Numerics.Vector2(x + width * 0.56f, mid - neck));
+            pathBuilder.AddCubicBezier(
+                new System.Numerics.Vector2(x + width * 0.82f, mid - neck * 0.58f),
+                new System.Numerics.Vector2(x + width * 0.80f, mid - neck * 0.18f),
+                new System.Numerics.Vector2(x + width * 0.24f, mid));
+            pathBuilder.AddCubicBezier(
+                new System.Numerics.Vector2(x + width * 0.80f, mid + neck * 0.18f),
+                new System.Numerics.Vector2(x + width * 0.82f, mid + neck * 0.58f),
+                new System.Numerics.Vector2(x + width * 0.56f, bottom - lobe));
+            pathBuilder.AddCubicBezier(
+                new System.Numerics.Vector2(x + width * 0.08f, bottom - lobe * 0.72f),
+                new System.Numerics.Vector2(x + width * 0.12f, bottom - height * 0.02f),
+                new System.Numerics.Vector2(x + width, bottom));
+            pathBuilder.EndFigure(CanvasFigureLoop.Open);
+
+            using var geometry = CanvasGeometry.CreatePath(pathBuilder);
+            ds.DrawGeometry(geometry, color, thickness);
         }
 
         private void DrawTabBarline(CanvasDrawingSession ds, string text, float x, float top, float bottom, Color color)

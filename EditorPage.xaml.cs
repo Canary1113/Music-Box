@@ -13167,7 +13167,7 @@ namespace MusicBox
                 const float drawSidePadding = 18f;
                 float printLeftGuardLogical = 16.0f * PrintSideMarginScale;
                 float printRightGuardLogical = 22.0f * PrintSideMarginScale;
-                float printTopGuardLogical = 12.4f * PrintSideMarginScale;
+                float printTopGuardLogical = 18.0f * PrintSideMarginScale;
                 float printBottomGuardLogical = 8.0f * PrintSideMarginScale;
                 float leftReserved = Math.Max(0f, _musicStartX - _staffLeft);
                 int maxMeasuresInAnySystem = Math.Max(
@@ -13274,23 +13274,17 @@ namespace MusicBox
                             throw new InvalidOperationException("Print scale too large for a full system.");
                         }
 
-                        // Use page 1 as the print scale/height baseline for all pages.
-                        // This keeps preview and final output visually consistent across pages.
                         float pageContentMaxHeightLogical = Math.Min(maxPageHeightLogical, logicalHeight);
-                        float fixedPageLogicalHeight = -1f;
                         int systemIndex = 0;
 
                         while (systemIndex < _systemCount)
                         {
-                            float activePageHeightLogical = fixedPageLogicalHeight > 0f
-                                ? fixedPageLogicalHeight
-                                : pageContentMaxHeightLogical;
                             float pageStartYLogical = systemIndex == 0
-                                ? Math.Max(0f, (float)_titleHitRect.Y - _staffGap * 2.2f)
-                                : Math.Max(0f, GetSystemTrebleTop(systemIndex) - _staffGap * 12.4f);
+                                ? Math.Max(0f, (float)_titleHitRect.Y - _staffGap * 4.8f)
+                                : Math.Max(0f, GetSystemTrebleTop(systemIndex) - _staffGap * 15.4f);
                             int lastSystem = systemIndex;
                             float pageEndYLogical = GetSystemBassBottom(lastSystem) + _staffGap * 4.2f;
-                            if (pageEndYLogical - pageStartYLogical > activePageHeightLogical)
+                            if (pageEndYLogical - pageStartYLogical > pageContentMaxHeightLogical)
                             {
                                 throw new InvalidOperationException("Print scale too large to fit a full system on one page.");
                             }
@@ -13305,7 +13299,7 @@ namespace MusicBox
                                 }
 
                                 float candidateEnd = GetSystemBassBottom(lastSystem + 1) + _staffGap * 4.2f;
-                                if (candidateEnd - pageStartYLogical > activePageHeightLogical)
+                                if (candidateEnd - pageStartYLogical > pageContentMaxHeightLogical)
                                 {
                                     break;
                                 }
@@ -13314,13 +13308,9 @@ namespace MusicBox
                                 pageEndYLogical = candidateEnd;
                             }
 
-                            float actualPageLogicalHeight = Math.Max(1f, pageEndYLogical - pageStartYLogical);
-                            if (fixedPageLogicalHeight <= 0f)
-                            {
-                                fixedPageLogicalHeight = Math.Clamp(actualPageLogicalHeight, _systemStride * 1.1f, pageContentMaxHeightLogical);
-                            }
-
-                            int pageContentHeightPixels = Math.Max(1, (int)Math.Ceiling(fixedPageLogicalHeight * effectiveScale));
+                            float contentPaddingLogical = systemIndex == 0 ? _staffGap * 1.8f : _staffGap * 1.2f;
+                            float actualPageLogicalHeight = Math.Max(1f, pageEndYLogical - pageStartYLogical + contentPaddingLogical);
+                            int pageContentHeightPixels = Math.Max(1, (int)Math.Ceiling(actualPageLogicalHeight * effectiveScale));
                             pageContentHeightPixels = Math.Min(pageContentHeightPixels, maxContentPageHeightPixels);
                             int pageHeightPixels = Math.Max(1, pageContentHeightPixels + topGuardPixels + bottomGuardPixels);
                             using var pageRenderTarget = new CanvasRenderTarget(CanvasDevice.GetSharedDevice(), pagePixelWidth, pageHeightPixels, printDpi);
