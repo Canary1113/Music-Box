@@ -21,11 +21,15 @@ namespace MusicBox
         private static readonly string[] FlatNames = { "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B" };
 
         private readonly SmartComposeService _service = new();
+        private readonly ComposePreferenceService _preferenceService = new();
         private readonly PreviewPlaybackService _playback = new();
         private readonly List<SmartComposeResult> _candidates = new();
+        private readonly double?[] _candidatePreferenceScores = new double?[CandidateCount];
+        private readonly int?[] _candidateSavedRatings = new int?[CandidateCount];
         private readonly bool[] _keptCandidates = new bool[CandidateCount];
         private readonly AppSettingsService _settings = AppSettingsService.Instance;
         private MainViewModel? _viewModel;
+        private SmartComposeRequest? _lastRequest;
         private int _seedBase;
         private int _generationSerial;
 
@@ -135,6 +139,42 @@ namespace MusicBox
             RefreshKeepButtons();
         }
 
+        private void SaveRatingButton_Click(object sender, RoutedEventArgs e)
+        {
+            int index = ResolveCandidateIndex(sender);
+            if (!HasCandidate(index))
+            {
+                return;
+            }
+
+            int score = (int)Math.Round(GetRatingSlider(index).Value);
+            SmartComposeResult result = _candidates[index];
+            SmartComposeRequest request = _lastRequest ?? BuildRequest();
+            _preferenceService.RecordRating(request, result, score);
+            _candidateSavedRatings[index] = score;
+            _candidatePreferenceScores[index] = Math.Max(_candidatePreferenceScores[index] ?? 0d, score);
+            RenderCandidates();
+            string message = TF("compose.status.rating_saved", (char)('A' + index), score, _preferenceService.GetRatingCount());
+            ShowStatusText(message);
+            _viewModel?.SetStatus(message);
+        }
+
+        private void RatingSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        {
+            if (sender is not Slider slider)
+            {
+                return;
+            }
+
+            int index = ResolveCandidateIndex(slider);
+            if (index < 0)
+            {
+                return;
+            }
+
+            GetRatingValueText(index).Text = Math.Round(slider.Value).ToString("0");
+        }
+
         private void GenerateCandidates(bool preserveKept)
         {
             try
@@ -142,27 +182,43 @@ namespace MusicBox
                 _playback.Stop();
                 SmartComposeRequest request = BuildRequest();
                 request.Seed = _seedBase ^ (_generationSerial * 104729);
+                _lastRequest = request;
 
                 IReadOnlyList<SmartComposeResult> generated = _service.GenerateCandidates(request, CandidateCount);
+                IReadOnlyList<ComposeCandidateRanking> ranked = _preferenceService.RankCandidates(request, generated);
                 var nextCandidates = new List<SmartComposeResult>(CandidateCount);
+                var nextPreferenceScores = new double?[CandidateCount];
+                var nextSavedRatings = new int?[CandidateCount];
+                int generatedCursor = 0;
 
                 for (int index = 0; index < CandidateCount; index++)
                 {
                     if (preserveKept && _keptCandidates[index] && HasCandidate(index))
                     {
                         nextCandidates.Add(_candidates[index]);
+                        nextPreferenceScores[index] = _candidatePreferenceScores[index];
+                        nextSavedRatings[index] = _candidateSavedRatings[index];
                     }
                     else
                     {
-                        nextCandidates.Add(generated[index]);
+                        ComposeCandidateRanking candidate = ranked[Math.Min(generatedCursor, ranked.Count - 1)];
+                        nextCandidates.Add(candidate.Result);
+                        nextPreferenceScores[index] = candidate.PredictedScore;
+                        nextSavedRatings[index] = candidate.SavedRating;
+                        generatedCursor++;
                     }
                 }
 
                 _candidates.Clear();
                 _candidates.AddRange(nextCandidates);
+                Array.Copy(nextPreferenceScores, _candidatePreferenceScores, CandidateCount);
+                Array.Copy(nextSavedRatings, _candidateSavedRatings, CandidateCount);
                 RenderCandidates();
                 HideStatusText();
-                _viewModel?.SetStatus(TF("compose.status.generated", CandidateCount));
+                string status = _preferenceService.GetRatingCount() >= 8
+                    ? TF("compose.status.reranked", CandidateCount, _preferenceService.GetRatingCount())
+                    : TF("compose.status.generated", CandidateCount);
+                _viewModel?.SetStatus(status);
             }
             catch (Exception ex)
             {
@@ -198,14 +254,14 @@ namespace MusicBox
 
         private void RenderCandidates()
         {
-            RenderCandidate(0, Option1SummaryText, Option1ApplyButton);
-            RenderCandidate(1, Option2SummaryText, Option2ApplyButton);
-            RenderCandidate(2, Option3SummaryText, Option3ApplyButton);
+            RenderCandidate(0, Option1SummaryText, Option1ApplyButton, Option1RateButton);
+            RenderCandidate(1, Option2SummaryText, Option2ApplyButton, Option2RateButton);
+            RenderCandidate(2, Option3SummaryText, Option3ApplyButton, Option3RateButton);
             RefreshPlayButtons();
             RefreshKeepButtons();
         }
 
-        private void RenderCandidate(int index, TextBlock summaryText, Button applyButton)
+        private void RenderCandidate(int index, TextBlock summaryText, Button applyButton, Button rateButton)
         {
             summaryText.FontSize = IsEnglishUi() ? 13 : 14;
             summaryText.LineHeight = IsEnglishUi() ? 20 : 22;
@@ -214,12 +270,19 @@ namespace MusicBox
             {
                 summaryText.Text = T("compose.action.waiting");
                 applyButton.IsEnabled = false;
+                rateButton.IsEnabled = false;
+                GetRatingSlider(index).IsEnabled = false;
                 return;
             }
 
             SmartComposeResult result = _candidates[index];
-            summaryText.Text = BuildCandidateDetails(result);
+            summaryText.Text = BuildCandidateDetails(result, _candidatePreferenceScores[index], _candidateSavedRatings[index]);
             applyButton.IsEnabled = true;
+            rateButton.IsEnabled = true;
+            Slider slider = GetRatingSlider(index);
+            slider.IsEnabled = true;
+            slider.Value = _candidateSavedRatings[index] ?? 50;
+            GetRatingValueText(index).Text = Math.Round(slider.Value).ToString("0");
         }
 
         private void ResetCandidateSurface(string? placeholder = null)
@@ -229,12 +292,16 @@ namespace MusicBox
                 : placeholder;
 
             _candidates.Clear();
+            _lastRequest = null;
+            Array.Clear(_candidatePreferenceScores, 0, _candidatePreferenceScores.Length);
+            Array.Clear(_candidateSavedRatings, 0, _candidateSavedRatings.Length);
             Option1SummaryText.Text = text;
             Option2SummaryText.Text = text;
             Option3SummaryText.Text = text;
             Option1ApplyButton.IsEnabled = false;
             Option2ApplyButton.IsEnabled = false;
             Option3ApplyButton.IsEnabled = false;
+            ResetRatingControls();
             RefreshPlayButtons();
             RefreshKeepButtons();
         }
@@ -317,14 +384,16 @@ namespace MusicBox
             Option2TitleText.Text = T("compose.option.b");
             Option3TitleText.Text = T("compose.option.c");
 
+            double compactTextSize = isEnglish ? 13 : 14;
             SetPlainButtonContent(GenerateButton, T("compose.action.generate"), isEnglish ? 13 : 14);
             SetButtonContent(RetryButton, Symbol.Refresh, T("compose.action.retry"), 12, isEnglish ? 13 : 14);
+            SetPlainButtonContent(Option1RateButton, T("compose.action.save_rating"), compactTextSize);
+            SetPlainButtonContent(Option2RateButton, T("compose.action.save_rating"), compactTextSize);
+            SetPlainButtonContent(Option3RateButton, T("compose.action.save_rating"), compactTextSize);
 
             Option1ApplyButton.Content = T("compose.action.apply_to_editor");
             Option2ApplyButton.Content = T("compose.action.apply_to_editor");
             Option3ApplyButton.Content = T("compose.action.apply_to_editor");
-
-            double compactTextSize = isEnglish ? 13 : 14;
             TitleLabelText.FontSize = compactTextSize;
             MoodLabelText.FontSize = compactTextSize;
             LengthLabelText.FontSize = compactTextSize;
@@ -446,6 +515,11 @@ namespace MusicBox
 
         private string BuildCandidateDetails(SmartComposeResult result)
         {
+            return BuildCandidateDetails(result, null, null);
+        }
+
+        private string BuildCandidateDetails(SmartComposeResult result, double? predictedScore, int? savedRating)
+        {
             ScoreProject project = result.Project;
             int safePpq = Math.Max(1, project.Ppq);
             int ticksPerMeasure = Math.Max(1, project.TimeSignature.TicksPerMeasure(safePpq));
@@ -453,15 +527,26 @@ namespace MusicBox
                 ? ticksPerMeasure
                 : Math.Max(ticksPerMeasure, project.Notes.Max(note => note.StartTick + Math.Max(1, note.DurationTicks)));
             int measureCount = Math.Max(1, (int)Math.Ceiling(totalTicks / (double)ticksPerMeasure));
-
-            return string.Join(Environment.NewLine, new[]
+            var lines = new List<string>
             {
                 $"{T("compose.meta.key")}: {BuildLocalizedKeyLabel(project.KeySignature.Fifths, project.KeySignature.Mode)}",
                 $"{T("compose.meta.meter")}: {project.TimeSignature.Numerator}/{project.TimeSignature.Denominator}",
                 $"{T("compose.meta.measures")}: {measureCount}",
                 $"{T("compose.meta.tempo")}: {project.Bpm} BPM",
                 $"{T("compose.meta.duration")}: {FormatDuration(totalTicks, safePpq, project.Bpm)}"
-            });
+            };
+
+            if (predictedScore.HasValue)
+            {
+                lines.Add($"{T("compose.meta.preference_fit")}: {Math.Round(predictedScore.Value):0}");
+            }
+
+            if (savedRating.HasValue)
+            {
+                lines.Add($"{T("compose.meta.user_rating")}: {savedRating.Value}");
+            }
+
+            return string.Join(Environment.NewLine, lines);
         }
 
         private string BuildLocalizedKeyLabel(int fifths, KeyMode mode)
@@ -593,5 +678,41 @@ namespace MusicBox
                 LayoutAutoMeasuresPerSystem = source.LayoutAutoMeasuresPerSystem
             };
         }
+
+        private void ResetRatingControls()
+        {
+            ResetRatingControl(Option1RatingSlider, Option1RatingValueText, Option1RateButton);
+            ResetRatingControl(Option2RatingSlider, Option2RatingValueText, Option2RateButton);
+            ResetRatingControl(Option3RatingSlider, Option3RatingValueText, Option3RateButton);
+        }
+
+        private static void ResetRatingControl(Slider slider, TextBlock valueText, Button button)
+        {
+            slider.Value = 50;
+            slider.IsEnabled = false;
+            valueText.Text = "50";
+            button.IsEnabled = false;
+        }
+
+        private Slider GetRatingSlider(int index)
+        {
+            return index switch
+            {
+                0 => Option1RatingSlider,
+                1 => Option2RatingSlider,
+                _ => Option3RatingSlider
+            };
+        }
+
+        private TextBlock GetRatingValueText(int index)
+        {
+            return index switch
+            {
+                0 => Option1RatingValueText,
+                1 => Option2RatingValueText,
+                _ => Option3RatingValueText
+            };
+        }
+
     }
 }

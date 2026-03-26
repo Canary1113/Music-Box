@@ -108,12 +108,13 @@
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                     BorderThickness="1">
-                                <Grid RowSpacing="12">
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
+                                    <Grid RowSpacing="12">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
 
                                     <Grid>
                                         <TextBlock x:Name="Option1TitleText"
@@ -136,6 +137,39 @@
                                                TextWrapping="Wrap" />
 
                                     <Grid Grid.Row="2"
+                                          ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Slider x:Name="Option1RatingSlider"
+                                                Grid.Column="0"
+                                                Tag="0"
+                                                Minimum="0"
+                                                Maximum="100"
+                                                SmallChange="5"
+                                                LargeChange="10"
+                                                StepFrequency="5"
+                                                TickFrequency="10"
+                                                IsEnabled="False"
+                                                ValueChanged="RatingSlider_ValueChanged" />
+                                        <TextBlock x:Name="Option1RatingValueText"
+                                                   Grid.Column="1"
+                                                   Width="32"
+                                                   VerticalAlignment="Center"
+                                                   Text="50"
+                                                   TextAlignment="Right" />
+                                        <Button x:Name="Option1RateButton"
+                                                Grid.Column="2"
+                                                Tag="0"
+                                                Height="34"
+                                                MinWidth="84"
+                                                IsEnabled="False"
+                                                Click="SaveRatingButton_Click" />
+                                    </Grid>
+
+                                    <Grid Grid.Row="3"
                                           ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
@@ -165,12 +199,13 @@
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                     BorderThickness="1">
-                                <Grid RowSpacing="12">
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
+                                    <Grid RowSpacing="12">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
 
                                     <Grid>
                                         <TextBlock x:Name="Option2TitleText"
@@ -193,6 +228,39 @@
                                                TextWrapping="Wrap" />
 
                                     <Grid Grid.Row="2"
+                                          ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Slider x:Name="Option2RatingSlider"
+                                                Grid.Column="0"
+                                                Tag="1"
+                                                Minimum="0"
+                                                Maximum="100"
+                                                SmallChange="5"
+                                                LargeChange="10"
+                                                StepFrequency="5"
+                                                TickFrequency="10"
+                                                IsEnabled="False"
+                                                ValueChanged="RatingSlider_ValueChanged" />
+                                        <TextBlock x:Name="Option2RatingValueText"
+                                                   Grid.Column="1"
+                                                   Width="32"
+                                                   VerticalAlignment="Center"
+                                                   Text="50"
+                                                   TextAlignment="Right" />
+                                        <Button x:Name="Option2RateButton"
+                                                Grid.Column="2"
+                                                Tag="1"
+                                                Height="34"
+                                                MinWidth="84"
+                                                IsEnabled="False"
+                                                Click="SaveRatingButton_Click" />
+                                    </Grid>
+
+                                    <Grid Grid.Row="3"
                                           ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
@@ -222,12 +290,13 @@
                                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                                     BorderThickness="1">
-                                <Grid RowSpacing="12">
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                    </Grid.RowDefinitions>
+                                    <Grid RowSpacing="12">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
 
                                     <Grid>
                                         <TextBlock x:Name="Option3TitleText"
@@ -250,6 +319,39 @@
                                                TextWrapping="Wrap" />
 
                                     <Grid Grid.Row="2"
+                                          ColumnSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Slider x:Name="Option3RatingSlider"
+                                                Grid.Column="0"
+                                                Tag="2"
+                                                Minimum="0"
+                                                Maximum="100"
+                                                SmallChange="5"
+                                                LargeChange="10"
+                                                StepFrequency="5"
+                                                TickFrequency="10"
+                                                IsEnabled="False"
+                                                ValueChanged="RatingSlider_ValueChanged" />
+                                        <TextBlock x:Name="Option3RatingValueText"
+                                                   Grid.Column="1"
+                                                   Width="32"
+                                                   VerticalAlignment="Center"
+                                                   Text="50"
+                                                   TextAlignment="Right" />
+                                        <Button x:Name="Option3RateButton"
+                                                Grid.Column="2"
+                                                Tag="2"
+                                                Height="34"
+                                                MinWidth="84"
+                                                IsEnabled="False"
+                                                Click="SaveRatingButton_Click" />
+                                    </Grid>
+
+                                    <Grid Grid.Row="3"
                                           ColumnSpacing="8">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
