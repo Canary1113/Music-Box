@@ -18,14 +18,18 @@ namespace MusicBox.Services
         };
 
         private readonly string _storePath;
+        private readonly string _legacyStorePath;
         private PreferenceStore? _store;
 
         public ComposePreferenceService()
         {
-            string root = Path.Combine(
+            string root = ResolveStoreRoot();
+            _storePath = Path.Combine(root, "compose-preferences.json");
+
+            string legacyRoot = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "MusicBox");
-            _storePath = Path.Combine(root, "compose-preferences.json");
+            _legacyStorePath = Path.Combine(legacyRoot, "compose-preferences.json");
         }
 
         public IReadOnlyList<ComposeCandidateRanking> RankCandidates(SmartComposeRequest? request, IReadOnlyList<SmartComposeResult> generated)
@@ -670,12 +674,61 @@ namespace MusicBox.Services
                     _store = JsonSerializer.Deserialize<PreferenceStore>(json, _jsonOptions) ?? new PreferenceStore();
                     return;
                 }
+
+                if (!string.Equals(_legacyStorePath, _storePath, StringComparison.OrdinalIgnoreCase)
+                    && File.Exists(_legacyStorePath))
+                {
+                    string legacyJson = File.ReadAllText(_legacyStorePath);
+                    PreferenceStore migrated = JsonSerializer.Deserialize<PreferenceStore>(legacyJson, _jsonOptions) ?? new PreferenceStore();
+                    SaveStore(migrated);
+                    _store = migrated;
+                    return;
+                }
             }
             catch
             {
             }
 
             _store = new PreferenceStore();
+        }
+
+        private static string ResolveStoreRoot()
+        {
+            string? rooted = TryFindProjectRoot(AppContext.BaseDirectory);
+            if (!string.IsNullOrWhiteSpace(rooted))
+            {
+                return rooted;
+            }
+
+            string currentDirectory = Directory.GetCurrentDirectory();
+            if (!string.IsNullOrWhiteSpace(currentDirectory))
+            {
+                return currentDirectory;
+            }
+
+            return AppContext.BaseDirectory;
+        }
+
+        private static string? TryFindProjectRoot(string? startDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(startDirectory))
+            {
+                return null;
+            }
+
+            DirectoryInfo? current = new DirectoryInfo(startDirectory);
+            while (current != null)
+            {
+                if (current.GetFiles("*.csproj").Any()
+                    && current.GetFiles("MainWindow.xaml").Any())
+                {
+                    return current.FullName;
+                }
+
+                current = current.Parent;
+            }
+
+            return null;
         }
 
         private void SaveStore(PreferenceStore store)
