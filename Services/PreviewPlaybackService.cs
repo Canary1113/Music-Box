@@ -10,6 +10,8 @@ namespace MusicBox.Services
 {
     public sealed class PreviewPlaybackService : IDisposable
     {
+        private const double PreviewVelocityBoost = 1.2d;
+
         private MidiSynthesizer? _synth;
         private CancellationTokenSource? _playbackCts;
         private readonly HashSet<int> _activeNotes = new();
@@ -277,7 +279,8 @@ namespace MusicBox.Services
             }
 
             byte pitch = (byte)Math.Clamp(midi, 0, 127);
-            byte vel = (byte)Math.Clamp(velocity, 1, 127);
+            int boostedVelocity = (int)Math.Round(Math.Clamp(velocity, 1, 127) * PreviewVelocityBoost);
+            byte vel = (byte)Math.Clamp(boostedVelocity, 1, 127);
             _synth.SendMessage(new MidiNoteOnMessage(0, pitch, vel));
             _activeNotes.Add(pitch);
         }
