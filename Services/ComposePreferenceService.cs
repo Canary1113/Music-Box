@@ -694,10 +694,22 @@ namespace MusicBox.Services
 
         private static string ResolveStoreRoot()
         {
-            string? rooted = TryFindProjectRoot(AppContext.BaseDirectory);
-            if (!string.IsNullOrWhiteSpace(rooted))
+            string? projectRoot = TryFindProjectRoot(AppContext.BaseDirectory);
+            string? oneDriveRoot = ResolveOneDriveRoot();
+            if (!string.IsNullOrWhiteSpace(projectRoot)
+                && IsUnderDirectory(projectRoot, oneDriveRoot))
             {
-                return rooted;
+                return projectRoot;
+            }
+
+            if (!string.IsNullOrWhiteSpace(oneDriveRoot))
+            {
+                return Path.Combine(oneDriveRoot, "MusicBox");
+            }
+
+            if (!string.IsNullOrWhiteSpace(projectRoot))
+            {
+                return projectRoot;
             }
 
             string currentDirectory = Directory.GetCurrentDirectory();
@@ -707,6 +719,26 @@ namespace MusicBox.Services
             }
 
             return AppContext.BaseDirectory;
+        }
+
+        private static string? ResolveOneDriveRoot()
+        {
+            string[] candidates =
+            [
+                Environment.GetEnvironmentVariable("OneDrive"),
+                Environment.GetEnvironmentVariable("OneDriveCommercial"),
+                Environment.GetEnvironmentVariable("OneDriveConsumer")
+            ];
+
+            foreach (string? candidate in candidates)
+            {
+                if (!string.IsNullOrWhiteSpace(candidate) && Directory.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
         }
 
         private static string? TryFindProjectRoot(string? startDirectory)
@@ -729,6 +761,24 @@ namespace MusicBox.Services
             }
 
             return null;
+        }
+
+        private static bool IsUnderDirectory(string? path, string? root)
+        {
+            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(root))
+            {
+                return false;
+            }
+
+            string normalizedPath = Path.GetFullPath(path)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string normalizedRoot = Path.GetFullPath(root)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            return normalizedPath.StartsWith(
+                normalizedRoot + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedPath, normalizedRoot, StringComparison.OrdinalIgnoreCase);
         }
 
         private void SaveStore(PreferenceStore store)
