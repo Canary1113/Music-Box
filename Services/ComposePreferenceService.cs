@@ -9,7 +9,8 @@ namespace MusicBox.Services
 {
     public sealed class ComposePreferenceService
     {
-        private const int MinimumRatingsForRerank = 8;
+        private const int MinimumRatingsForTraining = 6;
+        private const int MinimumRatingsForSorting = 8;
 
         private readonly JsonSerializerOptions _jsonOptions = new()
         {
@@ -27,61 +28,93 @@ namespace MusicBox.Services
             _storePath = Path.Combine(root, "compose-preferences.json");
         }
 
-        public IReadOnlyList<ComposeCandidateRanking> RankCandidates(SmartComposeRequest request, IReadOnlyList<SmartComposeResult> generated)
+        public IReadOnlyList<ComposeCandidateRanking> RankCandidates(SmartComposeRequest? request, IReadOnlyList<SmartComposeResult> generated)
         {
             EnsureLoaded();
             PreferenceStore store = _store ?? new PreferenceStore();
+            List<ComposeRatingRecord> activeRatings = GetActiveRatings(store, request?.MoodId);
+            TrainedPreferenceModel? model = TrainModel(activeRatings);
+            bool canSortWithModel = model != null && activeRatings.Count >= MinimumRatingsForSorting;
+
             var candidates = generated
                 .Select(result =>
                 {
                     ComposeFeatureVector features = ExtractFeatures(result.Project);
-                    double predictedScore = PredictScore(features, request?.MoodId);
-                    int? savedRating = store.Ratings
-                        .Where(r => r.Seed == result.Seed)
-                        .OrderByDescending(r => r.CreatedAtUtc)
-                        .Select(r => (int?)r.Score)
-                        .FirstOrDefault();
-                    return new ComposeCandidateRanking(result, features, predictedScore, savedRating);
+                    ComposeCategoryRating? savedRating = TryGetRating(result.Seed);
+                    ComposePrediction prediction = Predict(model, features, request?.MoodId);
+                    return new ComposeCandidateRanking(result, features, prediction, savedRating);
                 })
                 .ToList();
 
-            if (store.Ratings.Count < MinimumRatingsForRerank)
+            AttachExplanations(candidates, request, model != null);
+
+            if (canSortWithModel)
             {
-                return candidates;
+                return candidates
+                    .OrderByDescending(c => c.Prediction.FinalScore)
+                    .ThenByDescending(c => c.Prediction.OverallScore)
+                    .ThenBy(c => c.Result.Seed)
+                    .ToList();
             }
 
-            return candidates
-                .OrderByDescending(c => c.PredictedScore)
-                .ThenBy(c => c.Result.Seed)
-                .ToList();
+            return candidates;
         }
 
-        public void RecordRating(SmartComposeRequest request, SmartComposeResult result, int score)
+        public void UpsertRating(SmartComposeRequest? request, SmartComposeResult result, ComposeCategoryRating rating)
         {
             EnsureLoaded();
             PreferenceStore store = _store ?? new PreferenceStore();
-            score = Math.Clamp(score, 0, 100);
             ComposeFeatureVector features = ExtractFeatures(result.Project);
+            ComposeCategoryRating normalized = NormalizeRating(rating);
 
+            store.Ratings.RemoveAll(r => r.Seed == result.Seed);
             store.Ratings.Add(new ComposeRatingRecord
             {
                 CreatedAtUtc = DateTimeOffset.UtcNow,
                 Seed = result.Seed,
-                Score = score,
                 MoodId = request?.MoodId ?? string.Empty,
                 LengthId = request?.LengthId ?? string.Empty,
-                Bpm = result.Project.Bpm,
+                MelodyScore = normalized.Melody,
+                RhythmScore = normalized.Rhythm,
+                HarmonyScore = normalized.Harmony,
+                OverallScore = normalized.Overall,
                 FeatureRange = features.PitchRange,
-                FeatureDensity = features.NoteDensity,
+                FeatureNoteDensity = features.NoteDensity,
                 FeatureChordDensity = features.ChordDensity,
                 FeatureLargeLeapRatio = features.LargeLeapRatio,
                 FeatureBassShare = features.BassShare,
                 FeatureRepetitionRatio = features.RepetitionRatio,
-                FeatureDurationMismatch = features.DurationMismatch
+                FeatureDurationMismatch = features.DurationMismatch,
+                FeatureRegisterCenter = features.RegisterCenter,
+                FeatureRhythmVariance = features.RhythmVariance
             });
 
             TrimStore(store);
             SaveStore(store);
+        }
+
+        public bool RemoveRating(int seed)
+        {
+            EnsureLoaded();
+            PreferenceStore store = _store ?? new PreferenceStore();
+            int removed = store.Ratings.RemoveAll(r => r.Seed == seed);
+            if (removed > 0)
+            {
+                SaveStore(store);
+                return true;
+            }
+
+            return false;
+        }
+
+        public ComposeCategoryRating? TryGetRating(int seed)
+        {
+            EnsureLoaded();
+            return _store?.Ratings
+                .Where(r => r.Seed == seed)
+                .OrderByDescending(r => r.CreatedAtUtc)
+                .Select(ToCategoryRating)
+                .FirstOrDefault();
         }
 
         public int GetRatingCount()
@@ -90,60 +123,339 @@ namespace MusicBox.Services
             return _store?.Ratings.Count ?? 0;
         }
 
-        private double PredictScore(ComposeFeatureVector candidate, string? moodId)
+        public int GetRelevantRatingCount(string? moodId)
         {
+            EnsureLoaded();
             PreferenceStore store = _store ?? new PreferenceStore();
-            List<ComposeRatingRecord> samples = store.Ratings
-                .Where(r => string.IsNullOrWhiteSpace(moodId) || string.Equals(r.MoodId, moodId, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            return GetActiveRatings(store, moodId).Count;
+        }
 
-            if (samples.Count < 4)
+        private ComposePrediction Predict(TrainedPreferenceModel? model, ComposeFeatureVector features, string? moodId)
+        {
+            if (model == null)
             {
-                samples = store.Ratings.ToList();
+                return BuildHeuristicPrediction(features, moodId);
             }
 
-            if (samples.Count == 0)
+            double[] standardized = Standardize(features, model.Means, model.StdDevs);
+            double[] expanded = ExpandFeatures(standardized);
+            double melody = ClampScore(PredictSingle(model.MelodyWeights, expanded));
+            double rhythm = ClampScore(PredictSingle(model.RhythmWeights, expanded));
+            double harmony = ClampScore(PredictSingle(model.HarmonyWeights, expanded));
+            double overall = ClampScore(PredictSingle(model.OverallWeights, expanded));
+            double finalScore = ClampScore(overall * 0.34d + melody * 0.28d + rhythm * 0.22d + harmony * 0.16d);
+
+            return new ComposePrediction
             {
-                return 50d;
+                MelodyScore = melody,
+                RhythmScore = rhythm,
+                HarmonyScore = harmony,
+                OverallScore = overall,
+                FinalScore = finalScore,
+                ModelKind = LocalizationService.Translate("compose.model.trained")
+            };
+        }
+
+        private static ComposePrediction BuildHeuristicPrediction(ComposeFeatureVector features, string? moodId)
+        {
+            double melody = ClampScore(
+                82d
+                - features.LargeLeapRatio * 56d
+                - Math.Max(0d, features.PitchRange - 18d) * 1.4d
+                + ModerationBonus(features.RepetitionRatio, 0.18d, 20d));
+
+            double rhythm = ClampScore(
+                80d
+                - features.DurationMismatch * 62d
+                - features.RhythmVariance * 14d
+                + ModerationBonus(features.NoteDensity / 10d, 0.72d, 15d));
+
+            double harmony = ClampScore(
+                76d
+                + ModerationBonus(features.ChordDensity / 2.3d, 0.72d, 18d)
+                + ModerationBonus(features.BassShare, 0.33d, 16d));
+
+            double moodBoost = ResolveMoodBoost(moodId, features);
+            double overall = ClampScore((melody + rhythm + harmony) / 3d + moodBoost);
+
+            return new ComposePrediction
+            {
+                MelodyScore = melody,
+                RhythmScore = rhythm,
+                HarmonyScore = harmony,
+                OverallScore = overall,
+                FinalScore = overall,
+                ModelKind = LocalizationService.Translate("compose.model.heuristic")
+            };
+        }
+
+        private static double ResolveMoodBoost(string? moodId, ComposeFeatureVector features)
+        {
+            return moodId switch
+            {
+                "sleep" or "calm" => features.LargeLeapRatio < 0.18d && features.NoteDensity < 7.2d ? 5d : 0d,
+                "positive" or "hopeful" => features.NoteDensity > 6.2d && features.ChordDensity > 1.2d ? 4d : 0d,
+                "sad" or "nostalgic" => features.RepetitionRatio > 0.16d && features.PitchRange < 24d ? 4d : 0d,
+                "tense" => features.NoteDensity > 7.2d ? 3d : 0d,
+                _ => 0d
+            };
+        }
+
+        private static double ModerationBonus(double value, double target, double amplitude)
+        {
+            double distance = Math.Abs(value - target);
+            return Math.Max(-amplitude, amplitude - distance * amplitude * 2.4d);
+        }
+
+        private static double PredictSingle(double[] weights, double[] features)
+        {
+            double value = 0d;
+            for (int i = 0; i < weights.Length && i < features.Length; i++)
+            {
+                value += weights[i] * features[i];
             }
 
-            double[] min = ToVector(samples[0]);
-            double[] max = ToVector(samples[0]);
-            foreach (ComposeRatingRecord sample in samples.Skip(1))
+            return value;
+        }
+
+        private static double ClampScore(double value)
+        {
+            return Math.Clamp(value, 0d, 100d);
+        }
+
+        private static TrainedPreferenceModel? TrainModel(List<ComposeRatingRecord> samples)
+        {
+            if (samples.Count < MinimumRatingsForTraining)
             {
-                double[] vector = ToVector(sample);
-                for (int i = 0; i < vector.Length; i++)
+                return null;
+            }
+
+            double[][] raw = samples.Select(ToRawFeatureVector).ToArray();
+            (double[] means, double[] stdDevs) = ComputeStandardization(raw);
+            double[][] inputs = raw.Select(row => ExpandFeatures(Standardize(row, means, stdDevs))).ToArray();
+
+            return new TrainedPreferenceModel
+            {
+                Means = means,
+                StdDevs = stdDevs,
+                MelodyWeights = TrainRegression(inputs, samples.Select(s => (double)s.MelodyScore).ToArray()),
+                RhythmWeights = TrainRegression(inputs, samples.Select(s => (double)s.RhythmScore).ToArray()),
+                HarmonyWeights = TrainRegression(inputs, samples.Select(s => (double)s.HarmonyScore).ToArray()),
+                OverallWeights = TrainRegression(inputs, samples.Select(s => (double)s.OverallScore).ToArray())
+            };
+        }
+
+        private static double[] TrainRegression(double[][] inputs, double[] targets)
+        {
+            int rowCount = inputs.Length;
+            int columnCount = inputs[0].Length;
+            var weights = new double[columnCount];
+            weights[0] = targets.Average();
+
+            const int epochs = 420;
+            const double lambda = 0.012d;
+            double learningRate = 0.038d;
+
+            for (int epoch = 0; epoch < epochs; epoch++)
+            {
+                var gradient = new double[columnCount];
+                for (int rowIndex = 0; rowIndex < rowCount; rowIndex++)
                 {
-                    min[i] = Math.Min(min[i], vector[i]);
-                    max[i] = Math.Max(max[i], vector[i]);
-                }
-            }
+                    double prediction = 0d;
+                    double[] row = inputs[rowIndex];
+                    for (int columnIndex = 0; columnIndex < columnCount; columnIndex++)
+                    {
+                        prediction += weights[columnIndex] * row[columnIndex];
+                    }
 
-            double[] candidateVector = ToVector(candidate);
-            double weightedScore = 0d;
-            double totalWeight = 0d;
-            foreach (ComposeRatingRecord sample in samples)
-            {
-                double[] sampleVector = ToVector(sample);
-                double distanceSquared = 0d;
-                for (int i = 0; i < sampleVector.Length; i++)
+                    double error = prediction - targets[rowIndex];
+                    for (int columnIndex = 0; columnIndex < columnCount; columnIndex++)
+                    {
+                        gradient[columnIndex] += error * row[columnIndex];
+                    }
+                }
+
+                double invCount = 2d / Math.Max(1, rowCount);
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++)
                 {
-                    double scale = Math.Max(0.15d, max[i] - min[i]);
-                    double delta = (candidateVector[i] - sampleVector[i]) / scale;
-                    distanceSquared += delta * delta;
+                    double regularization = columnIndex == 0 ? 0d : 2d * lambda * weights[columnIndex];
+                    weights[columnIndex] -= learningRate * (gradient[columnIndex] * invCount + regularization);
                 }
 
-                double weight = 1d / (1d + distanceSquared);
-                weightedScore += weight * sample.Score;
-                totalWeight += weight;
+                learningRate *= 0.995d;
             }
 
-            if (totalWeight <= 0d)
+            return weights;
+        }
+
+        private static (double[] Means, double[] StdDevs) ComputeStandardization(double[][] raw)
+        {
+            int columnCount = raw[0].Length;
+            var means = new double[columnCount];
+            var stdDevs = new double[columnCount];
+
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++)
             {
-                return samples.Average(r => r.Score);
+                means[columnIndex] = raw.Average(row => row[columnIndex]);
+                double variance = raw.Average(row =>
+                {
+                    double delta = row[columnIndex] - means[columnIndex];
+                    return delta * delta;
+                });
+                stdDevs[columnIndex] = Math.Max(0.25d, Math.Sqrt(variance));
             }
 
-            return Math.Clamp(weightedScore / totalWeight, 0d, 100d);
+            return (means, stdDevs);
+        }
+
+        private static double[] Standardize(double[] raw, double[] means, double[] stdDevs)
+        {
+            var output = new double[raw.Length];
+            for (int i = 0; i < raw.Length; i++)
+            {
+                output[i] = (raw[i] - means[i]) / Math.Max(0.25d, stdDevs[i]);
+            }
+
+            return output;
+        }
+
+        private static double[] Standardize(ComposeFeatureVector features, double[] means, double[] stdDevs)
+        {
+            return Standardize(ToRawFeatureVector(features), means, stdDevs);
+        }
+
+        private static double[] ExpandFeatures(double[] standardized)
+        {
+            var expanded = new List<double>(1 + standardized.Length * 2 + 6) { 1d };
+            expanded.AddRange(standardized);
+            expanded.AddRange(standardized.Select(v => v * v));
+            if (standardized.Length >= 8)
+            {
+                expanded.Add(standardized[0] * standardized[3]);
+                expanded.Add(standardized[1] * standardized[6]);
+                expanded.Add(standardized[2] * standardized[4]);
+                expanded.Add(standardized[5] * standardized[3]);
+                expanded.Add(standardized[1] * standardized[2]);
+                expanded.Add(standardized[7] * standardized[6]);
+            }
+
+            return expanded.ToArray();
+        }
+
+        private static void AttachExplanations(List<ComposeCandidateRanking> candidates, SmartComposeRequest? request, bool trainedModel)
+        {
+            if (candidates.Count == 0)
+            {
+                return;
+            }
+
+            double avgMelody = candidates.Average(c => c.Prediction.MelodyScore);
+            double avgRhythm = candidates.Average(c => c.Prediction.RhythmScore);
+            double avgHarmony = candidates.Average(c => c.Prediction.HarmonyScore);
+            double avgOverall = candidates.Average(c => c.Prediction.OverallScore);
+            double bestFinal = candidates.Max(c => c.Prediction.FinalScore);
+            double minMismatch = candidates.Min(c => c.Features.DurationMismatch);
+            double minLeap = candidates.Min(c => c.Features.LargeLeapRatio);
+
+            foreach (ComposeCandidateRanking candidate in candidates)
+            {
+                candidate.Prediction.CreationReason = BuildCreationReason(request, candidate.Features);
+                candidate.Prediction.RankingReason = BuildRankingReason(
+                    candidate,
+                    avgMelody,
+                    avgRhythm,
+                    avgHarmony,
+                    avgOverall,
+                    bestFinal,
+                    minMismatch,
+                    minLeap,
+                    trainedModel);
+            }
+        }
+
+        private static string BuildCreationReason(SmartComposeRequest? request, ComposeFeatureVector features)
+        {
+            string moodId = string.IsNullOrWhiteSpace(request?.MoodId) ? "calm" : request!.MoodId;
+            string moodLabel = LocalizationService.Translate($"compose.mood.{moodId}");
+            var fragments = new List<string>();
+
+            if (features.LargeLeapRatio < 0.16d)
+            {
+                fragments.Add(LocalizationService.Translate("compose.reason.smooth_melody"));
+            }
+            else if (features.LargeLeapRatio > 0.30d)
+            {
+                fragments.Add(LocalizationService.Translate("compose.reason.bold_melody"));
+            }
+
+            if (features.NoteDensity < 6.3d)
+            {
+                fragments.Add(LocalizationService.Translate("compose.reason_spacious_rhythm"));
+            }
+            else if (features.NoteDensity > 8.2d)
+            {
+                fragments.Add(LocalizationService.Translate("compose.reason_dense_rhythm"));
+            }
+
+            if (features.ChordDensity > 1.45d)
+            {
+                fragments.Add(LocalizationService.Translate("compose.reason_rich_harmony"));
+            }
+            else
+            {
+                fragments.Add(LocalizationService.Translate("compose.reason_light_harmony"));
+            }
+
+            string detail = string.Join(LocalizationService.Translate("compose.reason.separator"), fragments.Take(3));
+            return string.Format(LocalizationService.Translate("compose.reason.creation_template"), moodLabel, detail);
+        }
+
+        private static string BuildRankingReason(
+            ComposeCandidateRanking candidate,
+            double avgMelody,
+            double avgRhythm,
+            double avgHarmony,
+            double avgOverall,
+            double bestFinal,
+            double minMismatch,
+            double minLeap,
+            bool trainedModel)
+        {
+            var categoryDiffs = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                [LocalizationService.Translate("compose.rate.melody")] = candidate.Prediction.MelodyScore - avgMelody,
+                [LocalizationService.Translate("compose.rate.rhythm")] = candidate.Prediction.RhythmScore - avgRhythm,
+                [LocalizationService.Translate("compose.rate.harmony")] = candidate.Prediction.HarmonyScore - avgHarmony,
+                [LocalizationService.Translate("compose.rate.overall")] = candidate.Prediction.OverallScore - avgOverall
+            };
+
+            KeyValuePair<string, double> leadCategoryPair = categoryDiffs
+                .OrderByDescending(entry => entry.Value)
+                .First();
+            string leadCategory = leadCategoryPair.Value > 0.75d
+                ? leadCategoryPair.Key
+                : LocalizationService.Translate("compose.reason.balanced_profile");
+
+            string positionReason = Math.Abs(candidate.Prediction.FinalScore - bestFinal) < 0.25d
+                ? LocalizationService.Translate("compose.reason.top_rank")
+                : LocalizationService.Translate("compose.reason.above_average_rank");
+
+            string supportReason = candidate.Features.DurationMismatch <= minMismatch + 0.02d
+                ? LocalizationService.Translate("compose.reason.more_coordinated")
+                : candidate.Features.LargeLeapRatio <= minLeap + 0.03d
+                    ? LocalizationService.Translate("compose.reason.more_stable")
+                    : LocalizationService.Translate("compose.reason.more_aligned");
+
+            string modelPrefix = trainedModel
+                ? LocalizationService.Translate("compose.reason.trained_model")
+                : LocalizationService.Translate("compose.reason.heuristic_model");
+
+            return string.Format(
+                LocalizationService.Translate("compose.reason.ranking_template"),
+                modelPrefix,
+                positionReason,
+                leadCategory,
+                supportReason);
         }
 
         private static ComposeFeatureVector ExtractFeatures(ScoreProject project)
@@ -169,6 +481,7 @@ namespace MusicBox.Services
             int maxMidi = notes.Max(n => n.Midi);
             double pitchRange = maxMidi - minMidi;
             double noteDensity = notes.Count / (double)measureCount;
+            double registerCenter = notes.Average(n => n.Midi);
 
             var onsetGroups = notes.GroupBy(n => n.StartTick).Select(g => g.ToList()).ToList();
             double chordDensity = onsetGroups.Average(g => g.Count);
@@ -190,6 +503,7 @@ namespace MusicBox.Services
 
             int leapCount = 0;
             int repeatCount = 0;
+            var durationUnits = new List<double>();
             for (int i = 1; i < melody.Count; i++)
             {
                 int delta = Math.Abs(melody[i].Midi - melody[i - 1].Midi);
@@ -203,6 +517,19 @@ namespace MusicBox.Services
                     repeatCount++;
                 }
             }
+
+            foreach (NoteEvent note in melody)
+            {
+                durationUnits.Add(note.DurationTicks / (double)Math.Max(1, ppq));
+            }
+
+            double rhythmVariance = durationUnits.Count <= 1
+                ? 0d
+                : Math.Sqrt(durationUnits.Average(d =>
+                {
+                    double delta = d - durationUnits.Average();
+                    return delta * delta;
+                }));
 
             double largeLeapRatio = melody.Count <= 1 ? 0d : leapCount / (double)(melody.Count - 1);
             double repetitionRatio = melody.Count <= 1 ? 0d : repeatCount / (double)(melody.Count - 1);
@@ -226,51 +553,25 @@ namespace MusicBox.Services
                 LargeLeapRatio = largeLeapRatio,
                 BassShare = bassShare,
                 RepetitionRatio = repetitionRatio,
-                DurationMismatch = durationMismatch
+                DurationMismatch = durationMismatch,
+                RegisterCenter = registerCenter,
+                RhythmVariance = rhythmVariance
             };
         }
 
-        private static double[] ToVector(ComposeFeatureVector vector)
+        private static List<ComposeRatingRecord> GetActiveRatings(PreferenceStore store, string? moodId)
         {
-            return
-            [
-                vector.PitchRange,
-                vector.NoteDensity,
-                vector.ChordDensity,
-                vector.LargeLeapRatio,
-                vector.BassShare,
-                vector.RepetitionRatio,
-                vector.DurationMismatch
-            ];
-        }
-
-        private static double[] ToVector(ComposeRatingRecord record)
-        {
-            return
-            [
-                record.FeatureRange,
-                record.FeatureDensity,
-                record.FeatureChordDensity,
-                record.FeatureLargeLeapRatio,
-                record.FeatureBassShare,
-                record.FeatureRepetitionRatio,
-                record.FeatureDurationMismatch
-            ];
-        }
-
-        private static void TrimStore(PreferenceStore store)
-        {
-            const int maxRatings = 1200;
-            if (store.Ratings.Count <= maxRatings)
-            {
-                return;
-            }
-
-            store.Ratings = store.Ratings
-                .OrderByDescending(r => r.CreatedAtUtc)
-                .Take(maxRatings)
+            List<ComposeRatingRecord> moodFiltered = store.Ratings
+                .Where(r => string.IsNullOrWhiteSpace(moodId) || string.Equals(r.MoodId, moodId, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(r => r.CreatedAtUtc)
                 .ToList();
+
+            if (moodFiltered.Count >= 4)
+            {
+                return moodFiltered;
+            }
+
+            return store.Ratings.OrderBy(r => r.CreatedAtUtc).ToList();
         }
 
         private void EnsureLoaded()
@@ -310,6 +611,75 @@ namespace MusicBox.Services
             }
         }
 
+        private static void TrimStore(PreferenceStore store)
+        {
+            const int maxRatings = 1200;
+            if (store.Ratings.Count <= maxRatings)
+            {
+                return;
+            }
+
+            store.Ratings = store.Ratings
+                .OrderByDescending(r => r.CreatedAtUtc)
+                .Take(maxRatings)
+                .OrderBy(r => r.CreatedAtUtc)
+                .ToList();
+        }
+
+        private static ComposeCategoryRating NormalizeRating(ComposeCategoryRating rating)
+        {
+            return new ComposeCategoryRating
+            {
+                Melody = Math.Clamp(rating.Melody, 0, 100),
+                Rhythm = Math.Clamp(rating.Rhythm, 0, 100),
+                Harmony = Math.Clamp(rating.Harmony, 0, 100),
+                Overall = Math.Clamp(rating.Overall, 0, 100)
+            };
+        }
+
+        private static ComposeCategoryRating ToCategoryRating(ComposeRatingRecord record)
+        {
+            return new ComposeCategoryRating
+            {
+                Melody = record.MelodyScore,
+                Rhythm = record.RhythmScore,
+                Harmony = record.HarmonyScore,
+                Overall = record.OverallScore
+            };
+        }
+
+        private static double[] ToRawFeatureVector(ComposeFeatureVector vector)
+        {
+            return
+            [
+                vector.PitchRange,
+                vector.NoteDensity,
+                vector.ChordDensity,
+                vector.LargeLeapRatio,
+                vector.BassShare,
+                vector.RepetitionRatio,
+                vector.DurationMismatch,
+                vector.RegisterCenter,
+                vector.RhythmVariance
+            ];
+        }
+
+        private static double[] ToRawFeatureVector(ComposeRatingRecord record)
+        {
+            return
+            [
+                record.FeatureRange,
+                record.FeatureNoteDensity,
+                record.FeatureChordDensity,
+                record.FeatureLargeLeapRatio,
+                record.FeatureBassShare,
+                record.FeatureRepetitionRatio,
+                record.FeatureDurationMismatch,
+                record.FeatureRegisterCenter,
+                record.FeatureRhythmVariance
+            ];
+        }
+
         private sealed class PreferenceStore
         {
             public List<ComposeRatingRecord> Ratings { get; set; } = new();
@@ -319,17 +689,31 @@ namespace MusicBox.Services
         {
             public DateTimeOffset CreatedAtUtc { get; set; }
             public int Seed { get; set; }
-            public int Score { get; set; }
             public string MoodId { get; set; } = string.Empty;
             public string LengthId { get; set; } = string.Empty;
-            public int Bpm { get; set; }
+            public int MelodyScore { get; set; }
+            public int RhythmScore { get; set; }
+            public int HarmonyScore { get; set; }
+            public int OverallScore { get; set; }
             public double FeatureRange { get; set; }
-            public double FeatureDensity { get; set; }
+            public double FeatureNoteDensity { get; set; }
             public double FeatureChordDensity { get; set; }
             public double FeatureLargeLeapRatio { get; set; }
             public double FeatureBassShare { get; set; }
             public double FeatureRepetitionRatio { get; set; }
             public double FeatureDurationMismatch { get; set; }
+            public double FeatureRegisterCenter { get; set; }
+            public double FeatureRhythmVariance { get; set; }
+        }
+
+        private sealed class TrainedPreferenceModel
+        {
+            public double[] Means { get; init; } = Array.Empty<double>();
+            public double[] StdDevs { get; init; } = Array.Empty<double>();
+            public double[] MelodyWeights { get; init; } = Array.Empty<double>();
+            public double[] RhythmWeights { get; init; } = Array.Empty<double>();
+            public double[] HarmonyWeights { get; init; } = Array.Empty<double>();
+            public double[] OverallWeights { get; init; } = Array.Empty<double>();
         }
     }
 
@@ -342,21 +726,47 @@ namespace MusicBox.Services
         public double BassShare { get; set; }
         public double RepetitionRatio { get; set; }
         public double DurationMismatch { get; set; }
+        public double RegisterCenter { get; set; }
+        public double RhythmVariance { get; set; }
+    }
+
+    public sealed class ComposeCategoryRating
+    {
+        public int Melody { get; set; }
+        public int Rhythm { get; set; }
+        public int Harmony { get; set; }
+        public int Overall { get; set; }
+    }
+
+    public sealed class ComposePrediction
+    {
+        public double MelodyScore { get; set; }
+        public double RhythmScore { get; set; }
+        public double HarmonyScore { get; set; }
+        public double OverallScore { get; set; }
+        public double FinalScore { get; set; }
+        public string CreationReason { get; set; } = string.Empty;
+        public string RankingReason { get; set; } = string.Empty;
+        public string ModelKind { get; set; } = string.Empty;
     }
 
     public sealed class ComposeCandidateRanking
     {
-        public ComposeCandidateRanking(SmartComposeResult result, ComposeFeatureVector features, double predictedScore, int? savedRating)
+        public ComposeCandidateRanking(
+            SmartComposeResult result,
+            ComposeFeatureVector features,
+            ComposePrediction prediction,
+            ComposeCategoryRating? savedRating)
         {
             Result = result;
             Features = features;
-            PredictedScore = predictedScore;
+            Prediction = prediction;
             SavedRating = savedRating;
         }
 
         public SmartComposeResult Result { get; }
         public ComposeFeatureVector Features { get; }
-        public double PredictedScore { get; }
-        public int? SavedRating { get; }
+        public ComposePrediction Prediction { get; }
+        public ComposeCategoryRating? SavedRating { get; }
     }
 }

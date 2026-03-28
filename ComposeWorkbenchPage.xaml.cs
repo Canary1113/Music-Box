@@ -25,7 +25,8 @@ namespace MusicBox
         private readonly PreviewPlaybackService _playback = new();
         private readonly List<SmartComposeResult> _candidates = new();
         private readonly double?[] _candidatePreferenceScores = new double?[CandidateCount];
-        private readonly int?[] _candidateSavedRatings = new int?[CandidateCount];
+        private readonly ComposePrediction?[] _candidatePredictions = new ComposePrediction?[CandidateCount];
+        private readonly ComposeCategoryRating?[] _candidateSavedRatings = new ComposeCategoryRating?[CandidateCount];
         private readonly bool[] _keptCandidates = new bool[CandidateCount];
         private readonly AppSettingsService _settings = AppSettingsService.Instance;
         private MainViewModel? _viewModel;
@@ -139,7 +140,7 @@ namespace MusicBox
             RefreshKeepButtons();
         }
 
-        private void SaveRatingButton_Click(object sender, RoutedEventArgs e)
+        private async void SaveRatingButton_Click(object sender, RoutedEventArgs e)
         {
             int index = ResolveCandidateIndex(sender);
             if (!HasCandidate(index))
@@ -147,14 +148,35 @@ namespace MusicBox
                 return;
             }
 
-            int score = (int)Math.Round(GetRatingSlider(index).Value);
             SmartComposeResult result = _candidates[index];
+            ComposeCategoryRating seedRating = BuildDialogSeedRating(index);
+            var dialogResult = await ShowCategoryRatingDialogAsync(index, seedRating);
+            if (dialogResult.Action == ComposeRatingDialogAction.Cancel)
+            {
+                return;
+            }
+
+            if (dialogResult.Action == ComposeRatingDialogAction.Remove)
+            {
+                if (_preferenceService.RemoveRating(result.Seed))
+                {
+                    _candidateSavedRatings[index] = null;
+                    RefreshCandidatePredictions();
+                    RenderCandidates();
+                    string cleared = TF("compose.status.rating_cleared", (char)('A' + index), _preferenceService.GetRatingCount());
+                    ShowStatusText(cleared);
+                    _viewModel?.SetStatus(cleared);
+                }
+
+                return;
+            }
+
             SmartComposeRequest request = _lastRequest ?? BuildRequest();
-            _preferenceService.RecordRating(request, result, score);
-            _candidateSavedRatings[index] = score;
-            _candidatePreferenceScores[index] = Math.Max(_candidatePreferenceScores[index] ?? 0d, score);
+            _preferenceService.UpsertRating(request, result, dialogResult.Rating);
+            _candidateSavedRatings[index] = dialogResult.Rating;
+            RefreshCandidatePredictions();
             RenderCandidates();
-            string message = TF("compose.status.rating_saved", (char)('A' + index), score, _preferenceService.GetRatingCount());
+            string message = TF("compose.status.rating_saved", (char)('A' + index), dialogResult.Rating.Overall, _preferenceService.GetRatingCount());
             ShowStatusText(message);
             _viewModel?.SetStatus(message);
         }
@@ -188,7 +210,8 @@ namespace MusicBox
                 IReadOnlyList<ComposeCandidateRanking> ranked = _preferenceService.RankCandidates(request, generated);
                 var nextCandidates = new List<SmartComposeResult>(CandidateCount);
                 var nextPreferenceScores = new double?[CandidateCount];
-                var nextSavedRatings = new int?[CandidateCount];
+                var nextPredictions = new ComposePrediction?[CandidateCount];
+                var nextSavedRatings = new ComposeCategoryRating?[CandidateCount];
                 int generatedCursor = 0;
 
                 for (int index = 0; index < CandidateCount; index++)
@@ -197,13 +220,15 @@ namespace MusicBox
                     {
                         nextCandidates.Add(_candidates[index]);
                         nextPreferenceScores[index] = _candidatePreferenceScores[index];
+                        nextPredictions[index] = _candidatePredictions[index];
                         nextSavedRatings[index] = _candidateSavedRatings[index];
                     }
                     else
                     {
                         ComposeCandidateRanking candidate = ranked[Math.Min(generatedCursor, ranked.Count - 1)];
                         nextCandidates.Add(candidate.Result);
-                        nextPreferenceScores[index] = candidate.PredictedScore;
+                        nextPreferenceScores[index] = candidate.Prediction.FinalScore;
+                        nextPredictions[index] = candidate.Prediction;
                         nextSavedRatings[index] = candidate.SavedRating;
                         generatedCursor++;
                     }
@@ -212,11 +237,13 @@ namespace MusicBox
                 _candidates.Clear();
                 _candidates.AddRange(nextCandidates);
                 Array.Copy(nextPreferenceScores, _candidatePreferenceScores, CandidateCount);
+                Array.Copy(nextPredictions, _candidatePredictions, CandidateCount);
                 Array.Copy(nextSavedRatings, _candidateSavedRatings, CandidateCount);
                 RenderCandidates();
                 HideStatusText();
-                string status = _preferenceService.GetRatingCount() >= 8
-                    ? TF("compose.status.reranked", CandidateCount, _preferenceService.GetRatingCount())
+                int relevantRatings = _preferenceService.GetRelevantRatingCount(request.MoodId);
+                string status = relevantRatings >= 8
+                    ? TF("compose.status.reranked", CandidateCount, relevantRatings)
                     : TF("compose.status.generated", CandidateCount);
                 _viewModel?.SetStatus(status);
             }
@@ -276,12 +303,12 @@ namespace MusicBox
             }
 
             SmartComposeResult result = _candidates[index];
-            summaryText.Text = BuildCandidateDetails(result, _candidatePreferenceScores[index], _candidateSavedRatings[index]);
+            summaryText.Text = BuildCandidateDetails(result, _candidatePredictions[index], _candidateSavedRatings[index]);
             applyButton.IsEnabled = true;
             rateButton.IsEnabled = true;
             Slider slider = GetRatingSlider(index);
             slider.IsEnabled = true;
-            slider.Value = _candidateSavedRatings[index] ?? 50;
+            slider.Value = _candidateSavedRatings[index]?.Overall ?? _candidatePredictions[index]?.FinalScore ?? 50d;
             GetRatingValueText(index).Text = Math.Round(slider.Value).ToString("0");
         }
 
@@ -294,6 +321,7 @@ namespace MusicBox
             _candidates.Clear();
             _lastRequest = null;
             Array.Clear(_candidatePreferenceScores, 0, _candidatePreferenceScores.Length);
+            Array.Clear(_candidatePredictions, 0, _candidatePredictions.Length);
             Array.Clear(_candidateSavedRatings, 0, _candidateSavedRatings.Length);
             Option1SummaryText.Text = text;
             Option2SummaryText.Text = text;
@@ -387,9 +415,9 @@ namespace MusicBox
             double compactTextSize = isEnglish ? 13 : 14;
             SetPlainButtonContent(GenerateButton, T("compose.action.generate"), isEnglish ? 13 : 14);
             SetButtonContent(RetryButton, Symbol.Refresh, T("compose.action.retry"), 12, isEnglish ? 13 : 14);
-            SetPlainButtonContent(Option1RateButton, T("compose.action.save_rating"), compactTextSize);
-            SetPlainButtonContent(Option2RateButton, T("compose.action.save_rating"), compactTextSize);
-            SetPlainButtonContent(Option3RateButton, T("compose.action.save_rating"), compactTextSize);
+            SetPlainButtonContent(Option1RateButton, T("compose.action.rate_details"), compactTextSize);
+            SetPlainButtonContent(Option2RateButton, T("compose.action.rate_details"), compactTextSize);
+            SetPlainButtonContent(Option3RateButton, T("compose.action.rate_details"), compactTextSize);
 
             Option1ApplyButton.Content = T("compose.action.apply_to_editor");
             Option2ApplyButton.Content = T("compose.action.apply_to_editor");
@@ -518,7 +546,7 @@ namespace MusicBox
             return BuildCandidateDetails(result, null, null);
         }
 
-        private string BuildCandidateDetails(SmartComposeResult result, double? predictedScore, int? savedRating)
+        private string BuildCandidateDetails(SmartComposeResult result, ComposePrediction? prediction, ComposeCategoryRating? savedRating)
         {
             ScoreProject project = result.Project;
             int safePpq = Math.Max(1, project.Ppq);
@@ -536,17 +564,35 @@ namespace MusicBox
                 $"{T("compose.meta.duration")}: {FormatDuration(totalTicks, safePpq, project.Bpm)}"
             };
 
-            if (predictedScore.HasValue)
+            if (prediction != null)
             {
-                lines.Add($"{T("compose.meta.preference_fit")}: {Math.Round(predictedScore.Value):0}");
+                lines.Add($"{T("compose.meta.preference_fit")}: {Math.Round(prediction.FinalScore):0}");
+                lines.Add($"{T("compose.meta.predicted_breakdown")}: {BuildCategoryScoreText(prediction.MelodyScore, prediction.RhythmScore, prediction.HarmonyScore, prediction.OverallScore)}");
+                lines.Add($"{T("compose.meta.model_kind")}: {prediction.ModelKind}");
             }
 
-            if (savedRating.HasValue)
+            if (savedRating != null)
             {
-                lines.Add($"{T("compose.meta.user_rating")}: {savedRating.Value}");
+                ComposeCategoryRating rating = savedRating;
+                lines.Add($"{T("compose.meta.user_rating")}: {BuildCategoryScoreText(rating.Melody, rating.Rhythm, rating.Harmony, rating.Overall)}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(prediction?.CreationReason))
+            {
+                lines.Add($"{T("compose.meta.creation_reason")}: {prediction.CreationReason}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(prediction?.RankingReason))
+            {
+                lines.Add($"{T("compose.meta.ranking_reason")}: {prediction.RankingReason}");
             }
 
             return string.Join(Environment.NewLine, lines);
+        }
+
+        private string BuildCategoryScoreText(double melody, double rhythm, double harmony, double overall)
+        {
+            return $"{T("compose.rate.melody")} {Math.Round(melody):0} / {T("compose.rate.rhythm")} {Math.Round(rhythm):0} / {T("compose.rate.harmony")} {Math.Round(harmony):0} / {T("compose.rate.overall")} {Math.Round(overall):0}";
         }
 
         private string BuildLocalizedKeyLabel(int fifths, KeyMode mode)
@@ -679,6 +725,177 @@ namespace MusicBox
             };
         }
 
+        private ComposeCategoryRating BuildDialogSeedRating(int index)
+        {
+            if (_candidateSavedRatings[index] != null)
+            {
+                return new ComposeCategoryRating
+                {
+                    Melody = _candidateSavedRatings[index]!.Melody,
+                    Rhythm = _candidateSavedRatings[index]!.Rhythm,
+                    Harmony = _candidateSavedRatings[index]!.Harmony,
+                    Overall = _candidateSavedRatings[index]!.Overall
+                };
+            }
+
+            double overall = GetRatingSlider(index).Value;
+            ComposePrediction? prediction = _candidatePredictions[index];
+            return new ComposeCategoryRating
+            {
+                Melody = (int)Math.Round(prediction?.MelodyScore ?? overall),
+                Rhythm = (int)Math.Round(prediction?.RhythmScore ?? overall),
+                Harmony = (int)Math.Round(prediction?.HarmonyScore ?? overall),
+                Overall = (int)Math.Round(overall)
+            };
+        }
+
+        private async System.Threading.Tasks.Task<ComposeRatingDialogResult> ShowCategoryRatingDialogAsync(int index, ComposeCategoryRating current)
+        {
+            string optionLabel = ((char)('A' + index)).ToString();
+
+            Slider melodySlider = CreateDialogSlider(current.Melody);
+            TextBlock melodyValue = CreateDialogValueText(current.Melody);
+            Slider rhythmSlider = CreateDialogSlider(current.Rhythm);
+            TextBlock rhythmValue = CreateDialogValueText(current.Rhythm);
+            Slider harmonySlider = CreateDialogSlider(current.Harmony);
+            TextBlock harmonyValue = CreateDialogValueText(current.Harmony);
+            Slider overallSlider = CreateDialogSlider(current.Overall);
+            TextBlock overallValue = CreateDialogValueText(current.Overall);
+
+            var content = new StackPanel
+            {
+                Spacing = 12,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = T("compose.rate.dialog_hint"),
+                        TextWrapping = TextWrapping.Wrap,
+                        Opacity = 0.8
+                    },
+                    CreateDialogRatingRow(T("compose.rate.melody"), melodySlider, melodyValue),
+                    CreateDialogRatingRow(T("compose.rate.rhythm"), rhythmSlider, rhythmValue),
+                    CreateDialogRatingRow(T("compose.rate.harmony"), harmonySlider, harmonyValue),
+                    CreateDialogRatingRow(T("compose.rate.overall"), overallSlider, overallValue)
+                }
+            };
+
+            AttachDialogSliderValue(melodySlider, melodyValue);
+            AttachDialogSliderValue(rhythmSlider, rhythmValue);
+            AttachDialogSliderValue(harmonySlider, harmonyValue);
+            AttachDialogSliderValue(overallSlider, overallValue);
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = TF("compose.rate.dialog_title", optionLabel),
+                Content = content,
+                PrimaryButtonText = T("compose.rate.dialog_save"),
+                SecondaryButtonText = T("compose.rate.dialog_clear"),
+                CloseButtonText = T("compose.rate.dialog_cancel"),
+                DefaultButton = ContentDialogButton.Primary
+            };
+
+            ContentDialogResult result = await dialog.ShowAsync();
+            return result switch
+            {
+                ContentDialogResult.Primary => new ComposeRatingDialogResult(
+                    ComposeRatingDialogAction.Save,
+                    new ComposeCategoryRating
+                    {
+                        Melody = (int)Math.Round(melodySlider.Value),
+                        Rhythm = (int)Math.Round(rhythmSlider.Value),
+                        Harmony = (int)Math.Round(harmonySlider.Value),
+                        Overall = (int)Math.Round(overallSlider.Value)
+                    }),
+                ContentDialogResult.Secondary => new ComposeRatingDialogResult(
+                    ComposeRatingDialogAction.Remove,
+                    current),
+                _ => new ComposeRatingDialogResult(ComposeRatingDialogAction.Cancel, current)
+            };
+        }
+
+        private static Slider CreateDialogSlider(int value)
+        {
+            return new Slider
+            {
+                Minimum = 0,
+                Maximum = 100,
+                StepFrequency = 5,
+                TickFrequency = 10,
+                SmallChange = 5,
+                LargeChange = 10,
+                Width = 240,
+                Value = Math.Clamp(value, 0, 100)
+            };
+        }
+
+        private static TextBlock CreateDialogValueText(int value)
+        {
+            return new TextBlock
+            {
+                Width = 36,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Right,
+                Text = Math.Clamp(value, 0, 100).ToString()
+            };
+        }
+
+        private static Grid CreateDialogRatingRow(string label, Slider slider, TextBlock valueText)
+        {
+            var grid = new Grid
+            {
+                ColumnSpacing = 10
+            };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(84) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var labelText = new TextBlock
+            {
+                Text = label,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(labelText, 0);
+            Grid.SetColumn(slider, 1);
+            Grid.SetColumn(valueText, 2);
+            grid.Children.Add(labelText);
+            grid.Children.Add(slider);
+            grid.Children.Add(valueText);
+            return grid;
+        }
+
+        private static void AttachDialogSliderValue(Slider slider, TextBlock valueText)
+        {
+            slider.ValueChanged += (_, args) =>
+            {
+                valueText.Text = Math.Round(args.NewValue).ToString("0");
+            };
+        }
+
+        private void RefreshCandidatePredictions()
+        {
+            if (_candidates.Count == 0)
+            {
+                return;
+            }
+
+            SmartComposeRequest request = _lastRequest ?? BuildRequest();
+            IReadOnlyList<ComposeCandidateRanking> reranked = _preferenceService.RankCandidates(request, _candidates);
+            var rankingsBySeed = reranked.ToDictionary(item => item.Result.Seed);
+            for (int index = 0; index < _candidates.Count; index++)
+            {
+                if (!rankingsBySeed.TryGetValue(_candidates[index].Seed, out ComposeCandidateRanking? ranking))
+                {
+                    continue;
+                }
+
+                _candidatePredictions[index] = ranking.Prediction;
+                _candidatePreferenceScores[index] = ranking.Prediction.FinalScore;
+                _candidateSavedRatings[index] = ranking.SavedRating;
+            }
+        }
+
         private void ResetRatingControls()
         {
             ResetRatingControl(Option1RatingSlider, Option1RatingValueText, Option1RateButton);
@@ -714,5 +931,13 @@ namespace MusicBox
             };
         }
 
+        private enum ComposeRatingDialogAction
+        {
+            Cancel,
+            Save,
+            Remove
+        }
+
+        private readonly record struct ComposeRatingDialogResult(ComposeRatingDialogAction Action, ComposeCategoryRating Rating);
     }
 }
