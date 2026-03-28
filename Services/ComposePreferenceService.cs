@@ -77,6 +77,7 @@ namespace MusicBox.Services
                 MelodyScore = normalized.Melody,
                 RhythmScore = normalized.Rhythm,
                 HarmonyScore = normalized.Harmony,
+                MoodFitScore = normalized.MoodFit,
                 OverallScore = normalized.Overall,
                 FeatureRange = features.PitchRange,
                 FeatureNoteDensity = features.NoteDensity,
@@ -142,14 +143,21 @@ namespace MusicBox.Services
             double melody = ClampScore(PredictSingle(model.MelodyWeights, expanded));
             double rhythm = ClampScore(PredictSingle(model.RhythmWeights, expanded));
             double harmony = ClampScore(PredictSingle(model.HarmonyWeights, expanded));
+            double moodFit = ClampScore(PredictSingle(model.MoodFitWeights, expanded));
             double overall = ClampScore(PredictSingle(model.OverallWeights, expanded));
-            double finalScore = ClampScore(overall * 0.34d + melody * 0.28d + rhythm * 0.22d + harmony * 0.16d);
+            double finalScore = ClampScore(
+                overall * 0.26d
+                + moodFit * 0.22d
+                + melody * 0.22d
+                + rhythm * 0.18d
+                + harmony * 0.12d);
 
             return new ComposePrediction
             {
                 MelodyScore = melody,
                 RhythmScore = rhythm,
                 HarmonyScore = harmony,
+                MoodFitScore = moodFit,
                 OverallScore = overall,
                 FinalScore = finalScore,
                 ModelKind = LocalizationService.Translate("compose.model.trained")
@@ -175,29 +183,95 @@ namespace MusicBox.Services
                 + ModerationBonus(features.ChordDensity / 2.3d, 0.72d, 18d)
                 + ModerationBonus(features.BassShare, 0.33d, 16d));
 
-            double moodBoost = ResolveMoodBoost(moodId, features);
-            double overall = ClampScore((melody + rhythm + harmony) / 3d + moodBoost);
+            double moodFit = ResolveMoodFitScore(moodId, features);
+            double overall = ClampScore(
+                melody * 0.30d
+                + rhythm * 0.24d
+                + harmony * 0.18d
+                + moodFit * 0.28d);
+            double finalScore = ClampScore(
+                overall * 0.26d
+                + moodFit * 0.22d
+                + melody * 0.22d
+                + rhythm * 0.18d
+                + harmony * 0.12d);
 
             return new ComposePrediction
             {
                 MelodyScore = melody,
                 RhythmScore = rhythm,
                 HarmonyScore = harmony,
+                MoodFitScore = moodFit,
                 OverallScore = overall,
-                FinalScore = overall,
+                FinalScore = finalScore,
                 ModelKind = LocalizationService.Translate("compose.model.heuristic")
             };
         }
 
-        private static double ResolveMoodBoost(string? moodId, ComposeFeatureVector features)
+        private static double ResolveMoodFitScore(string? moodId, ComposeFeatureVector features)
         {
-            return moodId switch
+            string normalized = string.IsNullOrWhiteSpace(moodId)
+                ? "calm"
+                : moodId.Trim().ToLowerInvariant();
+            double density = features.NoteDensity / 10d;
+            double harmonyDensity = features.ChordDensity / 2.4d;
+            double rhythmMotion = Math.Min(1.4d, features.RhythmVariance / 2.5d);
+
+            return normalized switch
             {
-                "sleep" or "calm" => features.LargeLeapRatio < 0.18d && features.NoteDensity < 7.2d ? 5d : 0d,
-                "positive" or "hopeful" => features.NoteDensity > 6.2d && features.ChordDensity > 1.2d ? 4d : 0d,
-                "sad" or "nostalgic" => features.RepetitionRatio > 0.16d && features.PitchRange < 24d ? 4d : 0d,
-                "tense" => features.NoteDensity > 7.2d ? 3d : 0d,
-                _ => 0d
+                "sleep" => ClampScore(
+                    74d
+                    + ModerationBonus(features.LargeLeapRatio, 0.08d, 16d)
+                    + ModerationBonus(density, 0.48d, 15d)
+                    + ModerationBonus(rhythmMotion, 0.12d, 14d)
+                    + ModerationBonus(features.BassShare, 0.30d, 8d)),
+                "calm" => ClampScore(
+                    74d
+                    + ModerationBonus(features.LargeLeapRatio, 0.11d, 16d)
+                    + ModerationBonus(density, 0.56d, 14d)
+                    + ModerationBonus(harmonyDensity, 0.58d, 10d)
+                    + ModerationBonus(rhythmMotion, 0.18d, 10d)),
+                "positive" => ClampScore(
+                    72d
+                    + ModerationBonus(features.LargeLeapRatio, 0.18d, 12d)
+                    + ModerationBonus(density, 0.73d, 16d)
+                    + ModerationBonus(harmonyDensity, 0.74d, 12d)
+                    + ModerationBonus(features.PitchRange / 24d, 0.72d, 10d)),
+                "hopeful" => ClampScore(
+                    73d
+                    + ModerationBonus(features.LargeLeapRatio, 0.16d, 12d)
+                    + ModerationBonus(density, 0.66d, 15d)
+                    + ModerationBonus(harmonyDensity, 0.68d, 12d)
+                    + ModerationBonus(features.RegisterCenter / 72d, 0.93d, 8d)),
+                "sad" => ClampScore(
+                    74d
+                    + ModerationBonus(features.RepetitionRatio, 0.20d, 14d)
+                    + ModerationBonus(density, 0.50d, 14d)
+                    + ModerationBonus(features.PitchRange / 30d, 0.55d, 12d)
+                    + ModerationBonus(features.RegisterCenter / 72d, 0.84d, 8d)),
+                "nostalgic" => ClampScore(
+                    74d
+                    + ModerationBonus(features.RepetitionRatio, 0.22d, 14d)
+                    + ModerationBonus(density, 0.54d, 12d)
+                    + ModerationBonus(harmonyDensity, 0.60d, 10d)
+                    + ModerationBonus(features.PitchRange / 30d, 0.60d, 10d)),
+                "dreamy" => ClampScore(
+                    73d
+                    + ModerationBonus(features.LargeLeapRatio, 0.14d, 12d)
+                    + ModerationBonus(density, 0.60d, 12d)
+                    + ModerationBonus(harmonyDensity, 0.70d, 12d)
+                    + ModerationBonus(rhythmMotion, 0.20d, 10d)),
+                "tense" => ClampScore(
+                    72d
+                    + ModerationBonus(features.LargeLeapRatio, 0.28d, 15d)
+                    + ModerationBonus(density, 0.82d, 18d)
+                    + ModerationBonus(rhythmMotion, 0.44d, 14d)
+                    + ModerationBonus(features.PitchRange / 28d, 0.82d, 10d)),
+                _ => ClampScore(
+                    72d
+                    + ModerationBonus(features.LargeLeapRatio, 0.15d, 12d)
+                    + ModerationBonus(density, 0.62d, 12d)
+                    + ModerationBonus(harmonyDensity, 0.62d, 10d))
             };
         }
 
@@ -241,6 +315,7 @@ namespace MusicBox.Services
                 MelodyWeights = TrainRegression(inputs, samples.Select(s => (double)s.MelodyScore).ToArray()),
                 RhythmWeights = TrainRegression(inputs, samples.Select(s => (double)s.RhythmScore).ToArray()),
                 HarmonyWeights = TrainRegression(inputs, samples.Select(s => (double)s.HarmonyScore).ToArray()),
+                MoodFitWeights = TrainRegression(inputs, samples.Select(s => ResolveMoodFitTarget(s)).ToArray()),
                 OverallWeights = TrainRegression(inputs, samples.Select(s => (double)s.OverallScore).ToArray())
             };
         }
@@ -352,6 +427,7 @@ namespace MusicBox.Services
             double avgMelody = candidates.Average(c => c.Prediction.MelodyScore);
             double avgRhythm = candidates.Average(c => c.Prediction.RhythmScore);
             double avgHarmony = candidates.Average(c => c.Prediction.HarmonyScore);
+            double avgMoodFit = candidates.Average(c => c.Prediction.MoodFitScore);
             double avgOverall = candidates.Average(c => c.Prediction.OverallScore);
             double bestFinal = candidates.Max(c => c.Prediction.FinalScore);
             double minMismatch = candidates.Min(c => c.Features.DurationMismatch);
@@ -365,6 +441,7 @@ namespace MusicBox.Services
                     avgMelody,
                     avgRhythm,
                     avgHarmony,
+                    avgMoodFit,
                     avgOverall,
                     bestFinal,
                     minMismatch,
@@ -415,6 +492,7 @@ namespace MusicBox.Services
             double avgMelody,
             double avgRhythm,
             double avgHarmony,
+            double avgMoodFit,
             double avgOverall,
             double bestFinal,
             double minMismatch,
@@ -426,6 +504,7 @@ namespace MusicBox.Services
                 [LocalizationService.Translate("compose.rate.melody")] = candidate.Prediction.MelodyScore - avgMelody,
                 [LocalizationService.Translate("compose.rate.rhythm")] = candidate.Prediction.RhythmScore - avgRhythm,
                 [LocalizationService.Translate("compose.rate.harmony")] = candidate.Prediction.HarmonyScore - avgHarmony,
+                [LocalizationService.Translate("compose.rate.mood_fit")] = candidate.Prediction.MoodFitScore - avgMoodFit,
                 [LocalizationService.Translate("compose.rate.overall")] = candidate.Prediction.OverallScore - avgOverall
             };
 
@@ -440,7 +519,9 @@ namespace MusicBox.Services
                 ? LocalizationService.Translate("compose.reason.top_rank")
                 : LocalizationService.Translate("compose.reason.above_average_rank");
 
-            string supportReason = candidate.Features.DurationMismatch <= minMismatch + 0.02d
+            string supportReason = candidate.Prediction.MoodFitScore >= avgMoodFit + 2d
+                ? LocalizationService.Translate("compose.reason.more_mood_aligned")
+                : candidate.Features.DurationMismatch <= minMismatch + 0.02d
                 ? LocalizationService.Translate("compose.reason.more_coordinated")
                 : candidate.Features.LargeLeapRatio <= minLeap + 0.03d
                     ? LocalizationService.Translate("compose.reason.more_stable")
@@ -633,6 +714,7 @@ namespace MusicBox.Services
                 Melody = Math.Clamp(rating.Melody, 0, 100),
                 Rhythm = Math.Clamp(rating.Rhythm, 0, 100),
                 Harmony = Math.Clamp(rating.Harmony, 0, 100),
+                MoodFit = Math.Clamp(rating.MoodFit, 0, 100),
                 Overall = Math.Clamp(rating.Overall, 0, 100)
             };
         }
@@ -644,8 +726,14 @@ namespace MusicBox.Services
                 Melody = record.MelodyScore,
                 Rhythm = record.RhythmScore,
                 Harmony = record.HarmonyScore,
+                MoodFit = (int)Math.Round(ResolveMoodFitTarget(record)),
                 Overall = record.OverallScore
             };
+        }
+
+        private static double ResolveMoodFitTarget(ComposeRatingRecord record)
+        {
+            return record.MoodFitScore ?? record.OverallScore;
         }
 
         private static double[] ToRawFeatureVector(ComposeFeatureVector vector)
@@ -694,6 +782,7 @@ namespace MusicBox.Services
             public int MelodyScore { get; set; }
             public int RhythmScore { get; set; }
             public int HarmonyScore { get; set; }
+            public int? MoodFitScore { get; set; }
             public int OverallScore { get; set; }
             public double FeatureRange { get; set; }
             public double FeatureNoteDensity { get; set; }
@@ -713,6 +802,7 @@ namespace MusicBox.Services
             public double[] MelodyWeights { get; init; } = Array.Empty<double>();
             public double[] RhythmWeights { get; init; } = Array.Empty<double>();
             public double[] HarmonyWeights { get; init; } = Array.Empty<double>();
+            public double[] MoodFitWeights { get; init; } = Array.Empty<double>();
             public double[] OverallWeights { get; init; } = Array.Empty<double>();
         }
     }
@@ -735,6 +825,7 @@ namespace MusicBox.Services
         public int Melody { get; set; }
         public int Rhythm { get; set; }
         public int Harmony { get; set; }
+        public int MoodFit { get; set; }
         public int Overall { get; set; }
     }
 
@@ -743,6 +834,7 @@ namespace MusicBox.Services
         public double MelodyScore { get; set; }
         public double RhythmScore { get; set; }
         public double HarmonyScore { get; set; }
+        public double MoodFitScore { get; set; }
         public double OverallScore { get; set; }
         public double FinalScore { get; set; }
         public string CreationReason { get; set; } = string.Empty;

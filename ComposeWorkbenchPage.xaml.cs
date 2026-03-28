@@ -567,14 +567,14 @@ namespace MusicBox
             if (prediction != null)
             {
                 lines.Add($"{T("compose.meta.preference_fit")}: {Math.Round(prediction.FinalScore):0}");
-                lines.Add($"{T("compose.meta.predicted_breakdown")}: {BuildCategoryScoreText(prediction.MelodyScore, prediction.RhythmScore, prediction.HarmonyScore, prediction.OverallScore)}");
+                lines.Add($"{T("compose.meta.predicted_breakdown")}: {BuildCategoryScoreText(prediction.MelodyScore, prediction.RhythmScore, prediction.HarmonyScore, prediction.MoodFitScore, prediction.OverallScore)}");
                 lines.Add($"{T("compose.meta.model_kind")}: {prediction.ModelKind}");
             }
 
             if (savedRating != null)
             {
                 ComposeCategoryRating rating = savedRating;
-                lines.Add($"{T("compose.meta.user_rating")}: {BuildCategoryScoreText(rating.Melody, rating.Rhythm, rating.Harmony, rating.Overall)}");
+                lines.Add($"{T("compose.meta.user_rating")}: {BuildCategoryScoreText(rating.Melody, rating.Rhythm, rating.Harmony, rating.MoodFit, rating.Overall)}");
             }
 
             if (!string.IsNullOrWhiteSpace(prediction?.CreationReason))
@@ -590,9 +590,9 @@ namespace MusicBox
             return string.Join(Environment.NewLine, lines);
         }
 
-        private string BuildCategoryScoreText(double melody, double rhythm, double harmony, double overall)
+        private string BuildCategoryScoreText(double melody, double rhythm, double harmony, double moodFit, double overall)
         {
-            return $"{T("compose.rate.melody")} {Math.Round(melody):0} / {T("compose.rate.rhythm")} {Math.Round(rhythm):0} / {T("compose.rate.harmony")} {Math.Round(harmony):0} / {T("compose.rate.overall")} {Math.Round(overall):0}";
+            return $"{T("compose.rate.melody")} {Math.Round(melody):0} / {T("compose.rate.rhythm")} {Math.Round(rhythm):0} / {T("compose.rate.harmony")} {Math.Round(harmony):0} / {T("compose.rate.mood_fit")} {Math.Round(moodFit):0} / {T("compose.rate.overall")} {Math.Round(overall):0}";
         }
 
         private string BuildLocalizedKeyLabel(int fifths, KeyMode mode)
@@ -734,6 +734,7 @@ namespace MusicBox
                     Melody = _candidateSavedRatings[index]!.Melody,
                     Rhythm = _candidateSavedRatings[index]!.Rhythm,
                     Harmony = _candidateSavedRatings[index]!.Harmony,
+                    MoodFit = _candidateSavedRatings[index]!.MoodFit,
                     Overall = _candidateSavedRatings[index]!.Overall
                 };
             }
@@ -745,6 +746,7 @@ namespace MusicBox
                 Melody = (int)Math.Round(prediction?.MelodyScore ?? overall),
                 Rhythm = (int)Math.Round(prediction?.RhythmScore ?? overall),
                 Harmony = (int)Math.Round(prediction?.HarmonyScore ?? overall),
+                MoodFit = (int)Math.Round(prediction?.MoodFitScore ?? overall),
                 Overall = (int)Math.Round(overall)
             };
         }
@@ -759,6 +761,8 @@ namespace MusicBox
             TextBlock rhythmValue = CreateDialogValueText(current.Rhythm);
             Slider harmonySlider = CreateDialogSlider(current.Harmony);
             TextBlock harmonyValue = CreateDialogValueText(current.Harmony);
+            Slider moodFitSlider = CreateDialogSlider(current.MoodFit);
+            TextBlock moodFitValue = CreateDialogValueText(current.MoodFit);
             Slider overallSlider = CreateDialogSlider(current.Overall);
             TextBlock overallValue = CreateDialogValueText(current.Overall);
 
@@ -776,6 +780,7 @@ namespace MusicBox
                     CreateDialogRatingRow(T("compose.rate.melody"), melodySlider, melodyValue),
                     CreateDialogRatingRow(T("compose.rate.rhythm"), rhythmSlider, rhythmValue),
                     CreateDialogRatingRow(T("compose.rate.harmony"), harmonySlider, harmonyValue),
+                    CreateDialogRatingRow(T("compose.rate.mood_fit"), moodFitSlider, moodFitValue),
                     CreateDialogRatingRow(T("compose.rate.overall"), overallSlider, overallValue)
                 }
             };
@@ -783,6 +788,7 @@ namespace MusicBox
             AttachDialogSliderValue(melodySlider, melodyValue);
             AttachDialogSliderValue(rhythmSlider, rhythmValue);
             AttachDialogSliderValue(harmonySlider, harmonyValue);
+            AttachDialogSliderValue(moodFitSlider, moodFitValue);
             AttachDialogSliderValue(overallSlider, overallValue);
 
             var dialog = new ContentDialog
@@ -806,6 +812,7 @@ namespace MusicBox
                         Melody = (int)Math.Round(melodySlider.Value),
                         Rhythm = (int)Math.Round(rhythmSlider.Value),
                         Harmony = (int)Math.Round(harmonySlider.Value),
+                        MoodFit = (int)Math.Round(moodFitSlider.Value),
                         Overall = (int)Math.Round(overallSlider.Value)
                     }),
                 ContentDialogResult.Secondary => new ComposeRatingDialogResult(
@@ -847,7 +854,7 @@ namespace MusicBox
             {
                 ColumnSpacing = 10
             };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(84) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(108) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
