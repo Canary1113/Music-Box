@@ -10,8 +10,6 @@ namespace MusicBox.Services
 {
     public sealed class PreviewPlaybackService : IDisposable
     {
-        private const double PreviewVelocityBoost = 1.2d;
-
         private MidiSynthesizer? _synth;
         private CancellationTokenSource? _playbackCts;
         private readonly HashSet<int> _activeNotes = new();
@@ -151,16 +149,18 @@ namespace MusicBox.Services
 
             if (note.IsAccent)
             {
-                velocity += 18;
+                velocity += 42;
             }
 
             if (note.IsStaccatissimo)
             {
-                duration = Math.Max(1, (int)Math.Round(duration * 0.18));
+                duration = Math.Max(1, (int)Math.Round(duration * 0.08));
+                velocity += 14;
             }
             else if (note.IsStaccato)
             {
-                duration = Math.Max(1, (int)Math.Round(duration * 0.42));
+                duration = Math.Max(1, (int)Math.Round(duration * 0.18));
+                velocity += 8;
             }
 
             switch (note.Ornament)
@@ -226,30 +226,67 @@ namespace MusicBox.Services
 
         private static int GetVelocity(ScoreProject project, int tick)
         {
-            int velocity = 72;
+            int safeTick = Math.Max(0, tick);
+            int velocity = 96;
             foreach (ExpressionMark mark in project.ExpressionMarks.OrderBy(m => m.StartTick))
             {
-                if (mark.StartTick > tick)
+                int markTick = Math.Max(0, mark.StartTick);
+                if (markTick > safeTick)
                 {
                     break;
                 }
 
                 velocity = NormalizeCode(mark.Code) switch
                 {
-                    "ppp" => 26,
-                    "pp" => 34,
-                    "p" => 44,
-                    "mp" => 58,
-                    "mf" => 72,
-                    "f" => 90,
-                    "ff" => 104,
-                    "fff" => 116,
-                    "sf" => 112,
+                    "ppp" => 46,
+                    "pp" => 58,
+                    "p" => 70,
+                    "mp" => 82,
+                    "mf" => 96,
+                    "f" => 110,
+                    "ff" => 122,
+                    "fff" => 127,
+                    "sf" => 126,
                     _ => velocity
                 };
             }
 
-            return velocity;
+            velocity += GetHairpinVelocityDeltaAtTick(project, safeTick);
+            return Math.Clamp(velocity, 24, 127);
+        }
+
+        private static int GetHairpinVelocityDeltaAtTick(ScoreProject project, int sourceTick)
+        {
+            int safeTick = Math.Max(0, sourceTick);
+            int ticksPerBeat = Math.Max(1, project.TimeSignature.TicksPerBeat(project.Ppq));
+            double delta = 0d;
+            foreach (ExpressionMark mark in project.ExpressionMarks)
+            {
+                string code = NormalizeCode(mark.Code);
+                if (code is not ("cresc" or "dim" or "cresc_text" or "dim_text"))
+                {
+                    continue;
+                }
+
+                int start = Math.Max(0, mark.StartTick);
+                int spanTicks = Math.Max(1, (int)Math.Round(Math.Max(0.2f, mark.SpanBeats) * ticksPerBeat));
+                int end = Math.Max(start + 1, start + spanTicks);
+                if (safeTick < start || safeTick > end)
+                {
+                    continue;
+                }
+
+                double progress = (safeTick - start) / (double)Math.Max(1, end - start);
+                double amount = code is "cresc" or "cresc_text" ? 18d : -18d;
+                if (code is "cresc_text" or "dim_text")
+                {
+                    amount *= 0.72d;
+                }
+
+                delta += amount * progress;
+            }
+
+            return (int)Math.Round(delta);
         }
 
         private static int ExtendWithPedal(int start, int end, IReadOnlyList<PedalRange> pedalRanges)
@@ -279,8 +316,7 @@ namespace MusicBox.Services
             }
 
             byte pitch = (byte)Math.Clamp(midi, 0, 127);
-            int boostedVelocity = (int)Math.Round(Math.Clamp(velocity, 1, 127) * PreviewVelocityBoost);
-            byte vel = (byte)Math.Clamp(boostedVelocity, 1, 127);
+            byte vel = (byte)Math.Clamp(velocity, 1, 127);
             _synth.SendMessage(new MidiNoteOnMessage(0, pitch, vel));
             _activeNotes.Add(pitch);
         }
