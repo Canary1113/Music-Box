@@ -723,7 +723,7 @@ namespace MusicBox.Services
 
         private static string? ResolveOneDriveRoot()
         {
-            string[] candidates =
+            string?[] candidates =
             [
                 Environment.GetEnvironmentVariable("OneDrive"),
                 Environment.GetEnvironmentVariable("OneDriveCommercial"),
