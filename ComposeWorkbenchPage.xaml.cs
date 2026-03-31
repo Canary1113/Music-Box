@@ -15,6 +15,9 @@ namespace MusicBox
     public sealed partial class ComposeWorkbenchPage : Page
     {
         private const int CandidateCount = 3;
+        private const int CandidatePoolMultiplier = 4;
+        private const int MinimumCandidatePool = 6;
+        private const double DiversityPenaltyWeight = 12d;
         private const string ChineseLanguage = "zh-Hans";
         private const string EnglishLanguage = "en-US";
         private static readonly string[] SharpNames = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
@@ -206,8 +209,13 @@ namespace MusicBox
                 request.Seed = _seedBase ^ (_generationSerial * 104729);
                 _lastRequest = request;
 
-                IReadOnlyList<SmartComposeResult> generated = _service.GenerateCandidates(request, CandidateCount);
+                int slotsToFill = preserveKept
+                    ? Enumerable.Range(0, CandidateCount).Count(index => !_keptCandidates[index] || !HasCandidate(index))
+                    : CandidateCount;
+                int candidatePoolSize = Math.Max(MinimumCandidatePool, slotsToFill * CandidatePoolMultiplier);
+                IReadOnlyList<SmartComposeResult> generated = _service.GenerateCandidates(request, candidatePoolSize);
                 IReadOnlyList<ComposeCandidateRanking> ranked = _preferenceService.RankCandidates(request, generated);
+                List<ComposeCandidateRanking> selectedGenerated = SelectDiverseCandidates(ranked, slotsToFill);
                 var nextCandidates = new List<SmartComposeResult>(CandidateCount);
                 var nextPreferenceScores = new double?[CandidateCount];
                 var nextPredictions = new ComposePrediction?[CandidateCount];
@@ -225,7 +233,7 @@ namespace MusicBox
                     }
                     else
                     {
-                        ComposeCandidateRanking candidate = ranked[Math.Min(generatedCursor, ranked.Count - 1)];
+                        ComposeCandidateRanking candidate = selectedGenerated[Math.Min(generatedCursor, selectedGenerated.Count - 1)];
                         nextCandidates.Add(candidate.Result);
                         nextPreferenceScores[index] = candidate.Prediction.FinalScore;
                         nextPredictions[index] = candidate.Prediction;
@@ -254,6 +262,74 @@ namespace MusicBox
                 _viewModel?.SetStatus(message);
                 ResetCandidateSurface(T("compose.status.failed_short"));
             }
+        }
+
+        private static List<ComposeCandidateRanking> SelectDiverseCandidates(IReadOnlyList<ComposeCandidateRanking> ranked, int count)
+        {
+            if (count <= 0 || ranked.Count == 0)
+            {
+                return new List<ComposeCandidateRanking>();
+            }
+
+            var remaining = ranked.ToList();
+            var selected = new List<ComposeCandidateRanking>(Math.Min(count, remaining.Count));
+
+            while (selected.Count < count && remaining.Count > 0)
+            {
+                ComposeCandidateRanking? bestCandidate = null;
+                double bestAdjustedScore = double.NegativeInfinity;
+
+                foreach (ComposeCandidateRanking candidate in remaining)
+                {
+                    double similarityPenalty = selected.Count == 0
+                        ? 0d
+                        : selected.Max(existing => ComputeCandidateSimilarity(existing.Features, candidate.Features)) * DiversityPenaltyWeight;
+                    bool sameProgression = selected.Any(existing =>
+                        string.Equals(existing.Result.ChordProgression, candidate.Result.ChordProgression, StringComparison.OrdinalIgnoreCase));
+                    double adjustedScore = candidate.Prediction.FinalScore - similarityPenalty - (sameProgression ? 4d : 0d);
+                    if (adjustedScore > bestAdjustedScore)
+                    {
+                        bestAdjustedScore = adjustedScore;
+                        bestCandidate = candidate;
+                    }
+                }
+
+                if (bestCandidate == null)
+                {
+                    break;
+                }
+
+                selected.Add(bestCandidate);
+                remaining.Remove(bestCandidate);
+            }
+
+            return selected;
+        }
+
+        private static double ComputeCandidateSimilarity(ComposeFeatureVector left, ComposeFeatureVector right)
+        {
+            double score =
+                SimilarityByDistance(left.PitchRange, right.PitchRange, 10d) +
+                SimilarityByDistance(left.NoteDensity, right.NoteDensity, 2.6d) +
+                SimilarityByDistance(left.ChordDensity, right.ChordDensity, 0.85d) +
+                SimilarityByDistance(left.LargeLeapRatio, right.LargeLeapRatio, 0.14d) +
+                SimilarityByDistance(left.BassShare, right.BassShare, 0.18d) +
+                SimilarityByDistance(left.RepetitionRatio, right.RepetitionRatio, 0.16d) +
+                SimilarityByDistance(left.DurationMismatch, right.DurationMismatch, 0.12d) +
+                SimilarityByDistance(left.RegisterCenter, right.RegisterCenter, 6d) +
+                SimilarityByDistance(left.RhythmVariance, right.RhythmVariance, 0.45d);
+
+            return score / 9d;
+        }
+
+        private static double SimilarityByDistance(double left, double right, double tolerance)
+        {
+            if (tolerance <= 0d)
+            {
+                return 0d;
+            }
+
+            return Math.Clamp(1d - Math.Abs(left - right) / tolerance, 0d, 1d);
         }
 
         private SmartComposeRequest BuildRequest()

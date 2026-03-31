@@ -40,7 +40,7 @@ namespace MusicBox.Services
         {
             SmartComposeRequest normalized = request ?? new SmartComposeRequest();
             int baseSeed = normalized.Seed == 0 ? Environment.TickCount : normalized.Seed;
-            int safeCount = Math.Clamp(count, 1, 6);
+            int safeCount = Math.Clamp(count, 1, 18);
             var results = new List<SmartComposeResult>(safeCount);
 
             for (int index = 0; index < safeCount; index++)

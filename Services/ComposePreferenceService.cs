@@ -9,8 +9,8 @@ namespace MusicBox.Services
 {
     public sealed class ComposePreferenceService
     {
-        private const int MinimumRatingsForTraining = 6;
-        private const int MinimumRatingsForSorting = 8;
+        private const int MinimumRatingsForTraining = 8;
+        private const int FullModelConfidenceRatings = 24;
 
         private readonly JsonSerializerOptions _jsonOptions = new()
         {
@@ -38,30 +38,25 @@ namespace MusicBox.Services
             PreferenceStore store = _store ?? new PreferenceStore();
             List<ComposeRatingRecord> activeRatings = GetActiveRatings(store, request?.MoodId);
             TrainedPreferenceModel? model = TrainModel(activeRatings);
-            bool canSortWithModel = model != null && activeRatings.Count >= MinimumRatingsForSorting;
+            double modelWeight = ResolveModelWeight(activeRatings.Count, model != null);
 
             var candidates = generated
                 .Select(result =>
                 {
                     ComposeFeatureVector features = ExtractFeatures(result.Project);
                     ComposeCategoryRating? savedRating = TryGetRating(result.Seed);
-                    ComposePrediction prediction = Predict(model, features, request?.MoodId);
+                    ComposePrediction prediction = Predict(model, features, request?.MoodId, modelWeight);
                     return new ComposeCandidateRanking(result, features, prediction, savedRating);
                 })
                 .ToList();
 
-            AttachExplanations(candidates, request, model != null);
+            AttachExplanations(candidates, request, modelWeight >= 0.45d);
 
-            if (canSortWithModel)
-            {
-                return candidates
-                    .OrderByDescending(c => c.Prediction.FinalScore)
-                    .ThenByDescending(c => c.Prediction.OverallScore)
-                    .ThenBy(c => c.Result.Seed)
-                    .ToList();
-            }
-
-            return candidates;
+            return candidates
+                .OrderByDescending(c => c.Prediction.FinalScore)
+                .ThenByDescending(c => c.Prediction.OverallScore)
+                .ThenBy(c => c.Result.Seed)
+                .ToList();
         }
 
         public void UpsertRating(SmartComposeRequest? request, SmartComposeResult result, ComposeCategoryRating rating)
@@ -135,11 +130,12 @@ namespace MusicBox.Services
             return GetActiveRatings(store, moodId).Count;
         }
 
-        private ComposePrediction Predict(TrainedPreferenceModel? model, ComposeFeatureVector features, string? moodId)
+        private ComposePrediction Predict(TrainedPreferenceModel? model, ComposeFeatureVector features, string? moodId, double modelWeight)
         {
-            if (model == null)
+            ComposePrediction heuristic = BuildHeuristicPrediction(features, moodId);
+            if (model == null || modelWeight <= 0.01d)
             {
-                return BuildHeuristicPrediction(features, moodId);
+                return heuristic;
             }
 
             double[] standardized = Standardize(features, model.Means, model.StdDevs);
@@ -155,8 +151,7 @@ namespace MusicBox.Services
                 + melody * 0.22d
                 + rhythm * 0.18d
                 + harmony * 0.12d);
-
-            return new ComposePrediction
+            ComposePrediction trained = new ComposePrediction
             {
                 MelodyScore = melody,
                 RhythmScore = rhythm,
@@ -166,6 +161,8 @@ namespace MusicBox.Services
                 FinalScore = finalScore,
                 ModelKind = LocalizationService.Translate("compose.model.trained")
             };
+
+            return BlendPredictions(heuristic, trained, modelWeight);
         }
 
         private static ComposePrediction BuildHeuristicPrediction(ComposeFeatureVector features, string? moodId)
@@ -209,6 +206,31 @@ namespace MusicBox.Services
                 OverallScore = overall,
                 FinalScore = finalScore,
                 ModelKind = LocalizationService.Translate("compose.model.heuristic")
+            };
+        }
+
+        private static ComposePrediction BlendPredictions(ComposePrediction heuristic, ComposePrediction trained, double modelWeight)
+        {
+            double clampedWeight = Math.Clamp(modelWeight, 0d, 0.9d);
+            double heuristicWeight = 1d - clampedWeight;
+            string heuristicKind = LocalizationService.Translate("compose.model.heuristic");
+            string trainedKind = LocalizationService.Translate("compose.model.trained");
+            string modelKind = clampedWeight switch
+            {
+                >= 0.7d => trainedKind,
+                <= 0.3d => heuristicKind,
+                _ => $"{trainedKind} + {heuristicKind}"
+            };
+
+            return new ComposePrediction
+            {
+                MelodyScore = ClampScore(heuristic.MelodyScore * heuristicWeight + trained.MelodyScore * clampedWeight),
+                RhythmScore = ClampScore(heuristic.RhythmScore * heuristicWeight + trained.RhythmScore * clampedWeight),
+                HarmonyScore = ClampScore(heuristic.HarmonyScore * heuristicWeight + trained.HarmonyScore * clampedWeight),
+                MoodFitScore = ClampScore(heuristic.MoodFitScore * heuristicWeight + trained.MoodFitScore * clampedWeight),
+                OverallScore = ClampScore(heuristic.OverallScore * heuristicWeight + trained.OverallScore * clampedWeight),
+                FinalScore = ClampScore(heuristic.FinalScore * heuristicWeight + trained.FinalScore * clampedWeight),
+                ModelKind = modelKind
             };
         }
 
@@ -299,6 +321,17 @@ namespace MusicBox.Services
         private static double ClampScore(double value)
         {
             return Math.Clamp(value, 0d, 100d);
+        }
+
+        private static double ResolveModelWeight(int sampleCount, bool hasModel)
+        {
+            if (!hasModel)
+            {
+                return 0d;
+            }
+
+            double progress = (sampleCount - MinimumRatingsForTraining) / (double)Math.Max(1, FullModelConfidenceRatings - MinimumRatingsForTraining);
+            return 0.22d + Math.Clamp(progress, 0d, 1d) * 0.58d;
         }
 
         private static TrainedPreferenceModel? TrainModel(List<ComposeRatingRecord> samples)
