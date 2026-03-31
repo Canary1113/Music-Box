@@ -4,7 +4,7 @@ MusicBox is a Windows desktop app for writing, converting, and generating music 
 
 It is designed for practical music creation instead of heavyweight professional notation software: you can edit directly on staff, convert the result into other formats, and use smart composition to quickly sketch new ideas.
 
-![image-20260331202419575](README.assets/image-20260331202419575.png)
+![MusicBox Screenshot](Assets/readme-screenshot.png)
 
 ## ✨ Features
 
