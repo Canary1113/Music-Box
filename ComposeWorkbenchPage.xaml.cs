@@ -5,19 +5,22 @@ using Microsoft.UI.Xaml.Navigation;
 using Windows.UI;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using MusicBox.Models;
 using MusicBox.Services;
 using MusicBox.ViewModels;
+using Windows.Storage;
+using Windows.Storage.Pickers;
 
 namespace MusicBox
 {
     public sealed partial class ComposeWorkbenchPage : Page
     {
         private const int CandidateCount = 3;
-        private const int CandidatePoolMultiplier = 4;
-        private const int MinimumCandidatePool = 6;
-        private const double DiversityPenaltyWeight = 12d;
+        private const int CandidatePoolMultiplier = 7;
+        private const int MinimumCandidatePool = 10;
+        private const double DiversityPenaltyWeight = 18d;
         private const string ChineseLanguage = "zh-Hans";
         private const string EnglishLanguage = "en-US";
         private static readonly string[] SharpNames = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
@@ -26,6 +29,7 @@ namespace MusicBox
         private readonly SmartComposeService _service = new();
         private readonly ComposePreferenceService _preferenceService = new();
         private readonly PreviewPlaybackService _playback = new();
+        private readonly AudioExportService _audioExporter = new();
         private readonly List<SmartComposeResult> _candidates = new();
         private readonly double?[] _candidatePreferenceScores = new double?[CandidateCount];
         private readonly ComposePrediction?[] _candidatePredictions = new ComposePrediction?[CandidateCount];
@@ -45,6 +49,7 @@ namespace MusicBox
             Loaded += ComposeWorkbenchPage_Loaded;
             Unloaded += ComposeWorkbenchPage_Unloaded;
             LocalizationService.LanguageChanged += LocalizationService_LanguageChanged;
+            _playback.PlaybackStateChanged += Playback_PlaybackStateChanged;
             MoodBox.SelectedIndex = 0;
             LengthBox.SelectedIndex = 1;
             ApplyLocalizedText();
@@ -62,6 +67,15 @@ namespace MusicBox
                 _viewModel = vm;
                 DataContext = vm;
             }
+
+            RefreshPlayButtons();
+        }
+
+        protected override void OnNavigatedFrom(NavigationEventArgs e)
+        {
+            base.OnNavigatedFrom(e);
+            _playback.Pause();
+            RefreshPlayButtons();
         }
 
         private void ComposeWorkbenchPage_Loaded(object sender, RoutedEventArgs e)
@@ -72,7 +86,12 @@ namespace MusicBox
 
         private void ComposeWorkbenchPage_Unloaded(object sender, RoutedEventArgs e)
         {
-            _playback.Stop();
+            _playback.Pause();
+        }
+
+        private void Playback_PlaybackStateChanged(object? sender, EventArgs e)
+        {
+            DispatcherQueue.TryEnqueue(RefreshPlayButtons);
         }
 
         private void LocalizationService_LanguageChanged(object? sender, EventArgs e)
@@ -107,9 +126,8 @@ namespace MusicBox
             }
 
             SmartComposeResult result = _candidates[index];
-            var playbackTask = _playback.TogglePlayAsync(index, result.Project);
             RefreshPlayButtons();
-            await playbackTask;
+            await _playback.TogglePlayAsync(index, result.Project);
             RefreshPlayButtons();
         }
 
@@ -128,6 +146,42 @@ namespace MusicBox
             if (App.MainWindow is MainWindow window)
             {
                 window.NavigateToPage("editor");
+            }
+        }
+
+        private async void SaveCandidateAudioButton_Click(object sender, RoutedEventArgs e)
+        {
+            int index = ResolveCandidateIndex(sender);
+            if (!HasCandidate(index))
+            {
+                return;
+            }
+
+            try
+            {
+                SmartComposeResult result = _candidates[index];
+                string? path = await PickSavePathAsync(".wav", "WAV Audio", GetSuggestedAudioName(result.Project.Title, index));
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    return;
+                }
+
+                bool isEnglish = IsEnglishUi();
+                ShowStatusText(isEnglish ? "Exporting audio..." : "正在导出音频...");
+                await RunAudioExportWithProgressAsync(
+                    isEnglish ? "Exporting Audio" : "正在导出音频",
+                    isEnglish ? "Please wait while the WAV file is generated." : "正在生成 WAV 文件，请稍候。",
+                    () => System.Threading.Tasks.Task.Run(() => _audioExporter.ExportWav(result.Project, path)));
+
+                string message = TF("compose.status.audio_exported", (char)('A' + index), Path.GetFileName(path));
+                ShowStatusText(message);
+                _viewModel?.SetStatus(message);
+            }
+            catch (Exception ex)
+            {
+                string message = TF("compose.status.audio_export_failed", (char)('A' + index), ex.Message);
+                ShowStatusText(message);
+                _viewModel?.SetStatus(message);
             }
         }
 
@@ -198,13 +252,14 @@ namespace MusicBox
             }
 
             GetRatingValueText(index).Text = Math.Round(slider.Value).ToString("0");
+            GetScoreProgress(index).Value = Math.Round(slider.Value);
         }
 
         private void GenerateCandidates(bool preserveKept)
         {
             try
             {
-                _playback.Stop();
+                _playback.Reset();
                 SmartComposeRequest request = BuildRequest();
                 request.Seed = _seedBase ^ (_generationSerial * 104729);
                 _lastRequest = request;
@@ -212,7 +267,11 @@ namespace MusicBox
                 int slotsToFill = preserveKept
                     ? Enumerable.Range(0, CandidateCount).Count(index => !_keptCandidates[index] || !HasCandidate(index))
                     : CandidateCount;
-                int candidatePoolSize = Math.Max(MinimumCandidatePool, slotsToFill * CandidatePoolMultiplier);
+                int relevantRatings = _preferenceService.GetRelevantRatingCount(request.MoodId);
+                int preferencePoolBoost = relevantRatings >= 4
+                    ? Math.Min(12, 2 + relevantRatings / 2)
+                    : 0;
+                int candidatePoolSize = Math.Max(MinimumCandidatePool, slotsToFill * CandidatePoolMultiplier + preferencePoolBoost);
                 IReadOnlyList<SmartComposeResult> generated = _service.GenerateCandidates(request, candidatePoolSize);
                 IReadOnlyList<ComposeCandidateRanking> ranked = _preferenceService.RankCandidates(request, generated);
                 List<ComposeCandidateRanking> selectedGenerated = SelectDiverseCandidates(ranked, slotsToFill);
@@ -249,7 +308,6 @@ namespace MusicBox
                 Array.Copy(nextSavedRatings, _candidateSavedRatings, CandidateCount);
                 RenderCandidates();
                 HideStatusText();
-                int relevantRatings = _preferenceService.GetRelevantRatingCount(request.MoodId);
                 string status = relevantRatings >= 8
                     ? TF("compose.status.reranked", CandidateCount, relevantRatings)
                     : TF("compose.status.generated", CandidateCount);
@@ -286,7 +344,7 @@ namespace MusicBox
                         : selected.Max(existing => ComputeCandidateSimilarity(existing.Features, candidate.Features)) * DiversityPenaltyWeight;
                     bool sameProgression = selected.Any(existing =>
                         string.Equals(existing.Result.ChordProgression, candidate.Result.ChordProgression, StringComparison.OrdinalIgnoreCase));
-                    double adjustedScore = candidate.Prediction.FinalScore - similarityPenalty - (sameProgression ? 4d : 0d);
+                    double adjustedScore = candidate.Prediction.FinalScore - similarityPenalty - (sameProgression ? 8d : 0d);
                     if (adjustedScore > bestAdjustedScore)
                     {
                         bestAdjustedScore = adjustedScore;
@@ -360,7 +418,9 @@ namespace MusicBox
             RenderCandidate(0, Option1SummaryText, Option1ApplyButton, Option1RateButton);
             RenderCandidate(1, Option2SummaryText, Option2ApplyButton, Option2RateButton);
             RenderCandidate(2, Option3SummaryText, Option3ApplyButton, Option3RateButton);
+            UpdateGeneratedBadge();
             RefreshPlayButtons();
+            RefreshExportAudioButtons();
             RefreshKeepButtons();
         }
 
@@ -375,17 +435,25 @@ namespace MusicBox
                 applyButton.IsEnabled = false;
                 rateButton.IsEnabled = false;
                 GetRatingSlider(index).IsEnabled = false;
+                GetRatingValueText(index).Text = "-";
+                GetScoreProgress(index).Value = 0;
+                UpdateCandidateMeta(index, null, null);
                 return;
             }
 
             SmartComposeResult result = _candidates[index];
-            summaryText.Text = BuildCandidateDetails(result, _candidatePredictions[index], _candidateSavedRatings[index]);
+            ComposePrediction? prediction = _candidatePredictions[index];
+            ComposeCategoryRating? savedRating = _candidateSavedRatings[index];
+            summaryText.Text = BuildCandidateNarrative(result, prediction, savedRating);
             applyButton.IsEnabled = true;
             rateButton.IsEnabled = true;
             Slider slider = GetRatingSlider(index);
             slider.IsEnabled = true;
-            slider.Value = _candidateSavedRatings[index]?.Overall ?? _candidatePredictions[index]?.FinalScore ?? 50d;
-            GetRatingValueText(index).Text = Math.Round(slider.Value).ToString("0");
+            slider.Value = savedRating?.Overall ?? prediction?.FinalScore ?? 50d;
+            double score = Math.Round(slider.Value);
+            GetRatingValueText(index).Text = score.ToString("0");
+            GetScoreProgress(index).Value = score;
+            UpdateCandidateMeta(index, result, prediction);
         }
 
         private void ResetCandidateSurface(string? placeholder = null)
@@ -406,7 +474,18 @@ namespace MusicBox
             Option2ApplyButton.IsEnabled = false;
             Option3ApplyButton.IsEnabled = false;
             ResetRatingControls();
+            UpdateCandidateMeta(0, null, null);
+            UpdateCandidateMeta(1, null, null);
+            UpdateCandidateMeta(2, null, null);
+            GetRatingValueText(0).Text = "-";
+            GetRatingValueText(1).Text = "-";
+            GetRatingValueText(2).Text = "-";
+            GetScoreProgress(0).Value = 0;
+            GetScoreProgress(1).Value = 0;
+            GetScoreProgress(2).Value = 0;
+            UpdateGeneratedBadge();
             RefreshPlayButtons();
+            RefreshExportAudioButtons();
             RefreshKeepButtons();
         }
 
@@ -415,6 +494,13 @@ namespace MusicBox
             UpdatePlayButton(Option1PlayButton, 0);
             UpdatePlayButton(Option2PlayButton, 1);
             UpdatePlayButton(Option3PlayButton, 2);
+        }
+
+        private void RefreshExportAudioButtons()
+        {
+            UpdateExportAudioButton(Option1ExportAudioButton, 0);
+            UpdateExportAudioButton(Option2ExportAudioButton, 1);
+            UpdateExportAudioButton(Option3ExportAudioButton, 2);
         }
 
         private void UpdatePlayButton(Button button, int index)
@@ -428,6 +514,18 @@ namespace MusicBox
                 T(isActive ? "compose.action.pause" : "compose.action.play"),
                 14,
                 IsEnglishUi() ? 13 : 14);
+        }
+
+        private void UpdateExportAudioButton(Button button, int index)
+        {
+            bool enabled = HasCandidate(index);
+            button.IsEnabled = enabled;
+            ToolTipService.SetToolTip(button, T("compose.action.save_audio"));
+            SetButtonContent(
+                button,
+                Symbol.Save,
+                null,
+                12);
         }
 
         private void RefreshKeepButtons()
@@ -446,6 +544,80 @@ namespace MusicBox
             TryApplyAccentStyle(button, enabled && _keptCandidates[index]);
         }
 
+        private void UpdateGeneratedBadge()
+        {
+            if (GeneratedBadgeText == null)
+            {
+                return;
+            }
+
+            bool isEnglish = IsEnglishUi();
+            GeneratedBadgeText.Text = isEnglish
+                ? $"Generated {_candidates.Count} candidate plans"
+                : $"已生成 {_candidates.Count} 个候选方案";
+        }
+
+        private void UpdateCandidateMeta(int index, SmartComposeResult? result, ComposePrediction? prediction)
+        {
+            TextBlock keyText = GetCandidateMetaText(index, "key");
+            TextBlock meterText = GetCandidateMetaText(index, "meter");
+            TextBlock measuresText = GetCandidateMetaText(index, "measures");
+            TextBlock tempoText = GetCandidateMetaText(index, "tempo");
+            TextBlock durationText = GetCandidateMetaText(index, "duration");
+            TextBlock preferenceText = GetCandidateMetaText(index, "preference");
+
+            if (result == null)
+            {
+                keyText.Text = "-";
+                meterText.Text = "-";
+                measuresText.Text = "-";
+                tempoText.Text = "-";
+                durationText.Text = "-";
+                preferenceText.Text = "-";
+                return;
+            }
+
+            ScoreProject project = result.Project;
+            int safePpq = Math.Max(1, project.Ppq);
+            int ticksPerMeasure = Math.Max(1, project.TimeSignature.TicksPerMeasure(safePpq));
+            int totalTicks = project.Notes.Count == 0
+                ? ticksPerMeasure
+                : Math.Max(ticksPerMeasure, project.Notes.Max(note => note.StartTick + Math.Max(1, note.DurationTicks)));
+            int measureCount = Math.Max(1, (int)Math.Ceiling(totalTicks / (double)ticksPerMeasure));
+
+            keyText.Text = BuildLocalizedKeyLabel(project.KeySignature.Fifths, project.KeySignature.Mode);
+            meterText.Text = $"{project.TimeSignature.Numerator}/{project.TimeSignature.Denominator}";
+            measuresText.Text = measureCount.ToString();
+            tempoText.Text = $"{project.Bpm} BPM";
+            durationText.Text = FormatDuration(totalTicks, safePpq, project.Bpm);
+            preferenceText.Text = prediction == null ? "-" : Math.Round(prediction.FinalScore).ToString("0");
+        }
+
+        private TextBlock GetCandidateMetaText(int index, string key)
+        {
+            return (index, key) switch
+            {
+                (0, "key") => Option1KeyText,
+                (0, "meter") => Option1MeterText,
+                (0, "measures") => Option1MeasuresText,
+                (0, "tempo") => Option1TempoText,
+                (0, "duration") => Option1DurationText,
+                (0, "preference") => Option1PreferenceText,
+                (1, "key") => Option2KeyText,
+                (1, "meter") => Option2MeterText,
+                (1, "measures") => Option2MeasuresText,
+                (1, "tempo") => Option2TempoText,
+                (1, "duration") => Option2DurationText,
+                (1, "preference") => Option2PreferenceText,
+                (2, "key") => Option3KeyText,
+                (2, "meter") => Option3MeterText,
+                (2, "measures") => Option3MeasuresText,
+                (2, "tempo") => Option3TempoText,
+                (2, "duration") => Option3DurationText,
+                _ => Option3PreferenceText
+            };
+        }
+
         private void ApplyLocalizedText()
         {
             bool isEnglish = IsEnglishUi();
@@ -453,12 +625,14 @@ namespace MusicBox
             string chineseDefaultTitle = LocalizationService.TranslateForLanguage(ChineseLanguage, "compose.default_title");
             string englishDefaultTitle = LocalizationService.TranslateForLanguage(EnglishLanguage, "compose.default_title");
 
-            PageTitleText.Text = T("compose.page_title");
-            PageTitleText.FontSize = isEnglish ? 23 : 24;
+            PageTitleText.Text = isEnglish ? "Smart Compose" : "智能创作";
+            PageTitleText.FontSize = 30;
 
-            PageSubtitleText.Text = T("compose.page_subtitle");
-            PageSubtitleText.Visibility = Visibility.Collapsed;
-            PageSubtitleText.FontSize = isEnglish ? 13 : 14;
+            PageSubtitleText.Text = isEnglish
+                ? "Generate multiple melody plans from title, mood, and length, then quickly preview or write them to staff notation."
+                : "根据标题、情绪与长度生成多个旋律方案，并快速试听与写入五线谱。";
+            PageSubtitleText.Visibility = Visibility.Visible;
+            PageSubtitleText.FontSize = 14;
 
             TitleLabelText.Text = T("compose.label.title");
             MoodLabelText.Text = T("compose.label.mood");
@@ -471,29 +645,35 @@ namespace MusicBox
                 TitleBox.Text = localizedDefaultTitle;
             }
 
-            MoodCalmItem.Content = T("compose.mood.calm");
-            MoodPositiveItem.Content = T("compose.mood.positive");
-            MoodSadItem.Content = T("compose.mood.sad");
-            MoodSleepItem.Content = T("compose.mood.sleep");
-            MoodHopefulItem.Content = T("compose.mood.hopeful");
-            MoodNostalgicItem.Content = T("compose.mood.nostalgic");
-            MoodDreamyItem.Content = T("compose.mood.dreamy");
-            MoodTenseItem.Content = T("compose.mood.tense");
+            SetComboBoxItemText(MoodCalmItem, T("compose.mood.calm"));
+            SetComboBoxItemText(MoodPositiveItem, T("compose.mood.positive"));
+            SetComboBoxItemText(MoodSadItem, T("compose.mood.sad"));
+            SetComboBoxItemText(MoodSleepItem, T("compose.mood.sleep"));
+            SetComboBoxItemText(MoodHopefulItem, T("compose.mood.hopeful"));
+            SetComboBoxItemText(MoodNostalgicItem, T("compose.mood.nostalgic"));
+            SetComboBoxItemText(MoodDreamyItem, T("compose.mood.dreamy"));
+            SetComboBoxItemText(MoodTenseItem, T("compose.mood.tense"));
 
-            LengthShortItem.Content = T("compose.length.short");
-            LengthMediumItem.Content = T("compose.length.medium");
-            LengthLongItem.Content = T("compose.length.long");
+            SetComboBoxItemText(LengthShortItem, T("compose.length.short"));
+            SetComboBoxItemText(LengthMediumItem, T("compose.length.medium"));
+            SetComboBoxItemText(LengthLongItem, T("compose.length.long"));
 
             Option1TitleText.Text = T("compose.option.a");
             Option2TitleText.Text = T("compose.option.b");
             Option3TitleText.Text = T("compose.option.c");
 
             double compactTextSize = isEnglish ? 13 : 14;
-            SetPlainButtonContent(GenerateButton, T("compose.action.generate"), isEnglish ? 13 : 14);
+            SetButtonContent(GenerateButton, Symbol.OutlineStar, T("compose.action.generate"), 14, isEnglish ? 13 : 14);
             SetButtonContent(RetryButton, Symbol.Refresh, T("compose.action.retry"), 12, isEnglish ? 13 : 14);
             SetPlainButtonContent(Option1RateButton, T("compose.action.rate_details"), compactTextSize);
             SetPlainButtonContent(Option2RateButton, T("compose.action.rate_details"), compactTextSize);
             SetPlainButtonContent(Option3RateButton, T("compose.action.rate_details"), compactTextSize);
+            SetButtonContent(Option1ExportAudioButton, Symbol.Save, null, 12);
+            SetButtonContent(Option2ExportAudioButton, Symbol.Save, null, 12);
+            SetButtonContent(Option3ExportAudioButton, Symbol.Save, null, 12);
+            ToolTipService.SetToolTip(Option1ExportAudioButton, T("compose.action.save_audio"));
+            ToolTipService.SetToolTip(Option2ExportAudioButton, T("compose.action.save_audio"));
+            ToolTipService.SetToolTip(Option3ExportAudioButton, T("compose.action.save_audio"));
 
             Option1ApplyButton.Content = T("compose.action.apply_to_editor");
             Option2ApplyButton.Content = T("compose.action.apply_to_editor");
@@ -504,9 +684,58 @@ namespace MusicBox
             Option1ApplyButton.FontSize = compactTextSize;
             Option2ApplyButton.FontSize = compactTextSize;
             Option3ApplyButton.FontSize = compactTextSize;
+            UpdateGeneratedBadge();
+            LocalizeStaticComposeText();
 
             RenderCandidates();
             ApplyStaticButtonVisuals();
+        }
+
+        private void LocalizeStaticComposeText()
+        {
+            bool isEnglish = IsEnglishUi();
+            var replacements = new Dictionary<string, string>
+            {
+                ["调号"] = isEnglish ? "Key" : "调号",
+                ["Key"] = isEnglish ? "Key" : "调号",
+                ["拍号"] = isEnglish ? "Meter" : "拍号",
+                ["Meter"] = isEnglish ? "Meter" : "拍号",
+                ["小节数"] = isEnglish ? "Measures" : "小节数",
+                ["Measures"] = isEnglish ? "Measures" : "小节数",
+                ["速度"] = isEnglish ? "Tempo" : "速度",
+                ["Tempo"] = isEnglish ? "Tempo" : "速度",
+                ["总时长"] = isEnglish ? "Duration" : "总时长",
+                ["Duration"] = isEnglish ? "Duration" : "总时长",
+                ["偏好预测"] = isEnglish ? "Fit" : "偏好预测",
+                ["Fit"] = isEnglish ? "Fit" : "偏好预测",
+                ["分类评分"] = isEnglish ? "Category score" : "分类评分",
+                ["Category score"] = isEnglish ? "Category score" : "分类评分"
+            };
+
+            ApplyTextReplacements(this, replacements);
+        }
+
+        private static void ApplyTextReplacements(DependencyObject root, IReadOnlyDictionary<string, string> replacements)
+        {
+            int count = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                DependencyObject? child = VisualTreeHelper.GetChild(root, i);
+                if (child == null)
+                {
+                    continue;
+                }
+
+                if (child is TextBlock textBlock
+                    && textBlock.Text != null
+                    && replacements.TryGetValue(textBlock.Text, out string? replacement)
+                    && replacement != null)
+                {
+                    textBlock.Text = replacement;
+                }
+
+                ApplyTextReplacements(child, replacements);
+            }
         }
 
         private void ApplyStaticButtonVisuals()
@@ -515,6 +744,23 @@ namespace MusicBox
             TryApplyAccentStyle(Option1PlayButton, true);
             TryApplyAccentStyle(Option2PlayButton, true);
             TryApplyAccentStyle(Option3PlayButton, true);
+        }
+
+        private static void SetComboBoxItemText(ComboBoxItem item, string text)
+        {
+            if (item.Content is StackPanel panel)
+            {
+                foreach (object child in panel.Children)
+                {
+                    if (child is TextBlock textBlock)
+                    {
+                        textBlock.Text = text;
+                        return;
+                    }
+                }
+            }
+
+            item.Content = text;
         }
 
         private void ShowStatusText(string message)
@@ -666,6 +912,39 @@ namespace MusicBox
             return string.Join(Environment.NewLine, lines);
         }
 
+        private string BuildCandidateNarrative(SmartComposeResult result, ComposePrediction? prediction, ComposeCategoryRating? savedRating)
+        {
+            var lines = new List<string>();
+
+            if (prediction != null)
+            {
+                lines.Add($"{T("compose.meta.predicted_breakdown")}: {BuildCategoryScoreText(prediction.MelodyScore, prediction.RhythmScore, prediction.HarmonyScore, prediction.MoodFitScore, prediction.OverallScore)}");
+                lines.Add($"{T("compose.meta.model_kind")}: {prediction.ModelKind}");
+            }
+            else
+            {
+                lines.Add(result.Summary);
+            }
+
+            if (!string.IsNullOrWhiteSpace(prediction?.CreationReason))
+            {
+                lines.Add($"{T("compose.meta.creation_reason")}: {prediction.CreationReason}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(prediction?.RankingReason))
+            {
+                lines.Add($"{T("compose.meta.ranking_reason")}: {prediction.RankingReason}");
+            }
+
+            if (savedRating != null)
+            {
+                ComposeCategoryRating rating = savedRating;
+                lines.Add($"{T("compose.meta.user_rating")}: {BuildCategoryScoreText(rating.Melody, rating.Rhythm, rating.Harmony, rating.MoodFit, rating.Overall)}");
+            }
+
+            return string.Join(Environment.NewLine + Environment.NewLine, lines);
+        }
+
         private string BuildCategoryScoreText(double melody, double rhythm, double harmony, double moodFit, double overall)
         {
             return $"{T("compose.rate.melody")} {Math.Round(melody):0} / {T("compose.rate.rhythm")} {Math.Round(rhythm):0} / {T("compose.rate.harmony")} {Math.Round(harmony):0} / {T("compose.rate.mood_fit")} {Math.Round(moodFit):0} / {T("compose.rate.overall")} {Math.Round(overall):0}";
@@ -738,9 +1017,97 @@ namespace MusicBox
             return result < 0 ? result + modulus : result;
         }
 
+        private static string GetSuggestedAudioName(string title, int index)
+        {
+            string name = string.IsNullOrWhiteSpace(title)
+                ? $"Compose-{(char)('A' + index)}"
+                : title.Trim();
+
+            foreach (char invalid in Path.GetInvalidFileNameChars())
+            {
+                name = name.Replace(invalid, '_');
+            }
+
+            return $"{name}-Option{(char)('A' + index)}.wav";
+        }
+
+        private async System.Threading.Tasks.Task RunAudioExportWithProgressAsync(string title, string message, Func<System.Threading.Tasks.Task> exportAction)
+        {
+            if (exportAction == null)
+            {
+                return;
+            }
+
+            if (XamlRoot == null)
+            {
+                await exportAction();
+                return;
+            }
+
+            var ring = new ProgressRing
+            {
+                Width = 28,
+                Height = 28,
+                IsActive = true
+            };
+
+            var content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 12
+            };
+            content.Children.Add(ring);
+            content.Children.Add(new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center,
+                MaxWidth = 320
+            });
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = title,
+                Content = content
+            };
+
+            var showTask = dialog.ShowAsync().AsTask();
+            await System.Threading.Tasks.Task.Yield();
+            try
+            {
+                await exportAction();
+            }
+            finally
+            {
+                dialog.Hide();
+                await showTask;
+            }
+        }
+
+        private static async System.Threading.Tasks.Task<string?> PickSavePathAsync(string extension, string fileTypeDescription, string suggestedFileName)
+        {
+            if (App.MainWindow == null)
+            {
+                return null;
+            }
+
+            string normalizedExtension = extension.StartsWith('.') ? extension : $".{extension}";
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                SuggestedFileName = Path.GetFileNameWithoutExtension(suggestedFileName)
+            };
+            picker.FileTypeChoices.Add(fileTypeDescription, new List<string> { normalizedExtension });
+
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow));
+            StorageFile? file = await picker.PickSaveFileAsync();
+            return file?.Path;
+        }
+
         private static ScoreProject CloneProject(ScoreProject source)
         {
-            return new ScoreProject
+            var project = new ScoreProject
             {
                 Title = source.Title,
                 Bpm = source.Bpm,
@@ -794,11 +1161,61 @@ namespace MusicBox
                     Mode = change.Mode
                 }).ToList(),
                 StaffClefs = source.StaffClefs.ToDictionary(entry => entry.Key, entry => entry.Value),
-                LayoutSystemMeasureCounts = source.LayoutSystemMeasureCounts.ToList(),
-                LayoutBarlineOffsets = source.LayoutBarlineOffsets.ToDictionary(entry => entry.Key, entry => entry.Value),
-                LayoutMeasuresPerSystemOverride = source.LayoutMeasuresPerSystemOverride,
-                LayoutAutoMeasuresPerSystem = source.LayoutAutoMeasuresPerSystem
+                LayoutSystemMeasureCounts = new List<int>(),
+                LayoutBarlineOffsets = new Dictionary<int, float>(),
+                LayoutMeasuresPerSystemOverride = 0,
+                LayoutAutoMeasuresPerSystem = 0
             };
+
+            NormalizeComposeVoicesForStaff(project);
+            NormalizeComposeExpressionMarksForStaff(project);
+            return project;
+        }
+
+        private static void NormalizeComposeVoicesForStaff(ScoreProject project)
+        {
+            foreach (NoteEvent note in project.Notes)
+            {
+                bool preferTreble = note.PreferTrebleStaff
+                    ?? note.Voice is 1 or 3
+                    || note.Midi >= 60;
+                note.PreferTrebleStaff = preferTreble;
+                note.Voice = preferTreble ? 1 : 2;
+            }
+        }
+
+        private static void NormalizeComposeExpressionMarksForStaff(ScoreProject project)
+        {
+            if (project.ExpressionMarks.Count == 0)
+            {
+                return;
+            }
+
+            project.ExpressionMarks = project.ExpressionMarks
+                .Select((mark, index) => new { Mark = mark, Index = index })
+                .OrderBy(item => item.Mark.StartTick)
+                .ThenBy(item => GetComposeExpressionSortPriority(item.Mark))
+                .ThenBy(item => item.Index)
+                .Select(item => item.Mark)
+                .ToList();
+        }
+
+        private static int GetComposeExpressionSortPriority(ExpressionMark mark)
+        {
+            return NormalizeComposeExpressionCode(mark.Code) switch
+            {
+                "ped_release" => 0,
+                "ped_line" => 1,
+                "ped" => 2,
+                _ => 3
+            };
+        }
+
+        private static string NormalizeComposeExpressionCode(string? code)
+        {
+            return string.IsNullOrWhiteSpace(code)
+                ? string.Empty
+                : code.Trim().ToLowerInvariant();
         }
 
         private ComposeCategoryRating BuildDialogSeedRating(int index)
@@ -1001,6 +1418,16 @@ namespace MusicBox
                 0 => Option1RatingSlider,
                 1 => Option2RatingSlider,
                 _ => Option3RatingSlider
+            };
+        }
+
+        private ProgressBar GetScoreProgress(int index)
+        {
+            return index switch
+            {
+                0 => Option1ScoreProgress,
+                1 => Option2ScoreProgress,
+                _ => Option3ScoreProgress
             };
         }
 

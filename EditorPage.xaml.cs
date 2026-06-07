@@ -125,11 +125,12 @@ namespace MusicBox
         }
 
         private MainViewModel? _viewModel;
+        private readonly AppSettingsService _settings = AppSettingsService.Instance;
 
         private const float HitRadius = 14f;
         private const float BaseNoteHeadWidth = 9f;
         private const float BaseNoteHeadHeight = 6f;
-        private const float NoteHeadScale = 2.2f;
+        private const float NoteHeadScale = 1.9f;
         private const float TrebleClefYOffset = 0.0f;
         private const float BassClefYOffset = 0.0f;
         private const float KeySignatureYOffset = 0.75f;
@@ -151,6 +152,7 @@ namespace MusicBox
         private const float PrintVerticalLayoutScale = 0.90f;
         private const float PrintSideMarginScale = 0.95f;
         private const double PrintPageSidePaddingScale = 0.44d;
+        private const float MaxInteractiveCanvasExtent = 16000f;
         private const float MaxBeamSlopeAbs = 0.36f;
         private const float DefaultExpressionStaffStepOffset = 18f;
         private const float ExpressionHitPadding = 8f;
@@ -187,6 +189,8 @@ namespace MusicBox
         private const int SmuflFClef = 0xE062;
         private const int SmuflAccidentalFlat = 0xE260;
         private const int SmuflAccidentalSharp = 0xE262;
+        private const int SmuflAccidentalDoubleSharp = 0xE263;
+        private const int SmuflAccidentalDoubleFlat = 0xE264;
         private const int SmuflTimeSig0 = 0xE080;
         private const int SmuflFlag8thUp = 0xE240;
         private const int SmuflFlag8thDown = 0xE241;
@@ -309,6 +313,7 @@ namespace MusicBox
         private readonly List<int> _measureTickBoundaries = new();
         private bool _allowAutoMeasureRatioAdjust;
         private bool _musicFontAvailable;
+        private bool _musicFontInitialized;
         private string _musicFontStatus = string.Empty;
         private bool _musicFontInstallPromptShown;
         private string _musicFontFamily = string.Empty;
@@ -401,9 +406,11 @@ namespace MusicBox
         private static double _persistedHorizontalOffset;
         private static double _persistedVerticalOffset;
         private static int _persistedPlaybackTick;
+        private static bool _persistedPlaybackCanResume;
         private bool _isPreparingPrintPreview;
         private bool _forcePrintInkOnWhite;
         private readonly RasterPdfExportService _pdfExporter = new();
+        private readonly AudioExportService _audioExporter = new();
         private PrintManager? _printManager;
         private PrintDocument? _printDocument;
         private IPrintDocumentSource? _printDocumentSource;
@@ -571,6 +578,7 @@ namespace MusicBox
 
         public EditorPage()
         {
+            NavigationCacheMode = NavigationCacheMode.Required;
             InitializeComponent();
             Loaded += EditorPage_Loaded;
             Unloaded += EditorPage_Unloaded;
@@ -611,7 +619,9 @@ namespace MusicBox
             _barlineOffsets.Clear();
             _systemMeasureCounts.Clear();
             if (AccidentalSharpItem != null) AccidentalSharpItem.IsChecked = false;
+            if (AccidentalDoubleSharpItem != null) AccidentalDoubleSharpItem.IsChecked = false;
             if (AccidentalFlatItem != null) AccidentalFlatItem.IsChecked = false;
+            if (AccidentalDoubleFlatItem != null) AccidentalDoubleFlatItem.IsChecked = false;
             if (AccidentalNaturalItem != null) AccidentalNaturalItem.IsChecked = false;
             if (StaccatissimoMenuItem != null) StaccatissimoMenuItem.IsChecked = false;
             if (StaccatoMenuItem != null) StaccatoMenuItem.IsChecked = false;
@@ -637,7 +647,7 @@ namespace MusicBox
             UpdatePlaybackProgressBar();
             try
             {
-                InitializeMusicFontSelection();
+                EnsureMusicFontSelectionInitialized();
             }
             catch (Exception ex)
             {
@@ -657,8 +667,9 @@ namespace MusicBox
                 _persistedVerticalOffset = ScoreScrollViewer.VerticalOffset;
                 _hasPersistedEditorViewState = true;
             }
-            _persistedPlaybackTick = _playbackCurrentTick;
-            StopPlaybackInternal(resetPosition: false);
+            _persistedPlaybackTick = GetCurrentPlaybackTickSnapshot();
+            _persistedPlaybackCanResume = _isPlaybackRunning || _isPlaybackPaused;
+            PausePlaybackInternal();
             UnregisterPrintManager();
             DetachViewModel();
         }
@@ -686,9 +697,15 @@ namespace MusicBox
                     ScoreScrollViewer.ChangeView(_persistedHorizontalOffset, _persistedVerticalOffset, null, true);
                 });
             }
-            if (_persistedPlaybackTick > 0)
+            if (_persistedPlaybackCanResume || _persistedPlaybackTick > 0)
             {
-                _playbackCurrentTick = _persistedPlaybackTick;
+                if (_playbackTotalTicks <= 0 && _viewModel?.Project != null)
+                {
+                    BuildPlaybackEvents();
+                }
+
+                _playbackCurrentTick = Math.Clamp(_persistedPlaybackTick, 0, Math.Max(0, _playbackTotalTicks));
+                _isPlaybackPaused = _persistedPlaybackCanResume && _playbackTotalTicks > 0;
                 UpdatePlaybackProgressBar();
             }
             StartPlaybackOverlayCollapseDelay();
@@ -1467,6 +1484,8 @@ namespace MusicBox
             int tinyCount = 0;
             int accidentalCount = 0;
             int chordExtra = 0;
+            int closeOnsetWeight = 0;
+            int chordClusterWeight = 0;
             var onsets = new Dictionary<int, int>();
 
             foreach (var note in _viewModel.Project.Notes)
@@ -1513,6 +1532,24 @@ namespace MusicBox
             foreach (int count in onsets.Values)
             {
                 chordExtra += Math.Max(0, count - 1);
+                if (count >= 2)
+                {
+                    chordClusterWeight += count;
+                }
+            }
+
+            int[] orderedOnsets = onsets.Keys.OrderBy(tick => tick).ToArray();
+            for (int index = 1; index < orderedOnsets.Length; index++)
+            {
+                int gap = orderedOnsets[index] - orderedOnsets[index - 1];
+                if (gap <= Math.Max(1, ppq / 8))
+                {
+                    closeOnsetWeight += 2;
+                }
+                else if (gap <= Math.Max(1, ppq / 4))
+                {
+                    closeOnsetWeight += 1;
+                }
             }
 
             int markWeight = 0;
@@ -1543,7 +1580,9 @@ namespace MusicBox
                 + shortCount * 0.032f
                 + tinyCount * 0.07f
                 + accidentalCount * 0.024f
-                + chordExtra * 0.045f
+                + chordExtra * 0.062f
+                + chordClusterWeight * 0.026f
+                + closeOnsetWeight * 0.085f
                 + markWeight * 0.14f;
             factor = Math.Clamp(factor, 1f, 3.2f);
             _measureDemandFactorCache[safeMeasure] = factor;
@@ -1651,7 +1690,7 @@ namespace MusicBox
             if (StaffCanvas == null) return;
 
             double desiredWidth = Math.Max(1d, Math.Ceiling(targetWidth));
-            double desired = Math.Max(MinCanvasHeight, Math.Ceiling(targetHeight));
+            double desired = Math.Min(MaxInteractiveCanvasExtent, Math.Max(MinCanvasHeight, Math.Ceiling(targetHeight)));
             if (double.IsNaN(StaffCanvas.Width) || Math.Abs(StaffCanvas.Width - desiredWidth) > 0.5d)
             {
                 StaffCanvas.Width = desiredWidth;
@@ -2660,7 +2699,7 @@ namespace MusicBox
                     IsWhole = isWhole,
                     IsHalf = isHalf,
                     FillHead = fillHead,
-                    StemUp = note.IsRest ? true : (note.StemUpOverride ?? (GetEffectiveNoteMidi(note) < 71)),
+                    StemUp = note.IsRest ? true : (note.StemUpOverride ?? ResolveDefaultStemUp(note, systemIndex)),
                     MeasureIndex = GetMeasureIndex(note.StartTick)
                 });
             }
@@ -2704,7 +2743,7 @@ namespace MusicBox
                     .ToList();
                 bool stemUp = forced.Count > 0
                     ? forced.GroupBy(v => v).OrderByDescending(g => g.Count()).First().Key
-                    : chord.Average(n => GetEffectiveNoteMidi(n.Note)) < 71;
+                    : ResolveDefaultStemUp(chord);
                 foreach (var chordNote in chord)
                 {
                     chordNote.StemUp = chordNote.Note.StemUpOverride ?? stemUp;
@@ -2744,7 +2783,6 @@ namespace MusicBox
                 bool isBeamedGroupNote = groupByNote.ContainsKey(info);
                 bool isShortFlagChordTone = isChordTone && info.Beams > 0;
                 bool isBeamedChordTone = isChordTone && isBeamedGroupNote && info.Beams > 0;
-                // Chord stems are provided by glyphs, not custom stem-line drawing.
                 bool drawStemForThisNote = !isChordTone;
                 // Legacy behavior requested:
                 // for 8th/16th/32nd chords, only one anchor keeps tails; the others become quarter glyphs.
@@ -2771,6 +2809,10 @@ namespace MusicBox
                         || (!isBeamedGroupNote
                             && drawStemForThisNote
                             && CanDrawFullNoteGlyph(info)));
+                if (shouldUseChordBeamedAnchorGlyph)
+                {
+                    drawStemForThisNote = true;
+                }
                 info.IsBeamed = isBeamedGroupNote;
                 float noteheadScale = 1f;
                 Color noteColor = info.Note.IsSelected && !suppressSelectionVisuals ? GetAccentColor() : GetNotationInkColor();
@@ -2836,15 +2878,15 @@ namespace MusicBox
                         {
                             float stemDrawX = stemX;
                             float stemStartY = info.Y;
-                            if (drawnAsCompleteGlyph && shouldUseBeamedQuarterGlyph)
+                            if (drawnAsCompleteGlyph && (shouldUseBeamedQuarterGlyph || shouldUseChordBeamedAnchorGlyph))
                             {
                                 // Avoid doubling the quarter-glyph stem near the notehead:
                                 // only draw the extension segment from glyph stem tip to beam.
-                                float glyphStemLength = SymbolSizeGap * 2.95f;
-                                stemDrawX += stemUp ? 0.4f : 0.3f;
+                                float glyphStemLength = SymbolSizeGap * 2.78f;
+                                stemDrawX += stemUp ? 0.44f : -0.20f;
                                 stemStartY = stemUp
-                                    ? info.Y - glyphStemLength - 3f
-                                    : info.Y + glyphStemLength + 3f;
+                                    ? info.Y - glyphStemLength - 2f
+                                    : info.Y + glyphStemLength + 2f;
                             }
                             float beamY = GetBeamYAtX(group, stemDrawX);
 
@@ -2899,6 +2941,7 @@ namespace MusicBox
                 DrawBeamGroup(ds, group, suppressSelectionVisuals);
             }
         }
+
 
         private void DrawExpressionMarks(
             Microsoft.Graphics.Canvas.CanvasDrawingSession ds,
@@ -2959,7 +3002,7 @@ namespace MusicBox
             int cursorSystem = GetSystemIndexForTick(cursorSourceTick);
             if (cursorSystem != systemIndex) return;
 
-            float x = GetNoteX(sourceTick);
+            float x = GetTimelineX(sourceTick);
             float width = Math.Max(4f, SymbolSizeGap * 0.92f);
             float maxX = GetSystemRightX(systemIndex) - width;
             float minX = GetSystemMusicStartX(systemIndex);
@@ -3166,7 +3209,7 @@ namespace MusicBox
         {
             string code = NormalizeExpressionCode(mark.Code);
             float thickness = Math.Max(1.2f, SymbolSizeGap * 0.1f);
-            var (dx, dy) = GetExpressionAnchorOffset(code);
+            var (dx, dy) = GetExpressionAnchorOffset(mark);
             float drawX = x + dx;
             float drawY = y + dy;
             Color ink = mark.IsSelected && !suppressSelectionVisuals ? GetAccentColor() : GetNotationInkColor();
@@ -3328,7 +3371,7 @@ namespace MusicBox
         private Rect GetExpressionMarkBounds(ExpressionMark mark, float x, float y)
         {
             string code = NormalizeExpressionCode(mark.Code);
-            var (dx, dy) = GetExpressionAnchorOffset(code);
+            var (dx, dy) = GetExpressionAnchorOffset(mark);
             float drawX = x + dx;
             float drawY = y + dy;
             if (IsScoreClefExpression(code))
@@ -3543,7 +3586,7 @@ namespace MusicBox
             float bottomLineY = GetSystemBottomLineY(markSystem);
             float x = GetNoteX(mark.StartTick);
             float y = StaffStepOffsetToY(mark.StaffStepOffset, bottomLineY);
-            var (dx, dy) = GetExpressionAnchorOffset(mark.Code);
+            var (dx, dy) = GetExpressionAnchorOffset(mark);
             return (x + dx, y + dy);
         }
 
@@ -3665,6 +3708,44 @@ namespace MusicBox
                 return (0f, SymbolSizeGap * 2.35f);
             }
             return (0f, 0f);
+        }
+
+        private (float Dx, float Dy) GetExpressionAnchorOffset(ExpressionMark mark)
+        {
+            var (dx, dy) = GetExpressionAnchorOffset(mark.Code);
+            dx += GetPedalSymbolHorizontalOffset(mark);
+            return (dx, dy);
+        }
+
+        private float GetPedalSymbolHorizontalOffset(ExpressionMark mark)
+        {
+            string code = NormalizeExpressionCode(mark.Code);
+            if (code is not ("ped" or "ped_release") || _viewModel?.Project?.ExpressionMarks == null)
+            {
+                return 0f;
+            }
+
+            bool overlapsOppositePedalSymbol = _viewModel.Project.ExpressionMarks.Any(other =>
+                !ReferenceEquals(other, mark)
+                && Math.Max(0, other.StartTick) == Math.Max(0, mark.StartTick)
+                && NormalizeExpressionCode(other.Code) is "ped" or "ped_release");
+            if (!overlapsOppositePedalSymbol)
+            {
+                return 0f;
+            }
+
+            float pedalSize = Math.Max(14f, SymbolSizeGap * 1.45f * ExpressionScale);
+            float releaseSize = Math.Max(14f, SymbolSizeGap * 1.67f * ExpressionScale);
+            float pedalAdvance = _musicFontAvailable && _musicFontFace != null
+                ? Math.Max(GetGlyphAdvance(SmuflPedalMark, pedalSize), SymbolSizeGap * 1.6f)
+                : Math.Max(22f, SymbolSizeGap * 1.9f);
+            float releaseAdvance = _musicFontAvailable && _musicFontFace != null
+                ? Math.Max(GetGlyphAdvance(SmuflPedalUpMark, releaseSize), SymbolSizeGap * 0.95f)
+                : Math.Max(12f, SymbolSizeGap * 1.1f);
+            float totalClearance = pedalAdvance + releaseAdvance + Math.Max(4f, SymbolSizeGap * 0.25f);
+            return code == "ped"
+                ? -Math.Max(12f, totalClearance * 0.58f)
+                : Math.Max(12f, totalClearance * 0.42f);
         }
 
         private static float GetDefaultExpressionSpanBeats(string code)
@@ -4438,7 +4519,7 @@ namespace MusicBox
             return true;
         }
 
-        private float GetNoteheadGlyphSize() => SymbolSizeGap * 4.15f;
+        private float GetNoteheadGlyphSize() => SymbolSizeGap * 3.78f;
 
         private float GetStemAttachOffset(float headWidth)
         {
@@ -4452,10 +4533,10 @@ namespace MusicBox
             float stemAttach = GetStemAttachOffset(info.HeadWidth);
             float baseX = stemUp ? info.X + stemAttach - 1f : info.X - stemAttach + 1f;
             float inwardShift = SymbolSizeGap * 0.125f;
-            float rightShift = info.IsBeamed
-                ? 0.3f
+            float beamAnchorCorrection = info.IsBeamed
+                ? (stemUp ? 2.02f : -0.86f)
                 : 0f;
-            return (stemUp ? baseX - inwardShift : baseX + inwardShift) + rightShift;
+            return (stemUp ? baseX - inwardShift : baseX + inwardShift) + beamAnchorCorrection;
         }
 
         private static float GetBeamYAtX(BeamGroup group, float x)
@@ -4544,7 +4625,7 @@ namespace MusicBox
                 return false;
             }
 
-            float size = Math.Max(16f, SymbolSizeGap * 4.28f);
+            float size = Math.Max(15f, SymbolSizeGap * 3.92f);
             float advance = GetGlyphAdvance(code, size);
             float startX = info.X - advance * 0.5f;
             float baselineY = info.Y - SymbolSizeGap * 0.04f;
@@ -4562,7 +4643,7 @@ namespace MusicBox
                 return false;
             }
 
-            float size = Math.Max(16f, SymbolSizeGap * 4.28f);
+            float size = Math.Max(15f, SymbolSizeGap * 3.92f);
             float advance = GetGlyphAdvance(code, size);
             float startX = info.X - advance * 0.5f;
             float baselineY = info.Y - SymbolSizeGap * 0.04f;
@@ -4644,6 +4725,11 @@ namespace MusicBox
             if (info.Note.Accidental == NoteAccidental.None) return;
 
             float x = info.X - info.HeadWidth + 3f;
+            if (info.Note.Accidental is NoteAccidental.DoubleSharp or NoteAccidental.DoubleFlat)
+            {
+                // Double accidentals are wider than single signs; keep a little more air before the notehead.
+                x -= SymbolSizeGap * 0.38f;
+            }
             float y = info.Y;
 
             int code = info.Note.Accidental switch
@@ -4651,6 +4737,8 @@ namespace MusicBox
                 NoteAccidental.Sharp => SmuflAccidentalSharp,
                 NoteAccidental.Flat => SmuflAccidentalFlat,
                 NoteAccidental.Natural => SmuflAccidentalNatural,
+                NoteAccidental.DoubleSharp => SmuflAccidentalDoubleSharp,
+                NoteAccidental.DoubleFlat => SmuflAccidentalDoubleFlat,
                 _ => 0
             };
 
@@ -4671,6 +4759,8 @@ namespace MusicBox
                 NoteAccidental.Sharp => "#",
                 NoteAccidental.Flat => "b",
                 NoteAccidental.Natural => "?",
+                NoteAccidental.DoubleSharp => "x",
+                NoteAccidental.DoubleFlat => "bb",
                 _ => ""
             };
 
@@ -5204,7 +5294,7 @@ namespace MusicBox
                     .ToList();
                 bool stemUp = forced.Count > 0
                     ? forced.GroupBy(v => v).OrderByDescending(g => g.Count()).First().Key
-                    : list.Average(n => GetEffectiveNoteMidi(n.Note)) < 71;
+                    : ResolveDefaultStemUp(list);
                 var collapsed = list
                     .GroupBy(n => n.Note.StartTick)
                     .OrderBy(g => g.Key)
@@ -5360,7 +5450,7 @@ namespace MusicBox
             if (group.Notes.Count < 2) return;
 
             // Re-tuned to standard engraving proportions for this staff size.
-            float beamThickness = Math.Max(1.72f, SymbolSizeGap * 0.31f) * 1.1f * 1.6f;
+            float beamThickness = Math.Max(1.52f, SymbolSizeGap * 0.26f) * 1.28f;
             float beamSpacing = SymbolSizeGap * 0.78f;
             bool isSelected = !suppressSelectionVisuals && group.Notes.Any(n => n.Note.IsSelected);
             Color ink = isSelected ? GetAccentColor() : GetNotationInkColor();
@@ -5978,7 +6068,7 @@ namespace MusicBox
                 if (_expressionDragMode == ExpressionDragMode.Move)
                 {
                     string code = NormalizeExpressionCode(_activeExpressionMark.Code);
-                    var (dx, dy) = GetExpressionAnchorOffset(code);
+                    var (dx, dy) = GetExpressionAnchorOffset(_activeExpressionMark);
                     float desiredDrawX = (float)pos.X - _expressionDragOffsetX;
                     float desiredDrawY = (float)pos.Y - _expressionDragOffsetY;
                     float baseX = desiredDrawX - dx;
@@ -6082,6 +6172,7 @@ namespace MusicBox
             if (FileNewMenuItem != null) FileNewMenuItem.Text = LocalizationService.Translate("editor.menu.new");
             if (FileImportMusicXmlMenuItem != null) FileImportMusicXmlMenuItem.Text = LocalizationService.Translate("editor.menu.import_musicxml");
             if (FileExportMusicXmlMenuItem != null) FileExportMusicXmlMenuItem.Text = LocalizationService.Translate("editor.menu.export_musicxml");
+            if (FileExportAudioMenuItem != null) FileExportAudioMenuItem.Text = LocalizationService.Translate("editor.menu.export_audio");
             if (FileExportPdfMenuItem != null) FileExportPdfMenuItem.Text = LocalizationService.Translate("editor.menu.export_pdf");
             if (FilePrintMenuItem != null) FilePrintMenuItem.Text = LocalizationService.Translate("editor.menu.print");
             if (TimeSignatureMenu != null) TimeSignatureMenu.Title = LocalizationService.Translate("editor.menu.time_signature");
@@ -6146,7 +6237,9 @@ namespace MusicBox
             }
 
             if (AccidentalSharpItem != null) AccidentalSharpItem.Text = LocalizationService.Translate("editor.note_type.sharp");
+            if (AccidentalDoubleSharpItem != null) AccidentalDoubleSharpItem.Text = LocalizationService.Translate("editor.note_type.double_sharp");
             if (AccidentalFlatItem != null) AccidentalFlatItem.Text = LocalizationService.Translate("editor.note_type.flat");
+            if (AccidentalDoubleFlatItem != null) AccidentalDoubleFlatItem.Text = LocalizationService.Translate("editor.note_type.double_flat");
             if (AccidentalNaturalItem != null) AccidentalNaturalItem.Text = LocalizationService.Translate("editor.note_type.natural");
             if (StaccatoMenuItem != null) StaccatoMenuItem.Text = LocalizationService.Translate("editor.note_type.staccato");
             if (StaccatissimoMenuItem != null) StaccatissimoMenuItem.Text = LocalizationService.Translate("editor.note_type.staccatissimo");
@@ -8077,7 +8170,9 @@ namespace MusicBox
             try
             {
                 if (AccidentalSharpItem != null) AccidentalSharpItem.IsChecked = false;
+                if (AccidentalDoubleSharpItem != null) AccidentalDoubleSharpItem.IsChecked = false;
                 if (AccidentalFlatItem != null) AccidentalFlatItem.IsChecked = false;
+                if (AccidentalDoubleFlatItem != null) AccidentalDoubleFlatItem.IsChecked = false;
                 if (AccidentalNaturalItem != null) AccidentalNaturalItem.IsChecked = false;
                 if (StaccatoMenuItem != null) StaccatoMenuItem.IsChecked = false;
                 if (StaccatissimoMenuItem != null) StaccatissimoMenuItem.IsChecked = false;
@@ -8110,11 +8205,15 @@ namespace MusicBox
 
             _pendingAccidental = AccidentalSharpItem?.IsChecked == true
                 ? NoteAccidental.Sharp
-                : AccidentalFlatItem?.IsChecked == true
-                    ? NoteAccidental.Flat
-                    : AccidentalNaturalItem?.IsChecked == true
-                        ? NoteAccidental.Natural
-                        : NoteAccidental.None;
+                : AccidentalDoubleSharpItem?.IsChecked == true
+                    ? NoteAccidental.DoubleSharp
+                    : AccidentalFlatItem?.IsChecked == true
+                        ? NoteAccidental.Flat
+                        : AccidentalDoubleFlatItem?.IsChecked == true
+                            ? NoteAccidental.DoubleFlat
+                            : AccidentalNaturalItem?.IsChecked == true
+                                ? NoteAccidental.Natural
+                                : NoteAccidental.None;
 
             _pendingStaccatissimo = StaccatissimoMenuItem?.IsChecked == true;
             _pendingStaccato = StaccatoMenuItem?.IsChecked == true;
@@ -8135,7 +8234,9 @@ namespace MusicBox
             try
             {
                 if (AccidentalSharpItem != null) AccidentalSharpItem.IsChecked = note.Accidental == NoteAccidental.Sharp;
+                if (AccidentalDoubleSharpItem != null) AccidentalDoubleSharpItem.IsChecked = note.Accidental == NoteAccidental.DoubleSharp;
                 if (AccidentalFlatItem != null) AccidentalFlatItem.IsChecked = note.Accidental == NoteAccidental.Flat;
+                if (AccidentalDoubleFlatItem != null) AccidentalDoubleFlatItem.IsChecked = note.Accidental == NoteAccidental.DoubleFlat;
                 if (AccidentalNaturalItem != null) AccidentalNaturalItem.IsChecked = note.Accidental == NoteAccidental.Natural;
                 if (StaccatoMenuItem != null) StaccatoMenuItem.IsChecked = note.IsStaccato;
                 if (StaccatissimoMenuItem != null) StaccatissimoMenuItem.IsChecked = note.IsStaccatissimo;
@@ -8832,6 +8933,16 @@ namespace MusicBox
 
         private float GetNoteX(double startTick)
         {
+            return GetNoteX(startTick, applyBoundaryVisualInset: true);
+        }
+
+        private float GetTimelineX(double startTick)
+        {
+            return GetNoteX(startTick, applyBoundaryVisualInset: false);
+        }
+
+        private float GetNoteX(double startTick, bool applyBoundaryVisualInset)
+        {
             if (_measureWidth <= 0f) return _musicStartX;
 
             double safeTick = Math.Max(0d, startTick);
@@ -8840,6 +8951,14 @@ namespace MusicBox
             int measureEndTick = GetMeasureBoundaryTick(measureIndex + 1);
             int measureTickLength = Math.Max(1, measureEndTick - measureStartTick);
             double tickInMeasure = Math.Clamp(safeTick - measureStartTick, 0d, measureTickLength);
+            if (applyBoundaryVisualInset && measureIndex > 0 && tickInMeasure <= 0.0001d)
+            {
+                int ppq = Math.Max(1, _viewModel?.Project.Ppq ?? 480);
+                int snapDiv = Math.Max(1, _viewModel?.SnapDivision ?? 4);
+                int firstInteriorTick = Math.Max(1, ppq / snapDiv);
+                tickInMeasure = Math.Min(measureTickLength, firstInteriorTick);
+            }
+
             int systemIndex = GetSystemIndexForMeasureIndex(measureIndex);
             int measureInSystem = measureIndex - GetSystemStartMeasureIndex(systemIndex);
             int measuresInSystem = GetMeasuresInSystem(systemIndex);
@@ -8971,8 +9090,10 @@ namespace MusicBox
         {
             return accidental switch
             {
+                NoteAccidental.DoubleSharp => 2,
                 NoteAccidental.Sharp => 1,
                 NoteAccidental.Flat => -1,
+                NoteAccidental.DoubleFlat => -2,
                 _ => 0
             };
         }
@@ -9082,9 +9203,11 @@ namespace MusicBox
             int keyOffset = GetKeySignatureSemitoneOffset(naturalMidi, GetEffectiveKeySignatureFifthsAtTick(note.StartTick));
             int offset = note.Accidental switch
             {
+                NoteAccidental.DoubleSharp => 2,
                 // If key signature already sharp/flat on this pitch, explicit same accidental upgrades to double accidental.
                 NoteAccidental.Sharp => keyOffset > 0 ? keyOffset + 1 : 1,
                 NoteAccidental.Flat => keyOffset < 0 ? keyOffset - 1 : -1,
+                NoteAccidental.DoubleFlat => -2,
                 NoteAccidental.Natural => 0,
                 _ => keyOffset
             };
@@ -9096,6 +9219,30 @@ namespace MusicBox
             bool preferTreble = note.PreferTrebleStaff ?? ShouldPreferTrebleByPosition(systemIndex, note.Midi, note.Accidental);
             note.PreferTrebleStaff = preferTreble;
             return preferTreble;
+        }
+
+        private bool ResolveDefaultStemUp(NoteEvent note, int? systemIndex = null)
+        {
+            int resolvedSystemIndex = systemIndex ?? GetSystemIndexForTick(note.StartTick);
+            bool preferTreble = note.PreferTrebleStaff ?? ShouldPreferTrebleByPosition(resolvedSystemIndex, note.Midi, note.Accidental);
+            note.PreferTrebleStaff = preferTreble;
+            return ResolveDefaultStemUp(preferTreble);
+        }
+
+        private static bool ResolveDefaultStemUp(bool preferTrebleStaff)
+        {
+            return preferTrebleStaff;
+        }
+
+        private static bool ResolveDefaultStemUp(IReadOnlyList<NoteDrawInfo> notes)
+        {
+            if (notes.Count == 0)
+            {
+                return true;
+            }
+
+            int trebleVotes = notes.Count(n => n.PreferTrebleStaff);
+            return trebleVotes * 2 >= notes.Count;
         }
 
         private bool ShouldPreferTrebleByPosition(int systemIndex, int midi, NoteAccidental accidental)
@@ -9585,6 +9732,17 @@ namespace MusicBox
             }
 
             return false;
+        }
+
+        private void EnsureMusicFontSelectionInitialized()
+        {
+            if (_musicFontInitialized && _musicFontFace != null)
+            {
+                return;
+            }
+
+            InitializeMusicFontSelection();
+            _musicFontInitialized = _musicFontFace != null;
         }
 
         private void ShowMusicFontInstallPromptIfNeeded(string familyName)
@@ -10782,7 +10940,7 @@ namespace MusicBox
             var firstNotRest = selected.FirstOrDefault(n => !n.IsRest);
             if (firstNotRest == null) return;
 
-            bool target = !(firstNotRest.StemUpOverride ?? (GetEffectiveNoteMidi(firstNotRest) < 71));
+            bool target = !(firstNotRest.StemUpOverride ?? ResolveDefaultStemUp(firstNotRest));
             foreach (var note in selected)
             {
                 if (note.IsRest) continue;
@@ -11001,7 +11159,7 @@ namespace MusicBox
 
             if (_isPlaybackPaused && _playbackTotalTicks > 0)
             {
-                ResumePlayback();
+                await ResumePlaybackAsync();
                 return;
             }
 
@@ -11020,19 +11178,13 @@ namespace MusicBox
             }
             catch (Exception ex)
             {
-                _viewModel.SetStatus($"鎾斁澶辫触: {ex.Message}");
+                _viewModel.SetStatus($"播放失败: {ex.Message}");
             }
         }
 
         private void PauseMidiButton_Click(object sender, RoutedEventArgs e)
         {
-            if (!_isPlaybackRunning) return;
-            _isPlaybackRunning = false;
-            _isPlaybackPaused = true;
-            _playbackTimer?.Stop();
-            StopAllActivePlaybackNotes();
-            UpdatePlaybackProgressBar();
-            StaffCanvas.Invalidate();
+            PausePlaybackInternal();
         }
 
         private void StopMidiButton_Click(object sender, RoutedEventArgs e)
@@ -11317,28 +11469,22 @@ namespace MusicBox
             int start = Math.Max(0, startTick);
             int duration = Math.Max(1, durationTicks);
             int adjustedVelocity = velocity;
-            bool suppressPedalSustain = false;
             if (applyArticulation)
             {
                 if (source.IsStaccatissimo)
                 {
                     duration = Math.Max(1, (int)Math.Round(duration * 0.08));
                     adjustedVelocity += 16;
-                    suppressPedalSustain = true;
                 }
                 else if (source.IsStaccato)
                 {
                     duration = Math.Max(1, (int)Math.Round(duration * 0.18));
                     adjustedVelocity += 10;
-                    suppressPedalSustain = true;
                 }
             }
 
             int end = Math.Max(start + 1, start + duration);
-            if (!suppressPedalSustain)
-            {
-                end = GetSustainedEndTick(start, end, pedalRanges);
-            }
+            end = GetSustainedEndTick(start, end, pedalRanges);
 
             int safeMidi = Math.Clamp(midi, 0, 127);
             int safeVelocity = Math.Clamp(adjustedVelocity, 1, 127);
@@ -11566,7 +11712,16 @@ namespace MusicBox
                 }
             }
 
-            pedalEvents.Sort((a, b) => a.Tick.CompareTo(b.Tick));
+            pedalEvents.Sort((a, b) =>
+            {
+                int tick = a.Tick.CompareTo(b.Tick);
+                if (tick != 0)
+                {
+                    return tick;
+                }
+
+                return GetPedalEventSortPriority(a.Code).CompareTo(GetPedalEventSortPriority(b.Code));
+            });
             bool pedalDown = false;
             int pedalStart = 0;
             foreach (var evt in pedalEvents)
@@ -11635,13 +11790,24 @@ namespace MusicBox
             return merged;
         }
 
+        private static int GetPedalEventSortPriority(string code)
+        {
+            return code switch
+            {
+                "ped_release" => 0,
+                "ped_line" => 1,
+                "ped" => 2,
+                _ => 3
+            };
+        }
+
         private static int GetSustainedEndTick(int startTick, int noteEndTick, IReadOnlyList<PlaybackPedalRange> pedalRanges)
         {
             int sustainedEnd = Math.Max(startTick + 1, noteEndTick);
             for (int i = 0; i < pedalRanges.Count; i++)
             {
                 var range = pedalRanges[i];
-                if (sustainedEnd > range.StartTick && sustainedEnd <= range.EndTick && startTick < range.EndTick)
+                if (sustainedEnd >= range.StartTick && sustainedEnd < range.EndTick)
                 {
                     sustainedEnd = Math.Max(sustainedEnd, range.EndTick);
                 }
@@ -11689,7 +11855,10 @@ namespace MusicBox
             }
             _playbackTimer?.Start();
             UpdatePlaybackProgressBar();
-            CenterPlaybackInViewport(force: true);
+            if (_settings.PlaybackAutoScrollEnabled)
+            {
+                CenterPlaybackInViewport(force: true);
+            }
             StaffCanvas.Invalidate();
         }
 
@@ -11758,7 +11927,7 @@ namespace MusicBox
             double sourceTick = GetSourceTickForPlaybackCursor(playbackTick);
             int cursorSourceTick = Math.Max(0, (int)Math.Round(sourceTick));
             int systemIndex = GetSystemIndexForTick(cursorSourceTick);
-            float anchorX = GetNoteX(sourceTick);
+            float anchorX = GetTimelineX(sourceTick);
             float anchorY = (GetSystemTrebleTop(systemIndex) + GetSystemBassBottom(systemIndex)) * 0.5f;
 
             GeneralTransform transform = StaffCanvas.TransformToVisual(scrollContent);
@@ -11838,10 +12007,38 @@ namespace MusicBox
             SeekPlaybackToTick(playbackTick, keepRunningIfWasRunning);
         }
 
-        private void ResumePlayback()
+        private async System.Threading.Tasks.Task ResumePlaybackAsync()
         {
-            if (_playbackTotalTicks <= 0 || _midiSynth == null) return;
+            if (_playbackTotalTicks <= 0) return;
+            await EnsureMidiSynthAsync();
             StartPlaybackFromTick(_playbackCurrentTick);
+        }
+
+        private int GetCurrentPlaybackTickSnapshot()
+        {
+            if (!_isPlaybackRunning)
+            {
+                return _playbackCurrentTick;
+            }
+
+            int tick = (int)Math.Floor((DateTimeOffset.UtcNow - _playbackStartTimeUtc).TotalSeconds * _playbackTicksPerSecond);
+            return Math.Clamp(tick, 0, Math.Max(0, _playbackTotalTicks));
+        }
+
+        private void PausePlaybackInternal()
+        {
+            if (!_isPlaybackRunning && !_isPlaybackPaused)
+            {
+                return;
+            }
+
+            _playbackCurrentTick = GetCurrentPlaybackTickSnapshot();
+            _isPlaybackRunning = false;
+            _isPlaybackPaused = _playbackCurrentTick < Math.Max(0, _playbackTotalTicks);
+            _playbackTimer?.Stop();
+            StopAllActivePlaybackNotes();
+            UpdatePlaybackProgressBar();
+            StaffCanvas.Invalidate();
         }
 
         private void StopPlaybackInternal(bool resetPosition)
@@ -11854,6 +12051,8 @@ namespace MusicBox
             if (resetPosition)
             {
                 _playbackCurrentTick = 0;
+                _persistedPlaybackTick = 0;
+                _persistedPlaybackCanResume = false;
             }
             if (!_isPlaybackOverlayPointerOver)
             {
@@ -11887,7 +12086,10 @@ namespace MusicBox
             }
 
             UpdatePlaybackProgressBar();
-            CenterPlaybackInViewport(force: false);
+            if (_settings.PlaybackAutoScrollEnabled)
+            {
+                CenterPlaybackInViewport(force: false);
+            }
             StaffCanvas.Invalidate();
         }
 
@@ -11981,7 +12183,7 @@ namespace MusicBox
             ToolTipService.SetToolTip(PlaybackOverlayVolumeButton, isEnglish ? $"Volume {percent}%" : $"\u97f3\u91cf {percent}%");
             if (PlaybackVolumeValueText != null) PlaybackVolumeValueText.Text = percent.ToString();
         }
-        private void PlaybackOverlayPlayPauseButton_Click(object sender, RoutedEventArgs e)
+        private async void PlaybackOverlayPlayPauseButton_Click(object sender, RoutedEventArgs e)
         {
             if (_isPlaybackRunning)
             {
@@ -11991,7 +12193,7 @@ namespace MusicBox
 
             if (_isPlaybackPaused)
             {
-                ResumePlayback();
+                await ResumePlaybackAsync();
                 return;
             }
 
@@ -12573,7 +12775,7 @@ namespace MusicBox
             {
                 if (selected.IsChecked)
                 {
-                    foreach (var item in new[] { AccidentalSharpItem, AccidentalFlatItem, AccidentalNaturalItem })
+                    foreach (var item in new[] { AccidentalSharpItem, AccidentalDoubleSharpItem, AccidentalFlatItem, AccidentalDoubleFlatItem, AccidentalNaturalItem })
                     {
                         if (item != null && !ReferenceEquals(item, selected))
                         {
@@ -12726,6 +12928,9 @@ namespace MusicBox
                 case "export_musicxml":
                     ExportMusicXmlMenuItem_Click(this, new RoutedEventArgs());
                     break;
+                case "export_wav":
+                    ExportAudioMenuItem_Click(this, new RoutedEventArgs());
+                    break;
                 case "export_pdf":
                     ExportPdfMenuItem_Click(this, new RoutedEventArgs());
                     break;
@@ -12825,7 +13030,24 @@ namespace MusicBox
             ClearAllMenuItem_Click(this, new RoutedEventArgs());
         }
 
-        private void NewMenuItem_Click(object sender, RoutedEventArgs e)
+        private async void NewMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (_viewModel == null) return;
+
+            HideTitleInlineEditor(commitChanges: true);
+            if (HasCurrentProjectContent())
+            {
+                ContentDialogResult result = await ShowNewProjectConfirmationAsync();
+                if (result != ContentDialogResult.Primary)
+                {
+                    return;
+                }
+            }
+
+            CreateNewProjectCore();
+        }
+
+        private void CreateNewProjectCore()
         {
             _manualAdditionalSystems = 0;
             _manualMeasureCount = 0;
@@ -12836,6 +13058,48 @@ namespace MusicBox
             RestoreLayoutFromProject();
             ResetHistoryState();
             StaffCanvas.Invalidate();
+        }
+
+        private bool HasCurrentProjectContent()
+        {
+            if (_viewModel?.Project == null)
+            {
+                return false;
+            }
+
+            ScoreProject project = _viewModel.Project;
+            ScoreProject defaults = ProjectFactory.CreateDefault();
+            return (project.Notes?.Count ?? 0) > 0
+                || (project.ExpressionMarks?.Count ?? 0) > 0
+                || (project.TimeSignatureChanges?.Count ?? 0) > 0
+                || (project.KeySignatureChanges?.Count ?? 0) > 0
+                || (project.StaffClefs?.Count ?? 0) > 0
+                || (project.LayoutSystemMeasureCounts?.Count ?? 0) > 0
+                || (project.LayoutBarlineOffsets?.Count ?? 0) > 0
+                || project.LayoutMeasuresPerSystemOverride > 0
+                || _manualAdditionalSystems > 0
+                || _manualMeasureCount > 0
+                || !string.Equals(project.Title?.Trim(), defaults.Title, StringComparison.Ordinal)
+                || project.Bpm != defaults.Bpm
+                || project.TimeSignature.Numerator != defaults.TimeSignature.Numerator
+                || project.TimeSignature.Denominator != defaults.TimeSignature.Denominator
+                || project.KeySignature.Fifths != defaults.KeySignature.Fifths
+                || project.KeySignature.Mode != defaults.KeySignature.Mode;
+        }
+
+        private async System.Threading.Tasks.Task<ContentDialogResult> ShowNewProjectConfirmationAsync()
+        {
+            var dialog = new ContentDialog
+            {
+                Title = LocalizationService.Translate("editor.new_confirm.title"),
+                Content = LocalizationService.Translate("editor.new_confirm.content"),
+                PrimaryButtonText = LocalizationService.Translate("editor.new_confirm.primary"),
+                CloseButtonText = LocalizationService.Translate("editor.new_confirm.cancel"),
+                DefaultButton = ContentDialogButton.Close,
+                XamlRoot = XamlRoot
+            };
+
+            return await dialog.ShowAsync();
         }
 
         private async void OpenMenuItem_Click(object sender, RoutedEventArgs e)
@@ -12859,7 +13123,7 @@ namespace MusicBox
             }
             catch (Exception ex)
             {
-                viewModel.SetStatus($"鎵撳紑澶辫触: {ex.Message}");
+                viewModel.SetStatus($"打开失败: {ex.Message}");
             }
         }
 
@@ -12912,7 +13176,7 @@ namespace MusicBox
             }
             catch (Exception ex)
             {
-                viewModel.SetStatus($"瀵煎叆澶辫触: {ex.Message}");
+                viewModel.SetStatus($"导入失败: {ex.Message}");
             }
         }
 
@@ -12928,6 +13192,33 @@ namespace MusicBox
             _viewModel.ExportMusicXmlToPath(path);
         }
 
+        private async void ExportAudioMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (_viewModel == null) return;
+
+            string suggested = GetSuggestedProjectName(".wav");
+            string? path = await PickSavePathAsync(".wav", "WAV Audio", suggested);
+            if (string.IsNullOrWhiteSpace(path)) return;
+
+            SyncLayoutToProject();
+            bool isEnglish = _settings.ResolveLanguageTag().StartsWith("en", StringComparison.OrdinalIgnoreCase);
+            _viewModel.SetStatus(isEnglish ? "Exporting WAV..." : "正在导出 WAV...");
+
+            try
+            {
+                await RunAudioExportWithProgressAsync(
+                    isEnglish ? "Exporting Audio" : "正在导出音频",
+                    isEnglish ? "Please wait while the WAV file is generated." : "正在生成 WAV 文件，请稍候。",
+                    () => System.Threading.Tasks.Task.Run(() => _audioExporter.ExportWav(_viewModel.Project, path)));
+
+                _viewModel.SetStatus($"已导出 WAV: {Path.GetFileName(path)}");
+            }
+            catch (Exception ex)
+            {
+                _viewModel.SetStatus($"{(isEnglish ? "Audio export failed" : "导出 WAV 失败")}: {ex.Message}");
+            }
+        }
+
         private void AddSystemAtEnd()
         {
             _manualAdditionalSystems = Math.Clamp(_manualAdditionalSystems + 1, 0, 64);
@@ -12941,7 +13232,7 @@ namespace MusicBox
             int contentMeasureCount = GetContentMeasureCount(GetMeasureTicks());
             int measureCountByRows = Math.Max(1, _systemMeasureCounts.Sum());
             _manualMeasureCount = Math.Max(contentMeasureCount, measureCountByRows);
-            _viewModel?.SetStatus($"宸插鍔犻澶栬氨琛ㄨ: {_manualAdditionalSystems}");
+            _viewModel?.SetStatus($"已增加额外谱表行: {_manualAdditionalSystems}");
             PushHistorySnapshot();
             SwitchToNoNoteLengthIfNeeded();
         }
@@ -13050,6 +13341,60 @@ namespace MusicBox
             if (PrintBusyOverlay != null)
             {
                 PrintBusyOverlay.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private async System.Threading.Tasks.Task RunAudioExportWithProgressAsync(string title, string message, Func<System.Threading.Tasks.Task> exportAction)
+        {
+            if (exportAction == null)
+            {
+                return;
+            }
+
+            if (XamlRoot == null)
+            {
+                await exportAction();
+                return;
+            }
+
+            var ring = new ProgressRing
+            {
+                Width = 28,
+                Height = 28,
+                IsActive = true
+            };
+
+            var content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 12
+            };
+            content.Children.Add(ring);
+            content.Children.Add(new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center,
+                MaxWidth = 320
+            });
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = title,
+                Content = content
+            };
+
+            var showTask = dialog.ShowAsync().AsTask();
+            await System.Threading.Tasks.Task.Yield();
+            try
+            {
+                await exportAction();
+            }
+            finally
+            {
+                dialog.Hide();
+                await showTask;
             }
         }
 
@@ -13939,7 +14284,9 @@ namespace MusicBox
         {
             bool noteMode = !_isRestInputMode;
             if (AccidentalSharpItem != null) AccidentalSharpItem.IsEnabled = noteMode;
+            if (AccidentalDoubleSharpItem != null) AccidentalDoubleSharpItem.IsEnabled = noteMode;
             if (AccidentalFlatItem != null) AccidentalFlatItem.IsEnabled = noteMode;
+            if (AccidentalDoubleFlatItem != null) AccidentalDoubleFlatItem.IsEnabled = noteMode;
             if (AccidentalNaturalItem != null) AccidentalNaturalItem.IsEnabled = noteMode;
             if (StaccatoMenuItem != null) StaccatoMenuItem.IsEnabled = noteMode;
             if (StaccatissimoMenuItem != null) StaccatissimoMenuItem.IsEnabled = noteMode;
@@ -13951,7 +14298,9 @@ namespace MusicBox
                 try
                 {
                     if (AccidentalSharpItem != null) AccidentalSharpItem.IsChecked = false;
+                    if (AccidentalDoubleSharpItem != null) AccidentalDoubleSharpItem.IsChecked = false;
                     if (AccidentalFlatItem != null) AccidentalFlatItem.IsChecked = false;
+                    if (AccidentalDoubleFlatItem != null) AccidentalDoubleFlatItem.IsChecked = false;
                     if (AccidentalNaturalItem != null) AccidentalNaturalItem.IsChecked = false;
                     if (StaccatoMenuItem != null) StaccatoMenuItem.IsChecked = false;
                     if (StaccatissimoMenuItem != null) StaccatissimoMenuItem.IsChecked = false;

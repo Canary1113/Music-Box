@@ -99,6 +99,10 @@ namespace MusicBox.Services
             StructurePlan structure = BuildStructure(style, measures, variant, random);
             int[] progression = structure.Progression;
 
+            string resolvedTitle = string.IsNullOrWhiteSpace(request.Title)
+                ? LocalizationService.Translate("compose.default_title")
+                : request.Title.Trim();
+
             var project = new ScoreProject
             {
                 Title = string.IsNullOrWhiteSpace(request.Title) ? "智能创作" : request.Title.Trim(),
@@ -108,6 +112,8 @@ namespace MusicBox.Services
                 Ppq = ppq,
                 UpdatedAt = DateTimeOffset.Now
             };
+
+            project.Title = resolvedTitle;
 
             string keyLabel = BuildKeyLabel(request.KeyFifths, request.Mode);
             var chordNames = new List<string>(measures);
@@ -215,12 +221,6 @@ namespace MusicBox.Services
             }
 
             AddExpressionMarks(project, mood, variant, measures, ticksPerMeasure, structure.SectionMap, request.UseSustainPedal);
-            foreach (NoteEvent note in project.Notes)
-            {
-                note.IsAccent = false;
-                note.IsStaccato = false;
-                note.IsStaccatissimo = false;
-            }
             project.Notes = project.Notes
                 .OrderBy(note => note.StartTick)
                 .ThenBy(note => note.Voice)
@@ -324,7 +324,14 @@ namespace MusicBox.Services
                 _ => 0
             };
 
-            return bank[(variant.ProgressionBank + offset + random.Next(bank.Length)) % bank.Length].ToArray();
+            int[] selected = bank[(variant.ProgressionBank + offset + random.Next(bank.Length)) % bank.Length].ToArray();
+            if (selected.Length >= 4 && random.NextDouble() < 0.38)
+            {
+                int rotation = random.Next(1, selected.Length);
+                selected = selected.Skip(rotation).Concat(selected.Take(rotation)).ToArray();
+            }
+
+            return selected;
         }
 
         private static int[] BuildSectionProgression(
@@ -605,7 +612,7 @@ namespace MusicBox.Services
 
             bool useAdd9 = mood.UseAdd9
                 && role is MeasureRole.Opening or MeasureRole.Return or MeasureRole.Climax
-                && random.NextDouble() < colorChance;
+                && random.NextDouble() < (IsCalmFamily(mood) ? colorChance * 1.25 : colorChance);
             bool useMaj7 = mood.UseMaj7
                 && mode == KeyMode.Major
                 && chordDegree is 1 or 4
@@ -619,6 +626,13 @@ namespace MusicBox.Services
             bool useSeventh = mood.UseSeventh
                 && (chordDegree == 5 || role is MeasureRole.Cadence or MeasureRole.FinalCadence)
                 && random.NextDouble() < Math.Max(0.18, colorChance * 0.7);
+            if (IsSadFamily(mood)
+                && !useMaj7
+                && random.NextDouble() < 0.42
+                && chordDegree is 1 or 4 or 6)
+            {
+                useSeventh = true;
+            }
 
             if (useSus2)
             {
@@ -754,6 +768,21 @@ namespace MusicBox.Services
                 motif[tailIndex] = Math.Clamp(ChooseNearest(tailTarget, chordPlan.WeakDegrees), style.MinDegree, style.MaxDegree);
             }
 
+            if (motif.Count >= 5 && random.NextDouble() < 0.45)
+            {
+                int altIndex = variant.Texture == VariantTexture.Anthem ? 1 : motif.Count - 3;
+                altIndex = Math.Clamp(altIndex, 1, motif.Count - 2);
+                IReadOnlyList<int> altPool = IsStrongBeat(altIndex, motif.Count) ? chordPlan.StrongDegrees : chordPlan.WeakDegrees;
+                int bias = variant.Texture switch
+                {
+                    VariantTexture.Atmosphere => -1,
+                    VariantTexture.Tension => 2,
+                    VariantTexture.Anthem => 1,
+                    _ => random.Next(0, 2) == 0 ? -1 : 1
+                };
+                motif[altIndex] = Math.Clamp(ChooseNearest(motif[altIndex] + bias, altPool), style.MinDegree, style.MaxDegree);
+            }
+
             for (int index = 1; index < motif.Count; index++)
             {
                 int delta = motif[index] - motif[index - 1];
@@ -800,6 +829,15 @@ namespace MusicBox.Services
             if (strongBeat)
             {
                 int contourTarget = current + Pick(mood.StrongMotion, random) + variant.ContourBias;
+                if (IsSadFamily(mood))
+                {
+                    contourTarget -= 1;
+                }
+                else if (IsCalmFamily(mood))
+                {
+                    contourTarget += Math.Sign(contourTarget - current);
+                    contourTarget = current + Math.Clamp(contourTarget - current, -1, 1);
+                }
                 return ChooseNearest(contourTarget, chordPlan.StrongDegrees);
             }
 
@@ -813,6 +851,14 @@ namespace MusicBox.Services
             {
                 weakTarget += random.Next(0, 2) == 0 ? -1 : 1;
             }
+            else if (IsSadFamily(mood))
+            {
+                weakTarget -= 1;
+            }
+            else if (IsCalmFamily(mood))
+            {
+                weakTarget = current + Math.Clamp(weakTarget - current, -1, 1);
+            }
 
             return ChooseNearest(weakTarget, chordPlan.WeakDegrees);
         }
@@ -825,6 +871,19 @@ namespace MusicBox.Services
             if (absDelta > mood.MaxLeapDegrees)
             {
                 candidate = current + Math.Sign(delta) * mood.MaxLeapDegrees;
+                delta = candidate - current;
+                absDelta = Math.Abs(delta);
+            }
+
+            if (IsSadFamily(mood) && absDelta > 1)
+            {
+                candidate = current + Math.Sign(delta) * 1;
+                delta = candidate - current;
+                absDelta = Math.Abs(delta);
+            }
+            else if (IsCalmFamily(mood) && absDelta > 2)
+            {
+                candidate = current + Math.Sign(delta) * 2;
                 delta = candidate - current;
                 absDelta = Math.Abs(delta);
             }
@@ -1225,9 +1284,61 @@ namespace MusicBox.Services
 
         private static void ApplyMelodyExpression(NoteEvent note, int index, int count, MeasureRole role, MoodSpec mood, VariantSpec variant)
         {
-            if (variant.Texture == VariantTexture.Atmosphere && role == MeasureRole.Climax && index == Math.Max(0, count - 2))
+            int safeCount = Math.Max(1, count);
+            bool first = index == 0;
+            bool last = index >= safeCount - 1;
+            bool interior = !first && !last;
+            int quarterTicks = NoteLengthUtils.ToTicks(NoteLength.Quarter, 480);
+            int eighthTicks = NoteLengthUtils.ToTicks(NoteLength.Eighth, 480);
+            int baseTicks = Math.Max(1, note.BaseDurationTicks > 0 ? note.BaseDurationTicks : note.DurationTicks);
+            bool shortNote = baseTicks <= eighthTicks;
+            bool mediumOrShort = baseTicks <= quarterTicks;
+
+            if (variant.Texture == VariantTexture.Atmosphere
+                && role == MeasureRole.Climax
+                && index == Math.Max(0, safeCount - 2))
             {
                 note.Ornament = NoteOrnament.Appoggiatura;
+            }
+
+            if (IsDreamyFamily(mood)
+                && role is MeasureRole.Opening or MeasureRole.Return
+                && first)
+            {
+                note.Ornament = NoteOrnament.Appoggiatura;
+            }
+
+            if (IsSadFamily(mood))
+            {
+                note.IsAccent = role == MeasureRole.Climax && first;
+                if (role is MeasureRole.Cadence or MeasureRole.FinalCadence
+                    && index == Math.Max(0, safeCount - 2))
+                {
+                    note.Ornament = NoteOrnament.Appoggiatura;
+                }
+
+                return;
+            }
+
+            if (mood.Texture == MoodTexture.Tense)
+            {
+                note.IsAccent = first || role is MeasureRole.Climax or MeasureRole.Contrast;
+                note.IsStaccatissimo = shortNote && interior;
+                note.IsStaccato = !note.IsStaccatissimo && mediumOrShort && interior;
+                return;
+            }
+
+            if (IsEnergeticFamily(mood))
+            {
+                note.IsAccent = first || (role == MeasureRole.Climax && mediumOrShort);
+                note.IsStaccato = shortNote && interior;
+                return;
+            }
+
+            if (variant.Texture == VariantTexture.Anthem && mediumOrShort && interior)
+            {
+                note.IsAccent = role is MeasureRole.Contrast or MeasureRole.Climax;
+                note.IsStaccato = shortNote;
             }
         }
 
@@ -1255,8 +1366,8 @@ namespace MusicBox.Services
             bool useSustainPedal)
         {
             int totalTicks = measures * ticksPerMeasure;
-            string openingDynamic = variant.Texture == VariantTexture.Atmosphere ? "p" : variant.Texture == VariantTexture.Tension ? "mf" : "mp";
-            string closingDynamic = variant.Texture == VariantTexture.Atmosphere ? "pp" : variant.Texture == VariantTexture.Tension ? "mp" : "p";
+            string openingDynamic = ResolveOpeningDynamic(mood, variant);
+            string closingDynamic = ResolveClosingDynamic(mood, variant);
             const float centerGapStaffOffset = 5.2f;
             const float pedalStaffOffset = 24f;
 
@@ -1264,6 +1375,61 @@ namespace MusicBox.Services
             project.ExpressionMarks.Add(new ExpressionMark { Code = mood.Texture == MoodTexture.Tense ? "cresc" : "cresc_text", StartTick = totalTicks / 3, StaffStepOffset = centerGapStaffOffset, SpanBeats = 3.5f });
             project.ExpressionMarks.Add(new ExpressionMark { Code = "rit", StartTick = Math.Max(0, totalTicks - ticksPerMeasure * 2), StaffStepOffset = centerGapStaffOffset, SpanBeats = 2.4f });
             project.ExpressionMarks.Add(new ExpressionMark { Code = closingDynamic, StartTick = Math.Max(0, totalTicks - ticksPerMeasure), StaffStepOffset = centerGapStaffOffset });
+
+            int previousSectionStart = -1;
+            for (int measure = 0; measure < measures; measure++)
+            {
+                if (measure >= sectionMap.Count)
+                {
+                    break;
+                }
+
+                SectionPlan section = sectionMap[measure];
+                if (section.StartMeasure != measure || section.StartMeasure == previousSectionStart)
+                {
+                    continue;
+                }
+
+                previousSectionStart = section.StartMeasure;
+                int sectionStartTick = measure * ticksPerMeasure;
+                if (sectionStartTick <= 0)
+                {
+                    continue;
+                }
+
+                string sectionDynamic = ResolveSectionDynamic(section.Energy, mood, variant, section.IsFinalSection);
+                if (!string.Equals(sectionDynamic, openingDynamic, StringComparison.Ordinal))
+                {
+                    project.ExpressionMarks.Add(new ExpressionMark
+                    {
+                        Code = sectionDynamic,
+                        StartTick = sectionStartTick,
+                        StaffStepOffset = centerGapStaffOffset
+                    });
+                }
+
+                if (section.Energy is SectionEnergy.Climax or SectionEnergy.Contrast)
+                {
+                    int leadInTick = Math.Max(0, sectionStartTick - ticksPerMeasure);
+                    project.ExpressionMarks.Add(new ExpressionMark
+                    {
+                        Code = "cresc",
+                        StartTick = leadInTick,
+                        StaffStepOffset = centerGapStaffOffset,
+                        SpanBeats = Math.Max(2f, ticksPerMeasure / 480f)
+                    });
+                }
+                else if (section.Energy == SectionEnergy.Resolution)
+                {
+                    project.ExpressionMarks.Add(new ExpressionMark
+                    {
+                        Code = IsSadFamily(mood) ? "dim" : "dim_text",
+                        StartTick = sectionStartTick,
+                        StaffStepOffset = centerGapStaffOffset,
+                        SpanBeats = Math.Max(1.8f, ticksPerMeasure / 600f)
+                    });
+                }
+            }
 
             if (!useSustainPedal && !mood.PedalFriendly && !variant.ForcePedal)
             {
@@ -1525,23 +1691,24 @@ namespace MusicBox.Services
                     new TonalityOption(-3, KeyMode.Minor),
                     new TonalityOption(-2, KeyMode.Minor),
                     new TonalityOption(-1, KeyMode.Minor),
-                    new TonalityOption(0, KeyMode.Major)
+                    new TonalityOption(0, KeyMode.Minor)
                 },
                 "sad" => new[]
+                {
+                    new TonalityOption(-4, KeyMode.Minor),
+                    new TonalityOption(-3, KeyMode.Minor),
+                    new TonalityOption(-2, KeyMode.Minor),
+                    new TonalityOption(-1, KeyMode.Minor),
+                    new TonalityOption(0, KeyMode.Minor)
+                },
+                "nostalgic" => new[]
                 {
                     new TonalityOption(-3, KeyMode.Minor),
                     new TonalityOption(-2, KeyMode.Minor),
                     new TonalityOption(-1, KeyMode.Minor),
                     new TonalityOption(0, KeyMode.Minor),
-                    new TonalityOption(1, KeyMode.Major)
-                },
-                "nostalgic" => new[]
-                {
-                    new TonalityOption(-2, KeyMode.Minor),
-                    new TonalityOption(-1, KeyMode.Minor),
-                    new TonalityOption(0, KeyMode.Major),
-                    new TonalityOption(1, KeyMode.Major),
-                    new TonalityOption(2, KeyMode.Major)
+                    new TonalityOption(-2, KeyMode.Major),
+                    new TonalityOption(-1, KeyMode.Major)
                 },
                 "positive" => new[]
                 {
@@ -1564,9 +1731,9 @@ namespace MusicBox.Services
                 {
                     new TonalityOption(-2, KeyMode.Major),
                     new TonalityOption(-1, KeyMode.Major),
-                    new TonalityOption(0, KeyMode.Major),
-                    new TonalityOption(1, KeyMode.Major),
-                    new TonalityOption(-1, KeyMode.Minor)
+                    new TonalityOption(-2, KeyMode.Minor),
+                    new TonalityOption(-1, KeyMode.Minor),
+                    new TonalityOption(0, KeyMode.Minor)
                 },
                 "tense" => new[]
                 {
@@ -1610,14 +1777,14 @@ namespace MusicBox.Services
             string mood = moodId?.Trim().ToLowerInvariant() ?? "calm";
             return mood switch
             {
-                "positive" => new MoodSpec("Positive", 10, 102, 150, 3, 2, 3, new[] { 0, 1, 2 }, new[] { 1, 1, 2, 0 }, MoodTexture.Bright, false, false, false, false, false, false, new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 } }),
-                "sad" => new MoodSpec("Sad", -14, 58, 88, -4, 2, 2, new[] { -1, 0, 1 }, new[] { 1, -1, -1, 0 }, MoodTexture.Gentle, false, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 2, 2, 4 } }),
-                "sleep" => new MoodSpec("Sleep", -24, 36, 58, -5, 0, 2, new[] { 0, 1 }, new[] { 0, 1, 0 }, MoodTexture.Calm, false, false, false, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 } }),
-                "hopeful" => new MoodSpec("Hopeful", 8, 92, 136, 2, 2, 3, new[] { 1, 2, 1 }, new[] { 1, 2, 0, 1 }, MoodTexture.Bright, true, false, false, false, false, false, new[] { new[] { 2, 2, 4 }, new[] { 4, 4 } }),
-                "nostalgic" => new MoodSpec("Nostalgic", -6, 66, 104, -2, 2, 2, new[] { -1, 0, 1 }, new[] { -1, 0, 1, -1 }, MoodTexture.Gentle, true, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 6, 2 } }),
-                "dreamy" => new MoodSpec("Dreamy", -10, 68, 100, 1, 2, 2, new[] { 0, 1 }, new[] { 1, 0, 1, -1 }, MoodTexture.Airy, true, true, true, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 } }),
-                "tense" => new MoodSpec("Tense", 14, 104, 154, 2, 4, 4, new[] { 2, -1, 2, -2 }, new[] { 2, -1, 2, -2 }, MoodTexture.Tense, false, false, false, false, true, false, new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 } }),
-                _ => new MoodSpec("Calm", -6, 70, 102, -1, 2, 2, new[] { 0, 1, 0 }, new[] { 0, 1, 0, -1 }, MoodTexture.Calm, true, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 2, 2, 4 } })
+                "positive" => new MoodSpec("Positive", 12, 106, 154, 4, 2, 4, new[] { 1, 2, 3, 1 }, new[] { 1, 2, 1, 0, 1 }, MoodTexture.Bright, false, false, false, false, false, false, new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 }, new[] { 2, 1, 1, 2, 2 } }),
+                "sad" => new MoodSpec("Sad", -22, 44, 74, -6, 4, 2, new[] { -2, -1, 0 }, new[] { -1, 0, -1, -2 }, MoodTexture.Gentle, false, false, false, false, false, true, new[] { new[] { 6, 2 }, new[] { 4, 4 }, new[] { 3, 1, 4 } }),
+                "sleep" => new MoodSpec("Sleep", -28, 34, 52, -6, 0, 1, new[] { 0, 1 }, new[] { 0, 0, 1 }, MoodTexture.Calm, false, false, false, true, false, true, new[] { new[] { 8 }, new[] { 6, 2 } }),
+                "hopeful" => new MoodSpec("Hopeful", 10, 96, 140, 3, 2, 3, new[] { 1, 2, 1, 3 }, new[] { 1, 2, 0, 1 }, MoodTexture.Bright, true, false, false, false, false, false, new[] { new[] { 2, 2, 4 }, new[] { 4, 4 }, new[] { 2, 1, 1, 4 } }),
+                "nostalgic" => new MoodSpec("Nostalgic", -10, 60, 92, -3, 2, 2, new[] { -1, 0, 1 }, new[] { -1, 0, -1, 0 }, MoodTexture.Gentle, true, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 6, 2 }, new[] { 3, 1, 4 } }),
+                "dreamy" => new MoodSpec("Dreamy", -12, 64, 96, 1, 2, 2, new[] { 0, 1, 2 }, new[] { 1, 0, 1, -1 }, MoodTexture.Airy, true, true, true, true, false, true, new[] { new[] { 6, 2 }, new[] { 8 }, new[] { 4, 2, 2 } }),
+                "tense" => new MoodSpec("Tense", 16, 108, 160, 3, 4, 4, new[] { 2, -1, 2, -2 }, new[] { 2, -1, 1, -2, 2 }, MoodTexture.Tense, false, false, false, false, true, false, new[] { new[] { 2, 2, 2, 2 }, new[] { 1, 1, 2, 2, 2 }, new[] { 2, 1, 1, 2, 1, 1 } }),
+                _ => new MoodSpec("Calm", -8, 66, 96, -2, 2, 2, new[] { 0, 1, 0 }, new[] { 0, 1, 0, -1 }, MoodTexture.Calm, true, false, false, false, false, true, new[] { new[] { 4, 4 }, new[] { 2, 2, 4 }, new[] { 6, 2 } })
             };
         }
 
@@ -1641,12 +1808,78 @@ namespace MusicBox.Services
 
         private static VariantSpec ResolveVariant(int index)
         {
-            return (index % 3) switch
+            return (index % 5) switch
             {
                 1 => new VariantSpec("Lift", "denser and brighter", VariantTexture.Anthem, 1, 4, 2, 8, 0, 4, 1, false),
                 2 => new VariantSpec("Atmosphere", "longer notes and more space", VariantTexture.Atmosphere, 2, 6, -3, -10, -2, 6, -1, true),
+                3 => new VariantSpec("Nocturne", "lower register and longer breaths", VariantTexture.Atmosphere, 0, -3, -4, -12, -4, 3, -2, true),
+                4 => new VariantSpec("Pulse", "tighter rhythm and sharper contour", VariantTexture.Tension, 1, 2, 1, 10, 0, 5, 2, false),
                 _ => new VariantSpec("Narrative", "balanced lead with stable cadence", VariantTexture.Narrative, 0, 0, 0, 0, 0, 0, 0, false)
             };
+        }
+
+        private static string ResolveOpeningDynamic(MoodSpec mood, VariantSpec variant)
+        {
+            if (IsSadFamily(mood))
+            {
+                return "p";
+            }
+
+            return variant.Texture switch
+            {
+                VariantTexture.Atmosphere => "p",
+                VariantTexture.Tension => "mf",
+                VariantTexture.Anthem => "mf",
+                _ => mood.Texture == MoodTexture.Calm ? "mp" : "mf"
+            };
+        }
+
+        private static string ResolveClosingDynamic(MoodSpec mood, VariantSpec variant)
+        {
+            if (IsSadFamily(mood) || mood.Texture is MoodTexture.Calm or MoodTexture.Airy)
+            {
+                return "pp";
+            }
+
+            return variant.Texture == VariantTexture.Tension ? "mp" : "p";
+        }
+
+        private static string ResolveSectionDynamic(SectionEnergy energy, MoodSpec mood, VariantSpec variant, bool isFinalSection)
+        {
+            if (isFinalSection)
+            {
+                return ResolveClosingDynamic(mood, variant);
+            }
+
+            return energy switch
+            {
+                SectionEnergy.Statement => ResolveOpeningDynamic(mood, variant),
+                SectionEnergy.Development => IsSadFamily(mood) ? "mp" : "mf",
+                SectionEnergy.Contrast => mood.Texture == MoodTexture.Tense ? "f" : "mf",
+                SectionEnergy.Climax => mood.Texture == MoodTexture.Tense ? "ff" : "f",
+                SectionEnergy.Resolution => IsSadFamily(mood) ? "p" : "mp",
+                _ => ResolveOpeningDynamic(mood, variant)
+            };
+        }
+
+        private static bool IsSadFamily(MoodSpec mood)
+        {
+            return mood.DisplayName is "Sad" or "Nostalgic";
+        }
+
+        private static bool IsDreamyFamily(MoodSpec mood)
+        {
+            return mood.DisplayName is "Dreamy" or "Sleep";
+        }
+
+        private static bool IsCalmFamily(MoodSpec mood)
+        {
+            return mood.DisplayName is "Calm" or "Sleep" or "Dreamy";
+        }
+
+        private static bool IsEnergeticFamily(MoodSpec mood)
+        {
+            return mood.DisplayName is "Positive" or "Hopeful";
         }
 
         private enum ThemeFamily

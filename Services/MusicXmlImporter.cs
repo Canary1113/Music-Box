@@ -1327,6 +1327,16 @@ namespace MusicBox.Services
                 return NoteAccidental.Natural;
             }
 
+            if (accidentalText == "double-sharp" || accidentalText == "sharp-sharp")
+            {
+                return NoteAccidental.DoubleSharp;
+            }
+
+            if (accidentalText == "flat-flat" || accidentalText == "double-flat")
+            {
+                return NoteAccidental.DoubleFlat;
+            }
+
             int keyOffset = GetKeySignatureAlterForStep(step, keyFifths);
 
             if (accidentalText == "sharp")
@@ -1349,15 +1359,28 @@ namespace MusicBox.Services
                 return NoteAccidental.Natural;
             }
 
-            return alter > keyOffset ? NoteAccidental.Sharp : NoteAccidental.Flat;
+            int alterDelta = alter - keyOffset;
+            if (alterDelta >= 2)
+            {
+                return NoteAccidental.DoubleSharp;
+            }
+
+            if (alterDelta <= -2)
+            {
+                return NoteAccidental.DoubleFlat;
+            }
+
+            return alterDelta > 0 ? NoteAccidental.Sharp : NoteAccidental.Flat;
         }
 
         private static int GetStoredMidiOffset(NoteAccidental accidental)
         {
             return accidental switch
             {
+                NoteAccidental.DoubleSharp => 2,
                 NoteAccidental.Sharp => 1,
                 NoteAccidental.Flat => -1,
+                NoteAccidental.DoubleFlat => -2,
                 _ => 0
             };
         }

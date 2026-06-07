@@ -22,6 +22,7 @@ namespace MusicBox.Services
         private const string ThemeKey = "AppThemePreference";
         private const string LanguageKey = "AppLanguageTag";
         private const string ExperimentalFeaturesKey = "ExperimentalFeaturesEnabled";
+        private const string PlaybackAutoScrollKey = "PlaybackAutoScrollEnabled";
         private const string SystemLanguage = "system";
         private static readonly Lazy<AppSettingsService> LazyInstance = new(() => new AppSettingsService());
         private readonly ApplicationDataContainer? _settings;
@@ -31,6 +32,7 @@ namespace MusicBox.Services
         private AppThemePreference _themePreference;
         private string _languageTag = SystemLanguage;
         private bool _experimentalFeaturesEnabled;
+        private bool _playbackAutoScrollEnabled = true;
 
         public static AppSettingsService Instance => LazyInstance.Value;
 
@@ -46,6 +48,7 @@ namespace MusicBox.Services
             _themePreference = ParseThemePreference(GetSettingValue(ThemeKey));
             _languageTag = ParseLanguageTag(GetSettingValue(LanguageKey));
             _experimentalFeaturesEnabled = ParseBoolSetting(GetSettingValue(ExperimentalFeaturesKey));
+            _playbackAutoScrollEnabled = ParseBoolSetting(GetSettingValue(PlaybackAutoScrollKey), defaultValue: true);
         }
 
         public event EventHandler? SettingsChanged;
@@ -85,6 +88,19 @@ namespace MusicBox.Services
                 if (SetProperty(ref _experimentalFeaturesEnabled, value))
                 {
                     SetSettingValue(ExperimentalFeaturesKey, value.ToString());
+                    SettingsChanged?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
+
+        public bool PlaybackAutoScrollEnabled
+        {
+            get => _playbackAutoScrollEnabled;
+            set
+            {
+                if (SetProperty(ref _playbackAutoScrollEnabled, value))
+                {
+                    SetSettingValue(PlaybackAutoScrollKey, value.ToString());
                     SettingsChanged?.Invoke(this, EventArgs.Empty);
                 }
             }
@@ -140,6 +156,11 @@ namespace MusicBox.Services
         private static bool ParseBoolSetting(string? value)
         {
             return bool.TryParse(value, out bool parsed) && parsed;
+        }
+
+        private static bool ParseBoolSetting(string? value, bool defaultValue)
+        {
+            return bool.TryParse(value, out bool parsed) ? parsed : defaultValue;
         }
 
         private static string NormalizeLanguageTag(string? raw)

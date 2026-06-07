@@ -52,11 +52,19 @@ namespace MusicBox
         private IPrintDocumentSource? _printDocumentSource;
         private readonly List<UIElement> _printPages = new();
         private readonly List<RenderedPage> _renderedPages = new();
+        private CanvasFontSet? _musicFontSet;
+        private CanvasFontFace? _musicFontFace;
+        private bool _musicBraceFontAttempted;
+
+        private const string MusicFontRelativeFolder = "Assets\\Fonts";
+        private const string MusicFontFamily = "Bravura";
+        private const string MusicFontFile = "Bravura.otf";
+        private const int SmuflBrace = 0xE000;
 
         private readonly CanvasTextFormat _titleFormat = new()
         {
-            FontFamily = "Microsoft YaHei UI",
-            FontSize = 32f,
+            FontFamily = "Times New Roman",
+            FontSize = 29f,
             FontWeight = Microsoft.UI.Text.FontWeights.Bold,
             HorizontalAlignment = CanvasHorizontalAlignment.Center,
             VerticalAlignment = CanvasVerticalAlignment.Top
@@ -206,6 +214,7 @@ namespace MusicBox
         private void ConvertPage_Unloaded(object sender, RoutedEventArgs e)
         {
             UnregisterPrintManager();
+            DisposeMusicBraceFont();
         }
 
         private async void ConvertPage_ActualThemeChanged(FrameworkElement sender, object args)
@@ -1049,7 +1058,7 @@ namespace MusicBox
                 float braceBottom = lowerRowTop + 31f;
 
                 ds.DrawText(system.StartMeasureNumber.ToString(), braceX - 7f, upperRowTop - 11f, measureInk, _measureNumberFormat);
-                DrawJianpuSystemBrace(ds, braceX, braceTop, braceBottom, measureInk);
+                DrawJianpuSystemBrace(ds, braceX + 9.4f, braceTop + 8.0f, braceBottom + 8.0f, measureInk);
 
                 DrawStaffRow(ds, system, upperRowTop, isUpper: true, ink, subInk, barInk, rowStartX, canvasWidth);
                 DrawStaffRow(ds, system, lowerRowTop, isUpper: false, ink, subInk, barInk, rowStartX, canvasWidth);
@@ -1076,37 +1085,218 @@ namespace MusicBox
             };
         }
 
-        private static void DrawJianpuSystemBrace(CanvasDrawingSession ds, float x, float top, float bottom, Color color)
+        private void DrawJianpuSystemBrace(CanvasDrawingSession ds, float x, float top, float bottom, Color color)
+        {
+            EnsureMusicBraceFont();
+
+            if (_musicFontFace != null && _musicFontFace.HasCharacter((uint)SmuflBrace))
+            {
+                float height = Math.Max(40f, bottom - top);
+                float centerY = (top + bottom) * 0.5f;
+                float size = Math.Max(42f, height * 0.97f);
+                float opticalUnit = size / 7.6f;
+                float glyphX = x + opticalUnit * 0.42f;
+                float baselineY = centerY + opticalUnit * 1.42f;
+                DrawGlyphWithFace(ds, _musicFontFace, SmuflBrace, glyphX, baselineY, size, color);
+                return;
+            }
+
+            DrawLegacyJianpuSystemBrace(ds, x, top, bottom, color);
+        }
+
+        private static void DrawLegacyJianpuSystemBrace(CanvasDrawingSession ds, float x, float top, float bottom, Color color)
         {
             float height = Math.Max(40f, bottom - top);
-            float width = Math.Clamp(height * 0.11f, 8f, 12.5f);
+            float width = Math.Clamp(height * 0.095f, 7.2f, 10.2f);
             float mid = (top + bottom) * 0.5f;
-            float lobe = height * 0.19f;
-            float neck = Math.Max(6f, height * 0.07f);
-            float thickness = Math.Clamp(width * 0.13f, 1.05f, 1.55f);
+            float lobe = height * 0.235f;
+            float neck = Math.Max(5f, height * 0.058f);
+            float thickness = Math.Clamp(width * 0.12f, 0.95f, 1.35f);
+            float outerX = x + width;
+            float innerX = x + width * 0.16f;
+            float shoulderX = x + width * 0.58f;
+            float cuspX = x + width * 0.04f;
+            float neckInset = Math.Max(2.2f, width * 0.22f);
+            float upperShoulderY = top + lobe;
+            float lowerShoulderY = bottom - lobe;
 
             using var pathBuilder = new CanvasPathBuilder(ds.Device);
-            pathBuilder.BeginFigure(x + width, top);
+            pathBuilder.BeginFigure(outerX, top);
             pathBuilder.AddCubicBezier(
-                new System.Numerics.Vector2(x + width * 0.12f, top + height * 0.02f),
-                new System.Numerics.Vector2(x + width * 0.08f, top + lobe * 0.72f),
-                new System.Numerics.Vector2(x + width * 0.56f, mid - neck));
+                new System.Numerics.Vector2(innerX, top + height * 0.015f),
+                new System.Numerics.Vector2(innerX, upperShoulderY - neck * 1.2f),
+                new System.Numerics.Vector2(shoulderX, mid - neckInset));
             pathBuilder.AddCubicBezier(
-                new System.Numerics.Vector2(x + width * 0.82f, mid - neck * 0.58f),
-                new System.Numerics.Vector2(x + width * 0.80f, mid - neck * 0.18f),
-                new System.Numerics.Vector2(x + width * 0.24f, mid));
+                new System.Numerics.Vector2(x + width * 0.84f, mid - neck * 0.92f),
+                new System.Numerics.Vector2(x + width * 0.78f, mid - neck * 0.18f),
+                new System.Numerics.Vector2(cuspX, mid));
             pathBuilder.AddCubicBezier(
-                new System.Numerics.Vector2(x + width * 0.80f, mid + neck * 0.18f),
-                new System.Numerics.Vector2(x + width * 0.82f, mid + neck * 0.58f),
-                new System.Numerics.Vector2(x + width * 0.56f, bottom - lobe));
+                new System.Numerics.Vector2(x + width * 0.78f, mid + neck * 0.18f),
+                new System.Numerics.Vector2(x + width * 0.84f, mid + neck * 0.92f),
+                new System.Numerics.Vector2(shoulderX, mid + neckInset));
             pathBuilder.AddCubicBezier(
-                new System.Numerics.Vector2(x + width * 0.08f, bottom - lobe * 0.72f),
-                new System.Numerics.Vector2(x + width * 0.12f, bottom - height * 0.02f),
-                new System.Numerics.Vector2(x + width, bottom));
+                new System.Numerics.Vector2(innerX, lowerShoulderY + neck * 1.2f),
+                new System.Numerics.Vector2(innerX, bottom - height * 0.015f),
+                new System.Numerics.Vector2(outerX, bottom));
             pathBuilder.EndFigure(CanvasFigureLoop.Open);
 
             using var geometry = CanvasGeometry.CreatePath(pathBuilder);
             ds.DrawGeometry(geometry, color, thickness);
+        }
+
+        private void EnsureMusicBraceFont()
+        {
+            if (_musicBraceFontAttempted)
+            {
+                return;
+            }
+
+            _musicBraceFontAttempted = true;
+            if (TryCreateFontFaceFromUri(MusicFontFile, out var uriSet, out var uriFace))
+            {
+                _musicFontSet = uriSet;
+                _musicFontFace = uriFace;
+                return;
+            }
+
+            if (TryCreateFontFaceFromSystem(MusicFontFamily, out var systemSet, out var systemFace))
+            {
+                _musicFontSet = systemSet;
+                _musicFontFace = systemFace;
+            }
+        }
+
+        private void DisposeMusicBraceFont()
+        {
+            if (_musicFontSet is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+
+            _musicFontSet = null;
+            _musicFontFace = null;
+            _musicBraceFontAttempted = false;
+        }
+
+        private static float GetGlyphAdvanceRaw(CanvasFontFace fontFace, int codePoint, float fontSize)
+        {
+            var indices = fontFace.GetGlyphIndices(new uint[] { (uint)codePoint });
+            if (indices.Length == 0)
+            {
+                return fontSize * 0.6f;
+            }
+
+            int glyphIndex = indices[0];
+            var metrics = fontFace.GetGlyphMetrics(new int[] { glyphIndex }, false);
+            return metrics.Length > 0 ? metrics[0].AdvanceWidth : fontSize * 0.6f;
+        }
+
+        private static float DrawGlyphWithFace(
+            CanvasDrawingSession ds,
+            CanvasFontFace fontFace,
+            int codePoint,
+            float x,
+            float baselineY,
+            float fontSize,
+            Color color)
+        {
+            var indices = fontFace.GetGlyphIndices(new uint[] { (uint)codePoint });
+            if (indices.Length == 0)
+            {
+                return 0f;
+            }
+
+            int glyphIndex = indices[0];
+            float advance = GetGlyphAdvanceRaw(fontFace, codePoint, fontSize);
+            if (advance <= 0f)
+            {
+                advance = fontSize * 0.6f;
+            }
+
+            var glyphs = new CanvasGlyph[]
+            {
+                new CanvasGlyph
+                {
+                    Index = glyphIndex,
+                    Advance = advance,
+                    AdvanceOffset = 0f,
+                    AscenderOffset = 0f
+                }
+            };
+
+            using var brush = new Microsoft.Graphics.Canvas.Brushes.CanvasSolidColorBrush(ds, color);
+            ds.DrawGlyphRun(new System.Numerics.Vector2(x, baselineY), fontFace, fontSize, glyphs, false, 0, brush);
+            return advance;
+        }
+
+        private static bool TryCreateFontFaceFromUri(string fileName, out CanvasFontSet? fontSet, out CanvasFontFace? fontFace)
+        {
+            fontSet = null;
+            fontFace = null;
+            try
+            {
+                string relativePath = MusicFontRelativeFolder.Replace('\\', '/');
+                var uri = new Uri($"ms-appx:///{relativePath}/{fileName}");
+                fontSet = new CanvasFontSet(uri);
+                fontFace = fontSet.Fonts.FirstOrDefault();
+                return fontFace != null;
+            }
+            catch
+            {
+                fontSet = null;
+                fontFace = null;
+                return false;
+            }
+        }
+
+        private static bool TryCreateFontFaceFromSystem(string familyName, out CanvasFontSet? fontSet, out CanvasFontFace? fontFace)
+        {
+            fontSet = null;
+            fontFace = null;
+            try
+            {
+                fontSet = CanvasFontSet.GetSystemFontSet();
+                fontFace = FindSystemFontFace(fontSet, familyName);
+                if (fontFace != null)
+                {
+                    return true;
+                }
+
+                fontSet = null;
+                return false;
+            }
+            catch
+            {
+                fontSet = null;
+                fontFace = null;
+                return false;
+            }
+        }
+
+        private static CanvasFontFace? FindSystemFontFace(CanvasFontSet systemSet, string familyName)
+        {
+            foreach (var face in systemSet.Fonts)
+            {
+                if (FamilyMatches(face, familyName))
+                {
+                    return face;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool FamilyMatches(CanvasFontFace face, string familyName)
+        {
+            foreach (var entry in face.FamilyNames)
+            {
+                if (string.Equals(entry.Value, familyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void DrawTabBarline(CanvasDrawingSession ds, string text, float x, float top, float bottom, Color color)
@@ -1344,7 +1534,7 @@ namespace MusicBox
                     cursor += 56f;
                 }
 
-                cursor += 11f;
+                cursor += 22f;
             }
 
             return cursor;
@@ -1448,7 +1638,7 @@ namespace MusicBox
 
                     x += keyWidth;
                 }
-                else if (x + barWidth > rightEdge)
+                else if (measureIndex < system.Measures.Count - 1 && x + barWidth > rightEdge)
                 {
                     // Avoid rendering a clipped trailing barline at system end.
                     break;
@@ -1497,17 +1687,21 @@ namespace MusicBox
                     DrawVertical(center + 2.2f, thick);
                     break;
                 case "|:":
-                    DrawVertical(center - 1.2f, thick);
-                    DrawRepeatDots(center + 4.2f);
+                    DrawVertical(center - 3.4f, thick);
+                    DrawVertical(center + 0.2f, thin);
+                    DrawRepeatDots(center + 5.2f);
                     break;
                 case ":|":
-                    DrawRepeatDots(center - 4.2f);
-                    DrawVertical(center + 1.2f, thick);
+                    DrawRepeatDots(center - 5.2f);
+                    DrawVertical(center - 0.2f, thin);
+                    DrawVertical(center + 3.4f, thick);
                     break;
                 case ":|:":
-                    DrawRepeatDots(center - 4.4f);
-                    DrawVertical(center, thick);
-                    DrawRepeatDots(center + 4.4f);
+                    DrawRepeatDots(center - 6.0f);
+                    DrawVertical(center - 2.6f, thin);
+                    DrawVertical(center + 0.2f, thick);
+                    DrawVertical(center + 3.6f, thin);
+                    DrawRepeatDots(center + 7.0f);
                     break;
                 default:
                     DrawVertical(center, thin);
@@ -1595,7 +1789,7 @@ namespace MusicBox
             const float dotRadius = 1.2f;
             foreach (var p in placements)
             {
-                float topBase = noteY - 1.1f;
+                float topBase = noteY - 0.15f;
                 for (int d = 0; d < p.Token.TopDots; d++)
                 {
                     ds.FillCircle(p.CenterX, topBase - d * dotSpacing, dotRadius, ink);
@@ -1914,7 +2108,7 @@ namespace MusicBox
                 float degreeCenterX = degreeX + degreeWidths[i] * 0.5f;
                 for (int d = 0; d < row.TopDots; d++)
                 {
-                    ds.FillCircle(degreeCenterX, rowY - 1.5f - d * dotSpacing, dotRadius, color);
+                    ds.FillCircle(degreeCenterX, rowY - 0.55f - d * dotSpacing, dotRadius, color);
                 }
 
                 for (int d = 0; d < row.BottomDots; d++)
