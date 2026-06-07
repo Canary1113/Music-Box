@@ -2,6 +2,7 @@
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using MusicBox.Models;
@@ -362,7 +363,7 @@ namespace MusicBox
 
         private static ScoreProject CloneProject(ScoreProject source)
         {
-            return new ScoreProject
+            var project = new ScoreProject
             {
                 Title = source.Title,
                 Bpm = source.Bpm,
@@ -416,11 +417,61 @@ namespace MusicBox
                     Mode = change.Mode
                 }).ToList(),
                 StaffClefs = source.StaffClefs.ToDictionary(entry => entry.Key, entry => entry.Value),
-                LayoutSystemMeasureCounts = source.LayoutSystemMeasureCounts.ToList(),
-                LayoutBarlineOffsets = source.LayoutBarlineOffsets.ToDictionary(entry => entry.Key, entry => entry.Value),
-                LayoutMeasuresPerSystemOverride = source.LayoutMeasuresPerSystemOverride,
-                LayoutAutoMeasuresPerSystem = source.LayoutAutoMeasuresPerSystem
+                LayoutSystemMeasureCounts = new List<int>(),
+                LayoutBarlineOffsets = new Dictionary<int, float>(),
+                LayoutMeasuresPerSystemOverride = 0,
+                LayoutAutoMeasuresPerSystem = 0
             };
+
+            NormalizeComposeVoicesForStaff(project);
+            NormalizeComposeExpressionMarksForStaff(project);
+            return project;
+        }
+
+        private static void NormalizeComposeVoicesForStaff(ScoreProject project)
+        {
+            foreach (NoteEvent note in project.Notes)
+            {
+                bool preferTreble = note.PreferTrebleStaff
+                    ?? note.Voice is 1 or 3
+                    || note.Midi >= 60;
+                note.PreferTrebleStaff = preferTreble;
+                note.Voice = preferTreble ? 1 : 2;
+            }
+        }
+
+        private static void NormalizeComposeExpressionMarksForStaff(ScoreProject project)
+        {
+            if (project.ExpressionMarks.Count == 0)
+            {
+                return;
+            }
+
+            project.ExpressionMarks = project.ExpressionMarks
+                .Select((mark, index) => new { Mark = mark, Index = index })
+                .OrderBy(item => item.Mark.StartTick)
+                .ThenBy(item => GetComposeExpressionSortPriority(item.Mark))
+                .ThenBy(item => item.Index)
+                .Select(item => item.Mark)
+                .ToList();
+        }
+
+        private static int GetComposeExpressionSortPriority(ExpressionMark mark)
+        {
+            return NormalizeComposeExpressionCode(mark.Code) switch
+            {
+                "ped_release" => 0,
+                "ped_line" => 1,
+                "ped" => 2,
+                _ => 3
+            };
+        }
+
+        private static string NormalizeComposeExpressionCode(string? code)
+        {
+            return string.IsNullOrWhiteSpace(code)
+                ? string.Empty
+                : code.Trim().ToLowerInvariant();
         }
 
         private async Task ShowDebugDialogAsync(string title, string message)

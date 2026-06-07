@@ -58,6 +58,7 @@
                             <MenuFlyoutItem Text="导入 MusicXML" Tag="import_musicxml" Click="EditorTitleFileMenuItem_Click"/>
                             <MenuFlyoutItem Text="导出 MusicXML" Tag="export_musicxml" Click="EditorTitleFileMenuItem_Click"/>
                             <MenuFlyoutSeparator/>
+                            <MenuFlyoutItem Text="导出 WAV" Tag="export_wav" Click="EditorTitleFileMenuItem_Click"/>
                             <MenuFlyoutItem Text="导出 PDF" Tag="export_pdf" Click="EditorTitleFileMenuItem_Click"/>
                             <MenuFlyoutItem Text="打印..." Tag="print" Click="EditorTitleFileMenuItem_Click"/>
                         </MenuBarItem>
@@ -161,46 +162,74 @@
                         IsSettingsVisible="False"
                         IsPaneToggleButtonVisible="False"
                         PaneDisplayMode="Left"
-                        OpenPaneLength="96"
-                        CompactPaneLength="96"
+                        OpenPaneLength="72"
+                        CompactPaneLength="72"
                         SelectionChanged="MainNavigation_SelectionChanged">
             <NavigationView.Resources>
                 <Style x:Key="CompactNavItemStyle" TargetType="NavigationViewItem">
-                    <Setter Property="Height" Value="72"/>
-                    <Setter Property="Width" Value="96"/>
+                    <Setter Property="Height" Value="66"/>
+                    <Setter Property="Width" Value="72"/>
                     <Setter Property="Padding" Value="0"/>
-                    <Setter Property="Margin" Value="0,4"/>
+                    <Setter Property="Margin" Value="0,3"/>
                     <Setter Property="HorizontalContentAlignment" Value="Center"/>
                 </Style>
             </NavigationView.Resources>
 
             <NavigationView.MenuItems>
                 <NavigationViewItem x:Name="NavEditor" Tag="editor" Style="{StaticResource CompactNavItemStyle}">
-                    <StackPanel Spacing="4" Width="88" HorizontalAlignment="Center" Margin="3,0,3,0">
-                        <FontIcon Glyph="&#xE189;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="NavEditorText" Text="五线谱" FontSize="10" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
-                    </StackPanel>
+                    <Grid Width="56" Height="58" HorizontalAlignment="Center">
+                        <Border Tag="AccentBar" Width="3" Height="22" CornerRadius="2" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        <StackPanel Spacing="3" Width="52" Margin="4,0,0,0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE189;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                <FontIcon.RenderTransform>
+                                    <CompositeTransform/>
+                                </FontIcon.RenderTransform>
+                            </FontIcon>
+                            <TextBlock x:Name="NavEditorText" Text="五线谱" Width="52" FontSize="9" FontWeight="Normal" MaxLines="1" TextWrapping="NoWrap" HorizontalAlignment="Center" TextAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavConvert" Tag="convert" Style="{StaticResource CompactNavItemStyle}">
-                    <StackPanel Spacing="4" Width="88" HorizontalAlignment="Center" Margin="3,0,3,0">
-                        <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="NavConvertText" Text="转换" FontSize="10" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
-                    </StackPanel>
+                    <Grid Width="56" Height="58" HorizontalAlignment="Center">
+                        <Border Tag="AccentBar" Width="3" Height="22" CornerRadius="2" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        <StackPanel Spacing="3" Width="52" Margin="4,0,0,0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE8B1;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                <FontIcon.RenderTransform>
+                                    <CompositeTransform/>
+                                </FontIcon.RenderTransform>
+                            </FontIcon>
+                            <TextBlock x:Name="NavConvertText" Text="转换" Width="52" FontSize="9" FontWeight="Normal" MaxLines="1" TextWrapping="NoWrap" HorizontalAlignment="Center" TextAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="NavRecognize" Tag="recognize" Style="{StaticResource CompactNavItemStyle}">
-                    <StackPanel Spacing="4" Width="88" HorizontalAlignment="Center" Margin="3,0,3,0">
-                        <FontIcon Glyph="&#xE720;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="NavRecognizeText" Text="Detect" FontSize="10" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
-                    </StackPanel>
+                    <Grid Width="56" Height="58" HorizontalAlignment="Center">
+                        <Border Tag="AccentBar" Width="3" Height="22" CornerRadius="2" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        <StackPanel Spacing="3" Width="52" Margin="4,0,0,0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE720;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                <FontIcon.RenderTransform>
+                                    <CompositeTransform/>
+                                </FontIcon.RenderTransform>
+                            </FontIcon>
+                            <TextBlock x:Name="NavRecognizeText" Text="Detect" Width="52" FontSize="9" FontWeight="Normal" MaxLines="1" TextWrapping="NoWrap" HorizontalAlignment="Center" TextAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>
                 <NavigationViewItem x:Name="NavSettings" Tag="settings" Style="{StaticResource CompactNavItemStyle}">
-                    <StackPanel Spacing="4" Width="88" HorizontalAlignment="Center" Margin="3,0,3,0">
-                        <FontIcon Glyph="&#xE713;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="NavSettingsText" Text="设置" FontSize="10" FontWeight="Normal" MaxLines="2" TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"/>
-                    </StackPanel>
+                    <Grid Width="56" Height="58" HorizontalAlignment="Center">
+                        <Border Tag="AccentBar" Width="3" Height="22" CornerRadius="2" Background="{ThemeResource SystemControlHighlightAccentBrush}" Opacity="0" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        <StackPanel Spacing="3" Width="52" Margin="4,0,0,0" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE713;" FontFamily="Segoe Fluent Icons" FontSize="18" HorizontalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                <FontIcon.RenderTransform>
+                                    <CompositeTransform/>
+                                </FontIcon.RenderTransform>
+                            </FontIcon>
+                            <TextBlock x:Name="NavSettingsText" Text="设置" Width="52" FontSize="9" FontWeight="Normal" MaxLines="1" TextWrapping="NoWrap" HorizontalAlignment="Center" TextAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
 

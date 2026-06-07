@@ -882,8 +882,10 @@ namespace MusicBox.Services
 
             string accidental = note.Accidental switch
             {
+                NoteAccidental.DoubleSharp => "double-sharp",
                 NoteAccidental.Sharp => "sharp",
                 NoteAccidental.Flat => "flat",
+                NoteAccidental.DoubleFlat => "flat-flat",
                 NoteAccidental.Natural => "natural",
                 _ => ""
             };
@@ -1064,6 +1066,16 @@ namespace MusicBox.Services
             int note = ((midi % 12) + 12) % 12;
             int octave = midi / 12 - 1;
 
+            if (noteEvent.Accidental == NoteAccidental.DoubleSharp)
+            {
+                return NaturalPitchWithAlter(midi - 2, 2);
+            }
+
+            if (noteEvent.Accidental == NoteAccidental.DoubleFlat)
+            {
+                return NaturalPitchWithAlter(midi + 2, -2);
+            }
+
             if (noteEvent.Accidental == NoteAccidental.Flat)
             {
                 return note switch
@@ -1074,6 +1086,19 @@ namespace MusicBox.Services
                     8 => ("A", -1, octave),
                     10 => ("B", -1, octave),
                     _ => MidiToDefaultPitch(midi)
+                };
+            }
+
+            if (noteEvent.Accidental == NoteAccidental.Sharp)
+            {
+                return note switch
+                {
+                    1 => ("C", 1, octave),
+                    3 => ("D", 1, octave),
+                    6 => ("F", 1, octave),
+                    8 => ("G", 1, octave),
+                    10 => ("A", 1, octave),
+                    _ => MidiToDefaultPitch(midi + 1)
                 };
             }
 
@@ -1093,6 +1118,25 @@ namespace MusicBox.Services
             }
 
             return MidiToDefaultPitch(midi);
+        }
+
+        private static (string Step, int Alter, int Octave) NaturalPitchWithAlter(int naturalMidi, int alter)
+        {
+            int clamped = Math.Clamp(naturalMidi, 0, 127);
+            int note = ((clamped % 12) + 12) % 12;
+            int octave = clamped / 12 - 1;
+
+            return note switch
+            {
+                0 => ("C", alter, octave),
+                2 => ("D", alter, octave),
+                4 => ("E", alter, octave),
+                5 => ("F", alter, octave),
+                7 => ("G", alter, octave),
+                9 => ("A", alter, octave),
+                11 => ("B", alter, octave),
+                _ => MidiToDefaultPitch(clamped)
+            };
         }
 
         private static (string Step, int Alter, int Octave) MidiToDefaultPitch(int midi)

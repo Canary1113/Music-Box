@@ -11,20 +11,22 @@
             <ResourceDictionary x:Key="Default">
                 <AcrylicBrush x:Key="PlaybackOverlayAcrylicBrush"
                               Opacity="1"
-                              TintOpacity="0.1"
-                              TintLuminosityOpacity="0.6"
+                              TintOpacity="0.05"
+                              TintLuminosityOpacity="0.05"
                               AlwaysUseFallback="False"
                               TintColor="#FFFFFFFF"
                               FallbackColor="#80FFFFFF"/>
+                <SolidColorBrush x:Key="ToolbarMicaSoftOverlayBrush" Color="#B3FFFFFF"/>
             </ResourceDictionary>
             <ResourceDictionary x:Key="Dark">
                 <AcrylicBrush x:Key="PlaybackOverlayAcrylicBrush"
                               Opacity="1.00"
-                              TintOpacity="0.1"
-                              TintLuminosityOpacity="0.6"
+                              TintOpacity="0.05"
+                              TintLuminosityOpacity="0.05"
                               AlwaysUseFallback="False"
                               TintColor="#FF000000"
                               FallbackColor="#80000000"/>
+                <SolidColorBrush x:Key="ToolbarMicaSoftOverlayBrush" Color="#80000000"/>
             </ResourceDictionary>
         </ResourceDictionary.ThemeDictionaries>
         <ThemeShadow x:Key="ToolbarShadow"/>
@@ -40,7 +42,7 @@
             <GradientStop Color="#00FFFFFF" Offset="1"/>
         </LinearGradientBrush>
         <Style x:Key="SegmentedRadioButtonStyle" TargetType="RadioButton">
-            <Setter Property="Padding" Value="10,3"/>
+            <Setter Property="Padding" Value="9,2"/>
             <Setter Property="MinWidth" Value="0"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
@@ -185,7 +187,7 @@
             </Setter>
         </Style>
         <Style x:Key="ToolbarFlatDropDownButtonStyle" TargetType="DropDownButton">
-            <Setter Property="Height" Value="20"/>
+            <Setter Property="Height" Value="19"/>
             <Setter Property="Padding" Value="6,0"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
@@ -193,7 +195,7 @@
             <Setter Property="CornerRadius" Value="8"/>
         </Style>
         <Style x:Key="ToolbarFlatTextButtonStyle" TargetType="Button">
-            <Setter Property="Height" Value="20"/>
+            <Setter Property="Height" Value="19"/>
             <Setter Property="Padding" Value="6,0"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
@@ -232,6 +234,7 @@
                 <MenuFlyoutItem x:Name="FileImportMusicXmlMenuItem" Text="导入 MusicXML" Click="ImportMusicXmlMenuItem_Click"/>
                 <MenuFlyoutItem x:Name="FileExportMusicXmlMenuItem" Text="导出 MusicXML" Click="ExportMusicXmlMenuItem_Click"/>
                 <MenuFlyoutSeparator/>
+                <MenuFlyoutItem x:Name="FileExportAudioMenuItem" Text="导出 WAV" Click="ExportAudioMenuItem_Click"/>
                 <MenuFlyoutItem x:Name="FileExportPdfMenuItem" Text="导出 PDF" Click="ExportPdfMenuItem_Click"/>
                 <MenuFlyoutItem x:Name="FilePrintMenuItem" Text="打印..." Click="PrintMenuItem_Click"/>
             </MenuBarItem><MenuBarItem x:Name="TimeSignatureMenu" Title="拍号" Visibility="Collapsed">
@@ -312,29 +315,36 @@
             </MenuBarItem>
         </MenuBar>
 
-        <Border x:Name="TopToolbarOverlay"
-                Grid.Row="1"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Top"
-                Margin="0,4,0,0"
-                Padding="3,1,3,1"
-                Background="{ThemeResource PlaybackOverlayAcrylicBrush}"
-                BorderBrush="Transparent"
-                BorderThickness="0"
-                CornerRadius="22"
-                Translation="0,0,10"
-                Shadow="{StaticResource ToolbarShadow}"
-                Canvas.ZIndex="30">
-            <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Grid x:Name="ToolbarShadowReceiver"/>
-                <Border x:Name="ToolbarCard"
-                        Background="Transparent"
-                        BorderBrush="Transparent"
-                        BorderThickness="0"
-                        CornerRadius="10"
-                        Padding="3"
-                        Translation="0,0,0">
-                    <StackPanel Orientation="Horizontal" Spacing="16" VerticalAlignment="Center" HorizontalAlignment="Center">
+        <Grid x:Name="TopToolbarOverlay"
+              Grid.Row="1"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Top"
+              Margin="0,8,0,0"
+              Canvas.ZIndex="30">
+            <Border CornerRadius="18"
+                    Background="Transparent"
+                    Translation="0,0,18"
+                    Shadow="{StaticResource ToolbarShadow}">
+                <Grid>
+                    <SystemBackdropElement CornerRadius="18"
+                                           IsHitTestVisible="False">
+                        <SystemBackdropElement.SystemBackdrop>
+                            <MicaBackdrop Kind="Base" />
+                        </SystemBackdropElement.SystemBackdrop>
+                    </SystemBackdropElement>
+                    <Border Padding="2,0,2,0"
+                            Background="{ThemeResource ToolbarMicaSoftOverlayBrush}"
+                            CornerRadius="18">
+                        <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <Grid x:Name="ToolbarShadowReceiver"/>
+                        <Border x:Name="ToolbarCard"
+                                Background="Transparent"
+                                BorderBrush="Transparent"
+                                BorderThickness="0"
+                                CornerRadius="18"
+                                Padding="2"
+                                Translation="0,0,0">
+                            <StackPanel Orientation="Horizontal" Spacing="16" VerticalAlignment="Center" HorizontalAlignment="Center">
                         <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
                             <Button x:Name="UndoButton"
                                     Style="{StaticResource ToolbarIconOnlyButtonStyle}"
@@ -451,14 +461,14 @@
                                                    Content="十六分"
                                                    Tag="Sixteenth"
                                                    GroupName="NoteLength"
-                                                   Padding="11,6"
+                                                   Padding="9,2"
                                                    CornerRadius="8"
                                                    Checked="NoteLengthButton_Checked"/>
                                       <RadioButton Style="{StaticResource SegmentedRadioButtonStyle}"
                                                    Content="三十二分"
                                                    Tag="ThirtySecond"
                                                    GroupName="NoteLength"
-                                                   Padding="11,6"
+                                                   Padding="9,2"
                                                    CornerRadius="8"
                                                    Checked="NoteLengthButton_Checked"/>
                                       <Border BorderBrush="{ThemeResource SystemControlForegroundBaseLowBrush}" BorderThickness="0" Margin="3,0,0,0">
@@ -466,7 +476,7 @@
                                                   Content="···"
                                                   MinWidth="38"
                                                   Padding="8,0"
-                                                  Height="26"
+                                                  Height="22"
                                                   CornerRadius="8"
                                                   Background="Transparent"
                                                   BorderThickness="0"
@@ -476,17 +486,25 @@
                                                   VerticalContentAlignment="Center">
                                              <Button.Flyout>
                                                  <MenuFlyout Placement="BottomEdgeAlignedLeft">
-                                                     <ToggleMenuFlyoutItem x:Name="AccidentalSharpItem"
-                                                                           Text="升号"
-                                                                           Tag="Sharp"
-                                                                           Click="AccidentalMenuItem_Click"/>
-                                                     <ToggleMenuFlyoutItem x:Name="AccidentalFlatItem"
-                                                                           Text="降号"
-                                                                           Tag="Flat"
-                                                                           Click="AccidentalMenuItem_Click"/>
-                                                     <ToggleMenuFlyoutItem x:Name="AccidentalNaturalItem"
-                                                                           Text="还原号"
-                                                                           Tag="Natural"
+                                                    <ToggleMenuFlyoutItem x:Name="AccidentalSharpItem"
+                                                                          Text="升号"
+                                                                          Tag="Sharp"
+                                                                          Click="AccidentalMenuItem_Click"/>
+                                                    <ToggleMenuFlyoutItem x:Name="AccidentalDoubleSharpItem"
+                                                                          Text="重升号"
+                                                                          Tag="DoubleSharp"
+                                                                          Click="AccidentalMenuItem_Click"/>
+                                                    <ToggleMenuFlyoutItem x:Name="AccidentalFlatItem"
+                                                                          Text="降号"
+                                                                          Tag="Flat"
+                                                                          Click="AccidentalMenuItem_Click"/>
+                                                    <ToggleMenuFlyoutItem x:Name="AccidentalDoubleFlatItem"
+                                                                          Text="重降号"
+                                                                          Tag="DoubleFlat"
+                                                                          Click="AccidentalMenuItem_Click"/>
+                                                    <ToggleMenuFlyoutItem x:Name="AccidentalNaturalItem"
+                                                                          Text="还原号"
+                                                                          Tag="Natural"
                                                                            Click="AccidentalMenuItem_Click"/>
                                                      <MenuFlyoutSeparator/>
                                                      <ToggleMenuFlyoutItem x:Name="StaccatoMenuItem"
@@ -564,9 +582,12 @@
                             </Button>
                         </StackPanel>
                     </StackPanel>
-                </Border>
-            </Grid>
-        </Border>
+                        </Border>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
+        </Grid>
 
         <Border Grid.Row="1"
                 Margin="0"

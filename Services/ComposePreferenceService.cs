@@ -9,8 +9,8 @@ namespace MusicBox.Services
 {
     public sealed class ComposePreferenceService
     {
-        private const int MinimumRatingsForTraining = 8;
-        private const int FullModelConfidenceRatings = 24;
+        private const int MinimumRatingsForTraining = 6;
+        private const int FullModelConfidenceRatings = 18;
 
         private readonly JsonSerializerOptions _jsonOptions = new()
         {
@@ -270,11 +270,13 @@ namespace MusicBox.Services
                     + ModerationBonus(harmonyDensity, 0.68d, 12d)
                     + ModerationBonus(features.RegisterCenter / 72d, 0.93d, 8d)),
                 "sad" => ClampScore(
-                    74d
-                    + ModerationBonus(features.RepetitionRatio, 0.20d, 14d)
-                    + ModerationBonus(density, 0.50d, 14d)
-                    + ModerationBonus(features.PitchRange / 30d, 0.55d, 12d)
-                    + ModerationBonus(features.RegisterCenter / 72d, 0.84d, 8d)),
+                    76d
+                    + ModerationBonus(features.RepetitionRatio, 0.24d, 16d)
+                    + ModerationBonus(density, 0.42d, 18d)
+                    + ModerationBonus(harmonyDensity, 0.44d, 9d)
+                    + ModerationBonus(features.PitchRange / 30d, 0.42d, 14d)
+                    + ModerationBonus(features.RegisterCenter / 72d, 0.76d, 12d)
+                    + ModerationBonus(features.LargeLeapRatio, 0.08d, 10d)),
                 "nostalgic" => ClampScore(
                     74d
                     + ModerationBonus(features.RepetitionRatio, 0.22d, 14d)
@@ -331,7 +333,7 @@ namespace MusicBox.Services
             }
 
             double progress = (sampleCount - MinimumRatingsForTraining) / (double)Math.Max(1, FullModelConfidenceRatings - MinimumRatingsForTraining);
-            return 0.22d + Math.Clamp(progress, 0d, 1d) * 0.58d;
+            return 0.34d + Math.Clamp(progress, 0d, 1d) * 0.50d;
         }
 
         private static TrainedPreferenceModel? TrainModel(List<ComposeRatingRecord> samples)

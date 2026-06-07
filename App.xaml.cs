@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
 using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -29,6 +30,7 @@ namespace MusicBox
     public partial class App : Application
     {
         private Window? _window;
+        private static bool _fatalDialogShown;
         public static Window? MainWindow { get; private set; }
 
         /// <summary>
@@ -59,7 +61,15 @@ namespace MusicBox
         {
             DebugTrace.Write($"App.UnhandledException: {e.Message}");
             e.Handled = true;
-            await ShowAppDialogAsync("未处理异常", e.Message);
+            if (_fatalDialogShown)
+            {
+                Application.Current?.Exit();
+                return;
+            }
+
+            _fatalDialogShown = true;
+            string details = e.Exception?.ToString() ?? e.Message;
+            await ShowFatalErrorDialogAsync("未处理异常", details);
         }
 
         private void CurrentDomain_UnhandledException(object sender, System.UnhandledExceptionEventArgs e)
@@ -67,10 +77,12 @@ namespace MusicBox
             DebugTrace.Write($"AppDomain.UnhandledException: {e.ExceptionObject}");
         }
 
-        private static async Task ShowAppDialogAsync(string title, string message)
+        private static async Task ShowFatalErrorDialogAsync(string title, string message)
         {
+            bool restartNow = false;
             if (MainWindow?.Content is not FrameworkElement root || root.XamlRoot == null)
             {
+                Application.Current?.Exit();
                 return;
             }
 
@@ -88,15 +100,46 @@ namespace MusicBox
                             TextWrapping = TextWrapping.Wrap
                         }
                     },
-                    CloseButtonText = "关闭",
+                    PrimaryButtonText = "重启应用",
+                    CloseButtonText = "关闭应用",
+                    DefaultButton = ContentDialogButton.Primary,
                     XamlRoot = root.XamlRoot
                 };
 
-                await dialog.ShowAsync();
+                restartNow = await dialog.ShowAsync() == ContentDialogResult.Primary;
             }
             catch
             {
             }
+
+            if (restartNow)
+            {
+                RestartApplication();
+                return;
+            }
+
+            Application.Current?.Exit();
+        }
+
+        private static void RestartApplication()
+        {
+            try
+            {
+                string? executable = Environment.ProcessPath;
+                if (!string.IsNullOrWhiteSpace(executable))
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = executable,
+                        UseShellExecute = true
+                    });
+                }
+            }
+            catch
+            {
+            }
+
+            Application.Current?.Exit();
         }
     }
 }
