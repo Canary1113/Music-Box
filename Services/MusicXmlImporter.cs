@@ -207,7 +207,7 @@ namespace MusicBox.Services
                         chordAnchorLocal = startLocalTick;
                     }
 
-                    var note = ParseNote(element, (int)startTick, duration, voice, isRest);
+                    var note = ParseNote(element, (int)startTick, duration, voice, isRest, fifths);
                     if (isRest)
                     {
                         project.Notes.Add(note);
@@ -1125,7 +1125,7 @@ namespace MusicBox.Services
             return fallback;
         }
 
-        private static NoteEvent ParseNote(XElement noteElement, int startTick, int duration, int voice, bool isRest)
+        private static NoteEvent ParseNote(XElement noteElement, int startTick, int duration, int voice, bool isRest, int keyFifths)
         {
             int midi = 60;
             NoteAccidental accidental = NoteAccidental.None;
@@ -1140,27 +1140,10 @@ namespace MusicBox.Services
                     string step = (pitch.Element("step")?.Value ?? "C").Trim().ToUpperInvariant();
                     int octave = ParseInt(pitch.Element("octave")?.Value, 4);
                     int alter = ParseInt(pitch.Element("alter")?.Value, 0);
-                    midi = PitchToMidi(step, octave, alter);
-                    accidental = alter switch
-                    {
-                        > 0 => NoteAccidental.Sharp,
-                        < 0 => NoteAccidental.Flat,
-                        _ => NoteAccidental.None
-                    };
-                }
-
-                string accidentalText = (noteElement.Element("accidental")?.Value ?? string.Empty).Trim().ToLowerInvariant();
-                if (accidentalText == "natural")
-                {
-                    accidental = NoteAccidental.Natural;
-                }
-                else if (accidentalText == "sharp")
-                {
-                    accidental = NoteAccidental.Sharp;
-                }
-                else if (accidentalText == "flat")
-                {
-                    accidental = NoteAccidental.Flat;
+                    string accidentalText = (noteElement.Element("accidental")?.Value ?? string.Empty).Trim().ToLowerInvariant();
+                    int naturalMidi = PitchToMidi(step, octave, 0);
+                    accidental = ResolveImportedAccidental(step, alter, keyFifths, accidentalText);
+                    midi = naturalMidi + GetStoredMidiOffset(accidental);
                 }
 
                 string stemText = (noteElement.Element("stem")?.Value ?? string.Empty).Trim().ToLowerInvariant();
@@ -1335,6 +1318,89 @@ namespace MusicBox.Services
             };
 
             return Math.Max(1, (int)Math.Round(durationTicks / factor));
+        }
+
+        private static NoteAccidental ResolveImportedAccidental(string step, int alter, int keyFifths, string accidentalText)
+        {
+            if (accidentalText == "natural")
+            {
+                return NoteAccidental.Natural;
+            }
+
+            if (accidentalText == "double-sharp" || accidentalText == "sharp-sharp")
+            {
+                return NoteAccidental.DoubleSharp;
+            }
+
+            if (accidentalText == "flat-flat" || accidentalText == "double-flat")
+            {
+                return NoteAccidental.DoubleFlat;
+            }
+
+            int keyOffset = GetKeySignatureAlterForStep(step, keyFifths);
+
+            if (accidentalText == "sharp")
+            {
+                return alter == keyOffset ? NoteAccidental.None : NoteAccidental.Sharp;
+            }
+
+            if (accidentalText == "flat")
+            {
+                return alter == keyOffset ? NoteAccidental.None : NoteAccidental.Flat;
+            }
+
+            if (alter == keyOffset)
+            {
+                return NoteAccidental.None;
+            }
+
+            if (alter == 0 && keyOffset != 0)
+            {
+                return NoteAccidental.Natural;
+            }
+
+            int alterDelta = alter - keyOffset;
+            if (alterDelta >= 2)
+            {
+                return NoteAccidental.DoubleSharp;
+            }
+
+            if (alterDelta <= -2)
+            {
+                return NoteAccidental.DoubleFlat;
+            }
+
+            return alterDelta > 0 ? NoteAccidental.Sharp : NoteAccidental.Flat;
+        }
+
+        private static int GetStoredMidiOffset(NoteAccidental accidental)
+        {
+            return accidental switch
+            {
+                NoteAccidental.DoubleSharp => 2,
+                NoteAccidental.Sharp => 1,
+                NoteAccidental.Flat => -1,
+                NoteAccidental.DoubleFlat => -2,
+                _ => 0
+            };
+        }
+
+        private static int GetKeySignatureAlterForStep(string step, int fifths)
+        {
+            string normalized = (step ?? string.Empty).Trim().ToUpperInvariant();
+            if (string.IsNullOrEmpty(normalized) || fifths == 0)
+            {
+                return 0;
+            }
+
+            if (fifths > 0)
+            {
+                string[] sharpOrder = { "F", "C", "G", "D", "A", "E", "B" };
+                return sharpOrder.Take(Math.Min(fifths, sharpOrder.Length)).Contains(normalized) ? 1 : 0;
+            }
+
+            string[] flatOrder = { "B", "E", "A", "D", "G", "C", "F" };
+            return flatOrder.Take(Math.Min(Math.Abs(fifths), flatOrder.Length)).Contains(normalized) ? -1 : 0;
         }
 
         private static int PitchToMidi(string step, int octave, int alter)

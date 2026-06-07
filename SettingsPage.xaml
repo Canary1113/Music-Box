@@ -29,8 +29,10 @@
                       VerticalScrollMode="Auto"
                       HorizontalScrollBarVisibility="Disabled"
                       HorizontalScrollMode="Disabled">
-            <Grid Padding="48,24,48,24">
-                <StackPanel Spacing="12">
+            <Grid Padding="32,24">
+                <StackPanel Spacing="12"
+                            MaxWidth="1680"
+                            HorizontalAlignment="Stretch">
                     <TextBlock x:Name="PageTitleText"
                                Text="Settings"
                                FontSize="24"
@@ -135,11 +137,41 @@
                         </Grid>
                     </Border>
 
-                    <TextBlock x:Name="AboutSectionTitleText"
-                               Text="About"
+                    <TextBlock x:Name="FeaturesSectionTitleText"
+                               Text="Software Features"
                                Style="{ThemeResource SubtitleTextBlockStyle}"
                                FontSize="14"
                                Margin="0,10,0,0"/>
+
+                    <Border Style="{StaticResource SettingCardBorderStyle}" CornerRadius="5">
+                        <Grid Style="{StaticResource SettingHeaderGridStyle}" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <FontIcon FontFamily="Segoe MDL2 Assets"
+                                      Glyph="&#xE8A3;"
+                                      VerticalAlignment="Center"/>
+
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock x:Name="PlaybackAutoScrollTitleText" Text="Auto Scroll During Staff Playback"/>
+                                <TextBlock x:Name="PlaybackAutoScrollDescText"
+                                           Text="Keep the staff view following the playback cursor automatically"
+                                           Style="{StaticResource SettingDescStyle}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <ToggleSwitch x:Name="PlaybackAutoScrollToggleSwitch"
+                                          Grid.Column="2"
+                                          Header=""
+                                          Margin="0,0,-40,0"
+                                          HorizontalAlignment="Right"
+                                          VerticalAlignment="Center"
+                                          Toggled="PlaybackAutoScrollToggleSwitch_Toggled"/>
+                        </Grid>
+                    </Border>
 
                     <Border Style="{StaticResource SettingCardBorderStyle}" CornerRadius="5">
                         <Grid Style="{StaticResource SettingHeaderGridStyle}" HorizontalAlignment="Stretch">
@@ -164,10 +196,45 @@
                             <ToggleSwitch x:Name="ExperimentalFeaturesToggleSwitch"
                                           Grid.Column="2"
                                           Header=""
-                                          Margin="0,0,-28,0"
+                                          Margin="0,0,-40,0"
                                           HorizontalAlignment="Right"
                                           VerticalAlignment="Center"
                                           Toggled="ExperimentalFeaturesToggleSwitch_Toggled"/>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock x:Name="AboutSectionTitleText"
+                               Text="About"
+                               Style="{ThemeResource SubtitleTextBlockStyle}"
+                               FontSize="14"
+                               Margin="0,10,0,0"/>
+
+                    <Border Style="{StaticResource SettingCardBorderStyle}" CornerRadius="5">
+                        <Grid Style="{StaticResource SettingHeaderGridStyle}" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <FontIcon FontFamily="Segoe MDL2 Assets"
+                                      Glyph="&#xE895;"
+                                      VerticalAlignment="Center"/>
+
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock x:Name="UpdateTitleText" Text="Software Update"/>
+                                <TextBlock x:Name="UpdateStatusText"
+                                           Text="Click the button to check for updates"
+                                           Style="{StaticResource SettingDescStyle}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <Button x:Name="CheckUpdateButton"
+                                    Grid.Column="2"
+                                    Content="Check for updates"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    Click="CheckUpdateButton_Click"/>
                         </Grid>
                     </Border>
 
@@ -258,12 +325,20 @@
                     </Expander>
 
                     <StackPanel Spacing="4" Margin="0,6,0,0" HorizontalAlignment="Stretch">
-                        <TextBlock x:Name="WarningTitleText"
-                                   Text="⚠️ Work in Progress"
-                                   FontSize="14"
-                                   FontWeight="SemiBold"
-                                   HorizontalAlignment="Center"
-                                   TextAlignment="Center"/>
+                        <StackPanel Orientation="Horizontal"
+                                    Spacing="6"
+                                    HorizontalAlignment="Center">
+                            <FontIcon x:Name="WarningIcon"
+                                      FontFamily="Segoe MDL2 Assets"
+                                      Glyph="&#xE7BA;"
+                                      VerticalAlignment="Center"/>
+                            <TextBlock x:Name="WarningTitleText"
+                                       Text="Work in Progress"
+                                       FontSize="14"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center"
+                                       TextAlignment="Center"/>
+                        </StackPanel>
                         <TextBlock x:Name="WarningBodyText"
                                    Text="This project is currently under active development and some features may be incomplete or unstable."
                                    Style="{StaticResource SettingDescStyle}"

@@ -1,0 +1,346 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Navigation;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using MusicBox.Models;
+using MusicBox.Services;
+using MusicBox.ViewModels;
+
+namespace MusicBox
+{
+    public sealed partial class ComposeWorkbenchPage : Page
+    {
+        private readonly SmartComposeService _service = new();
+        private readonly PreviewPlaybackService _playback = new();
+        private readonly List<SmartComposeResult> _candidates = new();
+        private MainViewModel? _viewModel;
+        private int _seedBase;
+
+        public ComposeWorkbenchPage()
+        {
+            DebugTrace.Write("ComposeWorkbenchPage.ctor begin");
+            InitializeComponent();
+            NavigationCacheMode = NavigationCacheMode.Required;
+            Loaded += ComposeWorkbenchPage_Loaded;
+            Unloaded += ComposeWorkbenchPage_Unloaded;
+            StyleBox.SelectedIndex = 0;
+            MoodBox.SelectedIndex = 0;
+            LengthBox.SelectedIndex = 0;
+            DebugTrace.Write("ComposeWorkbenchPage.ctor end");
+        }
+
+        protected override void OnNavigatedTo(NavigationEventArgs e)
+        {
+            base.OnNavigatedTo(e);
+            if (e.Parameter is MainViewModel vm)
+            {
+                _viewModel = vm;
+                DataContext = vm;
+            }
+        }
+
+        private void ComposeWorkbenchPage_Loaded(object sender, RoutedEventArgs e)
+        {
+            _viewModel?.SetStatus("已打开智能创作页。");
+        }
+
+        private void ComposeWorkbenchPage_Unloaded(object sender, RoutedEventArgs e)
+        {
+            _playback.Stop();
+        }
+
+        private void GenerateButton_Click(object sender, RoutedEventArgs e)
+        {
+            _seedBase = Environment.TickCount;
+            GenerateCandidates();
+        }
+
+        private void RetryButton_Click(object sender, RoutedEventArgs e)
+        {
+            _seedBase = Environment.TickCount;
+            GenerateCandidates();
+        }
+
+        private async void PlayCandidateButton_Click(object sender, RoutedEventArgs e)
+        {
+            int index = ResolveCandidateIndex(sender);
+            if (index < 0 || index >= _candidates.Count)
+            {
+                return;
+            }
+
+            await _playback.TogglePlayAsync(index, _candidates[index].Project);
+            RefreshPlayButtons();
+        }
+
+        private void GenerateCandidates()
+        {
+            try
+            {
+                _playback.Stop();
+                SmartComposeRequest request = BuildRequest();
+                request.Seed = _seedBase;
+                IReadOnlyList<SmartComposeResult> generated = _service.GenerateCandidates(request, 3);
+
+                _candidates.Clear();
+                _candidates.AddRange(generated);
+                RenderCandidate(0, Option1SummaryText, Option1ApplyButton, Option1SendButton);
+                RenderCandidate(1, Option2SummaryText, Option2ApplyButton, Option2SendButton);
+                RenderCandidate(2, Option3SummaryText, Option3ApplyButton, Option3SendButton);
+                RefreshPlayButtons();
+                StatusText.Text = "已生成 3 组候选方案。";
+                _viewModel?.SetStatus("已生成 3 组智能创作候选。");
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"生成失败: {ex.Message}";
+                Option1SummaryText.Text = "生成失败";
+                Option2SummaryText.Text = "生成失败";
+                Option3SummaryText.Text = "生成失败";
+                Option1ApplyButton.IsEnabled = false;
+                Option2ApplyButton.IsEnabled = false;
+                Option3ApplyButton.IsEnabled = false;
+                Option1SendButton.IsEnabled = false;
+                Option2SendButton.IsEnabled = false;
+                Option3SendButton.IsEnabled = false;
+                RefreshPlayButtons();
+            }
+        }
+
+        private void ApplyCandidateButton_Click(object sender, RoutedEventArgs e)
+        {
+            int index = ResolveCandidateIndex(sender);
+            if (index < 0 || index >= _candidates.Count || _viewModel == null)
+            {
+                return;
+            }
+
+            SmartComposeResult result = _candidates[index];
+            _viewModel.LoadProjectSnapshot(CloneProject(result.Project));
+            _viewModel.SetStatus($"已采用方案 {(char)('A' + index)} 写入编辑页: {result.Project.Title}");
+            if (App.MainWindow is MainWindow window)
+            {
+                window.NavigateToPage("editor");
+            }
+        }
+
+        private void SendCandidateButton_Click(object sender, RoutedEventArgs e)
+        {
+            int index = ResolveCandidateIndex(sender);
+            if (index < 0 || index >= _candidates.Count || _viewModel == null)
+            {
+                return;
+            }
+
+            SmartComposeResult result = _candidates[index];
+            _viewModel.LoadProjectSnapshot(CloneProject(result.Project));
+            _viewModel.SetStatus($"已采用方案 {(char)('A' + index)} 发送到转换页: {result.Project.Title}");
+            if (App.MainWindow is MainWindow window)
+            {
+                window.NavigateToConvertAndImportEditor();
+            }
+        }
+
+        private SmartComposeRequest BuildRequest()
+        {
+            string styleId = SelectedTag(StyleBox);
+            string moodId = SelectedTag(MoodBox);
+            string lengthId = SelectedTag(LengthBox);
+            int autoBpm = ResolveAutoBpm(styleId, moodId);
+            (int numerator, int denominator) = ResolveAutoMeter(styleId, moodId);
+            int autoKey = ResolveAutoKey(styleId, moodId);
+            KeyMode autoMode = ResolveAutoMode(moodId);
+
+            return new SmartComposeRequest
+            {
+                Title = string.IsNullOrWhiteSpace(TitleBox.Text) ? "智能创作" : TitleBox.Text.Trim(),
+                Bpm = autoBpm,
+                Measures = ResolveMeasureCount(lengthId),
+                KeyFifths = autoKey,
+                Mode = autoMode,
+                TimeSignature = new TimeSignature(numerator, denominator),
+                StyleId = styleId,
+                MoodId = moodId,
+                LengthId = lengthId,
+                IncludeBass = true
+            };
+        }
+
+        private void RenderCandidate(int index, TextBlock summaryText, Button applyButton, Button sendButton)
+        {
+            if (index < 0 || index >= _candidates.Count)
+            {
+                summaryText.Text = "等待生成";
+                applyButton.IsEnabled = false;
+                sendButton.IsEnabled = false;
+                return;
+            }
+
+            SmartComposeResult result = _candidates[index];
+            summaryText.Text = $"{result.Summary}\n{BuildMeta(result.Project)}";
+            applyButton.IsEnabled = true;
+            sendButton.IsEnabled = true;
+        }
+
+        private void RefreshPlayButtons()
+        {
+            UpdatePlayButton(Option1PlayButton, 0);
+            UpdatePlayButton(Option2PlayButton, 1);
+            UpdatePlayButton(Option3PlayButton, 2);
+        }
+
+        private void UpdatePlayButton(Button button, int index)
+        {
+            bool enabled = index < _candidates.Count;
+            button.IsEnabled = enabled;
+            button.Content = enabled && _playback.IsPlaying && _playback.ActiveIndex == index ? "停止" : "播放";
+        }
+
+        private static string BuildMeta(ScoreProject project)
+        {
+            int totalMeasures = Math.Max(1, project.Notes.Count == 0
+                ? 1
+                : (int)Math.Ceiling(project.Notes.Max(note => note.StartTick + note.DurationTicks) / (double)project.TimeSignature.TicksPerMeasure(project.Ppq)));
+
+            return $"{project.Bpm} BPM · {project.TimeSignature.Numerator}/{project.TimeSignature.Denominator} · {project.KeySignature.Fifths:+#;-#;0} fifths · {totalMeasures} bars";
+        }
+
+        private static int ResolveMeasureCount(string lengthId)
+        {
+            return lengthId switch
+            {
+                "long" => 64,
+                "medium" => 32,
+                _ => 16
+            };
+        }
+
+        private static int ResolveAutoBpm(string styleId, string moodId)
+        {
+            return (styleId, moodId) switch
+            {
+                ("dance", _) => 124,
+                (_, "sleep") => 64,
+                (_, "sad") => 76,
+                (_, "positive") => 118,
+                (_, "hopeful") => 104,
+                (_, "tense") => 132,
+                ("ambient", _) => 78,
+                _ => 96
+            };
+        }
+
+        private static (int Numerator, int Denominator) ResolveAutoMeter(string styleId, string moodId)
+        {
+            return (styleId, moodId) switch
+            {
+                ("dance", _) => (4, 4),
+                (_, "sleep") => (6, 8),
+                (_, "sad") => (3, 4),
+                ("folk", _) => (6, 8),
+                _ => (4, 4)
+            };
+        }
+
+        private static int ResolveAutoKey(string styleId, string moodId)
+        {
+            return (styleId, moodId) switch
+            {
+                (_, "sad") => -2,
+                (_, "sleep") => -3,
+                (_, "nostalgic") => -1,
+                (_, "positive") => 2,
+                (_, "hopeful") => 1,
+                ("dance", _) => 3,
+                _ => 0
+            };
+        }
+
+        private static KeyMode ResolveAutoMode(string moodId)
+        {
+            return moodId switch
+            {
+                "sad" or "sleep" or "nostalgic" => KeyMode.Minor,
+                _ => KeyMode.Major
+            };
+        }
+
+        private static int ResolveCandidateIndex(object sender)
+        {
+            return sender is FrameworkElement element
+                && int.TryParse(element.Tag?.ToString(), out int index)
+                ? index
+                : -1;
+        }
+
+        private static string SelectedTag(ComboBox box)
+        {
+            return (box.SelectedItem as ComboBoxItem)?.Tag?.ToString()?.Trim().ToLowerInvariant() ?? string.Empty;
+        }
+
+        private static ScoreProject CloneProject(ScoreProject source)
+        {
+            return new ScoreProject
+            {
+                Title = source.Title,
+                Bpm = source.Bpm,
+                TimeSignature = new TimeSignature(source.TimeSignature.Numerator, source.TimeSignature.Denominator),
+                KeySignature = new KeySignature(source.KeySignature.Fifths, source.KeySignature.Mode),
+                Ppq = source.Ppq,
+                UpdatedAt = source.UpdatedAt,
+                Notes = source.Notes.Select(note => new NoteEvent
+                {
+                    Midi = note.Midi,
+                    StartTick = note.StartTick,
+                    DurationTicks = note.DurationTicks,
+                    BaseDurationTicks = note.BaseDurationTicks,
+                    AugmentationDots = note.AugmentationDots,
+                    IsRest = note.IsRest,
+                    Voice = note.Voice,
+                    Accidental = note.Accidental,
+                    IsStaccato = note.IsStaccato,
+                    IsStaccatissimo = note.IsStaccatissimo,
+                    IsAccent = note.IsAccent,
+                    Ornament = note.Ornament,
+                    OrnamentOffsetX = note.OrnamentOffsetX,
+                    OrnamentOffsetY = note.OrnamentOffsetY,
+                    GraceOrnamentOffsetX = note.GraceOrnamentOffsetX,
+                    GraceOrnamentOffsetY = note.GraceOrnamentOffsetY,
+                    TieStart = note.TieStart,
+                    TieEnd = note.TieEnd,
+                    BeamGroupId = note.BeamGroupId,
+                    StemUpOverride = note.StemUpOverride,
+                    PreferTrebleStaff = note.PreferTrebleStaff
+                }).ToList(),
+                ExpressionMarks = source.ExpressionMarks.Select(mark => new ExpressionMark
+                {
+                    Code = mark.Code,
+                    StartTick = mark.StartTick,
+                    StaffStepOffset = mark.StaffStepOffset,
+                    SpanBeats = mark.SpanBeats,
+                    ShapeHeightSteps = mark.ShapeHeightSteps,
+                    SlopeSteps = mark.SlopeSteps
+                }).ToList(),
+                TimeSignatureChanges = source.TimeSignatureChanges.Select(change => new TimeSignatureChange
+                {
+                    Tick = change.Tick,
+                    Numerator = change.Numerator,
+                    Denominator = change.Denominator
+                }).ToList(),
+                KeySignatureChanges = source.KeySignatureChanges.Select(change => new KeySignatureChange
+                {
+                    Tick = change.Tick,
+                    Fifths = change.Fifths,
+                    Mode = change.Mode
+                }).ToList(),
+                StaffClefs = source.StaffClefs.ToDictionary(entry => entry.Key, entry => entry.Value),
+                LayoutSystemMeasureCounts = source.LayoutSystemMeasureCounts.ToList(),
+                LayoutBarlineOffsets = source.LayoutBarlineOffsets.ToDictionary(entry => entry.Key, entry => entry.Value),
+                LayoutMeasuresPerSystemOverride = source.LayoutMeasuresPerSystemOverride,
+                LayoutAutoMeasuresPerSystem = source.LayoutAutoMeasuresPerSystem
+            };
+        }
+    }
+}

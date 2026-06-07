@@ -2,6 +2,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Windowing;
 using System;
 using System.Collections.Generic;
@@ -15,12 +16,18 @@ namespace MusicBox
     {
         public MainViewModel ViewModel { get; } = new();
         private readonly AppSettingsService _settings = AppSettingsService.Instance;
+        private NavigationViewItem? NavCompose;
+        private TextBlock? NavComposeText;
+        private RadioMenuFlyoutItem? ConvertStaffToGuitarTabMenuItem;
+        private MenuFlyoutItem? ConvertExportGuitarTabMenuItem;
 
         public MainWindow()
         {
+            DebugTrace.Write("MainWindow.ctor begin");
             InitializeComponent();
             TryConfigureCustomTitleBar();
             TrySetWindowIcon();
+            CreateDynamicNavigationAndConvertMenuItems();
 
             RootGrid.DataContext = ViewModel;
             TryApplyBackdrop();
@@ -33,7 +40,12 @@ namespace MusicBox
             Closed += MainWindow_Closed;
 
             MainNavigation.SelectedItem = NavEditor;
-            NavigateTo("editor");
+            UpdateNavigationVisualStates(NavEditor);
+            if (ContentHost.MainFrame.Content == null)
+            {
+                NavigateTo("editor");
+            }
+            DebugTrace.Write("MainWindow.ctor end");
         }
 
         private void MainWindow_Closed(object sender, WindowEventArgs args)
@@ -44,25 +56,23 @@ namespace MusicBox
 
         private void MainNavigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
         {
-            if (args.SelectedItemContainer?.Tag is string tag)
+            if (args.SelectedItemContainer is NavigationViewItem selectedItem && selectedItem.Tag is string tag)
             {
+                DebugTrace.Write($"MainNavigation.SelectionChanged: {tag}");
                 NavigateTo(tag);
+                UpdateNavigationVisualStates(selectedItem);
             }
         }
 
         private void NavigateTo(string tag)
         {
             string normalized = tag?.Trim().ToLowerInvariant() ?? string.Empty;
-            if (string.Equals(normalized, "recognize", StringComparison.OrdinalIgnoreCase)
-                && !_settings.ExperimentalFeaturesEnabled)
-            {
-                normalized = "editor";
-            }
-
+            DebugTrace.Write($"NavigateTo begin: {normalized}");
             Type? target = normalized switch
             {
                 "editor" => typeof(EditorPage),
                 "convert" => typeof(ConvertPage),
+                "compose" => typeof(ComposeWorkbenchPage),
                 "recognize" => typeof(RecognizePage),
                 "settings" => typeof(SettingsPage),
                 _ => null
@@ -70,24 +80,39 @@ namespace MusicBox
 
             if (target != null)
             {
-                ContentHost.MainFrame.Navigate(target, ViewModel);
-                UpdateTitleMenuVisibility(normalized);
+                try
+                {
+                    DebugTrace.Write($"Frame.Navigate start: {target.FullName}");
+                    ContentHost.MainFrame.Navigate(target, ViewModel);
+                    DebugTrace.Write($"Frame.Navigate returned: {target.FullName}");
+                    UpdateTitleMenuVisibility(normalized);
+                }
+                catch (Exception ex)
+                {
+                    DebugTrace.Write($"NavigateTo catch: {ex}");
+                    ViewModel.SetStatus($"页面打开失败: {ex.Message}");
+                    if (!string.Equals(normalized, "editor", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ContentHost.MainFrame.Navigate(typeof(EditorPage), ViewModel);
+                        UpdateTitleMenuVisibility("editor");
+                        MainNavigation.SelectedItem = NavEditor;
+                    }
+                }
+            }
+            else
+            {
+                DebugTrace.Write($"NavigateTo ignored: {normalized}");
             }
         }
 
         public void NavigateToPage(string tag)
         {
             string normalized = tag?.Trim().ToLowerInvariant() ?? string.Empty;
-            if (string.Equals(normalized, "recognize", StringComparison.OrdinalIgnoreCase)
-                && !_settings.ExperimentalFeaturesEnabled)
-            {
-                normalized = "editor";
-            }
-
             NavigationViewItem? navItem = normalized switch
             {
                 "editor" => NavEditor,
                 "convert" => NavConvert,
+                "compose" => NavCompose,
                 "recognize" => NavRecognize,
                 "settings" => NavSettings,
                 _ => null
@@ -102,6 +127,7 @@ namespace MusicBox
                 else
                 {
                     NavigateTo(normalized);
+                    UpdateNavigationVisualStates(navItem);
                 }
             }
         }
@@ -114,6 +140,235 @@ namespace MusicBox
         private ConvertPage? GetCurrentConvertPage()
         {
             return ContentHost.MainFrame.Content as ConvertPage;
+        }
+
+        private void DispatchConvertImportCommand(string command)
+        {
+            string normalized = string.IsNullOrWhiteSpace(command) ? "import_editor" : command;
+            if (GetCurrentConvertPage() is ConvertPage currentPage)
+            {
+                if (NavConvert != null && !ReferenceEquals(MainNavigation.SelectedItem, NavConvert))
+                {
+                    MainNavigation.SelectedItem = NavConvert;
+                }
+
+                currentPage.HandleTitleBarImportCommand(normalized);
+                return;
+            }
+
+            void Frame_Navigated(object sender, NavigationEventArgs args)
+            {
+                if (args.SourcePageType != typeof(ConvertPage))
+                {
+                    return;
+                }
+
+                ContentHost.MainFrame.Navigated -= Frame_Navigated;
+                GetCurrentConvertPage()?.HandleTitleBarImportCommand(normalized);
+            }
+
+            ContentHost.MainFrame.Navigated -= Frame_Navigated;
+            ContentHost.MainFrame.Navigated += Frame_Navigated;
+            if (NavConvert != null && !ReferenceEquals(MainNavigation.SelectedItem, NavConvert))
+            {
+                MainNavigation.SelectedItem = NavConvert;
+            }
+            else
+            {
+                NavigateTo("convert");
+            }
+        }
+
+        public void NavigateToConvertAndImportEditor()
+        {
+            DispatchConvertImportCommand("import_editor");
+        }
+
+        private void CreateDynamicNavigationAndConvertMenuItems()
+        {
+            if (MainNavigation == null)
+            {
+                return;
+            }
+
+            if (NavCompose == null)
+            {
+                var composePanel = CreateNavigationItemContent("\uE790", out NavComposeText);
+
+                NavCompose = new NavigationViewItem
+                {
+                    Tag = "compose",
+                    Content = composePanel
+                };
+
+                if (MainNavigation.Resources.TryGetValue("CompactNavItemStyle", out object style)
+                    && style is Style compactNavItemStyle)
+                {
+                    NavCompose.Style = compactNavItemStyle;
+                }
+
+                int insertIndex = MainNavigation.MenuItems.IndexOf(NavRecognize);
+                if (insertIndex >= 0)
+                {
+                    MainNavigation.MenuItems.Insert(insertIndex, NavCompose);
+                }
+                else
+                {
+                    MainNavigation.MenuItems.Add(NavCompose);
+                }
+            }
+
+            if (ConvertFormatMenu != null && ConvertStaffToGuitarTabMenuItem == null)
+            {
+                ConvertStaffToGuitarTabMenuItem = new RadioMenuFlyoutItem
+                {
+                    Text = "五线谱 → 吉他谱",
+                    Tag = "staff_to_guitar_tab",
+                    GroupName = "ConvertFormat"
+                };
+                ConvertStaffToGuitarTabMenuItem.Click += ConvertTitleFormatMenuItem_Click;
+                ConvertFormatMenu.Items.Add(ConvertStaffToGuitarTabMenuItem);
+            }
+
+            if (ConvertExportMenu != null && ConvertExportGuitarTabMenuItem == null)
+            {
+                ConvertExportGuitarTabMenuItem = new MenuFlyoutItem
+                {
+                    Text = "吉他谱 TXT",
+                    Tag = "export_guitar_tab_txt"
+                };
+                ConvertExportGuitarTabMenuItem.Click += ConvertTitleExportMenuItem_Click;
+                ConvertExportMenu.Items.Add(ConvertExportGuitarTabMenuItem);
+            }
+        }
+
+        private Grid CreateNavigationItemContent(string glyph, out TextBlock label)
+        {
+            var root = new Grid
+            {
+                Width = 56,
+                Height = 58,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+
+            root.Children.Add(new Border
+            {
+                Tag = "AccentBar",
+                Width = 3,
+                Height = 22,
+                CornerRadius = new CornerRadius(2),
+                Background = GetThemeBrush("SystemControlHighlightAccentBrush", Colors.DodgerBlue),
+                Opacity = 0,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            var stack = new StackPanel
+            {
+                Spacing = 3,
+                Width = 52,
+                Margin = new Thickness(4, 0, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            stack.Children.Add(new FontIcon
+            {
+                Glyph = glyph,
+                FontFamily = new FontFamily("Segoe Fluent Icons"),
+                FontSize = 18,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5),
+                RenderTransform = new CompositeTransform()
+            });
+
+            label = new TextBlock
+            {
+                Text = "创作",
+                Width = 52,
+                FontSize = 9,
+                FontWeight = Microsoft.UI.Text.FontWeights.Normal,
+                MaxLines = 1,
+                TextWrapping = TextWrapping.NoWrap,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                TextAlignment = TextAlignment.Center
+            };
+            stack.Children.Add(label);
+            root.Children.Add(stack);
+            return root;
+        }
+
+        private IEnumerable<NavigationViewItem> GetNavigationItems()
+        {
+            if (NavEditor != null) yield return NavEditor;
+            if (NavConvert != null) yield return NavConvert;
+            if (NavCompose != null) yield return NavCompose;
+            if (NavRecognize != null) yield return NavRecognize;
+            if (NavSettings != null) yield return NavSettings;
+        }
+
+        private void UpdateNavigationVisualStates(NavigationViewItem? selectedItem)
+        {
+            selectedItem ??= MainNavigation?.SelectedItem as NavigationViewItem;
+            Brush accentBrush = GetThemeBrush("SystemControlHighlightAccentBrush", Colors.DodgerBlue);
+            Brush normalTextBrush = GetThemeBrush("TextFillColorSecondaryBrush", Colors.DimGray);
+
+            foreach (var item in GetNavigationItems())
+            {
+                bool selected = ReferenceEquals(item, selectedItem);
+                if (FindNavElement<Border>(item.Content, "AccentBar") is Border accentBar)
+                {
+                    accentBar.Opacity = selected ? 1 : 0;
+                }
+
+                Brush foreground = selected ? accentBrush : normalTextBrush;
+                if (FindNavElement<FontIcon>(item.Content) is FontIcon icon)
+                {
+                    icon.Foreground = foreground;
+                }
+
+                if (FindNavElement<TextBlock>(item.Content) is TextBlock label)
+                {
+                    label.Foreground = selected ? accentBrush : normalTextBrush;
+                }
+            }
+        }
+
+        private static T? FindNavElement<T>(object? root, string? tag = null) where T : FrameworkElement
+        {
+            if (root is T typed && (tag == null || string.Equals(typed.Tag?.ToString(), tag, StringComparison.Ordinal)))
+            {
+                return typed;
+            }
+
+            if (root is Panel panel)
+            {
+                foreach (UIElement child in panel.Children)
+                {
+                    var found = FindNavElement<T>(child, tag);
+                    if (found != null)
+                    {
+                        return found;
+                    }
+                }
+            }
+            else if (root is Border border)
+            {
+                return FindNavElement<T>(border.Child, tag);
+            }
+            else if (root is ContentControl contentControl)
+            {
+                return FindNavElement<T>(contentControl.Content, tag);
+            }
+
+            return null;
+        }
+
+        private static Brush GetThemeBrush(string resourceKey, Windows.UI.Color fallback)
+        {
+            return Application.Current.Resources.TryGetValue(resourceKey, out object value) && value is Brush brush
+                ? brush
+                : new SolidColorBrush(fallback);
         }
 
         private void UpdateTitleMenuVisibility(string activeTag)
@@ -245,22 +500,36 @@ namespace MusicBox
             if (sender is MenuFlyoutItem item)
             {
                 string command = item.Tag?.ToString() ?? string.Empty;
-                GetCurrentConvertPage()?.HandleTitleBarImportCommand(command);
+                DispatchConvertImportCommand(command);
                 return;
             }
 
-            GetCurrentConvertPage()?.HandleTitleBarImportCommand("import_editor");
+            DispatchConvertImportCommand("import_editor");
         }
 
         private void ConvertTitleFormatMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not MenuFlyoutItem item)
+            if (sender is not MenuFlyoutItemBase item)
             {
                 return;
             }
 
             string command = item.Tag?.ToString() ?? string.Empty;
             GetCurrentConvertPage()?.HandleTitleBarFormatCommand(command);
+        }
+
+        public void SyncConvertFormatSelection(string activeFormat)
+        {
+            bool isGuitar = string.Equals(activeFormat, "guitar", StringComparison.OrdinalIgnoreCase);
+            if (ConvertStaffToJianpuMenuItem != null)
+            {
+                ConvertStaffToJianpuMenuItem.IsChecked = !isGuitar;
+            }
+
+            if (ConvertStaffToGuitarTabMenuItem != null)
+            {
+                ConvertStaffToGuitarTabMenuItem.IsChecked = isGuitar;
+            }
         }
 
         private void ConvertTitleExportMenuItem_Click(object sender, RoutedEventArgs e)
@@ -294,17 +563,9 @@ namespace MusicBox
 
         private void ApplyExperimentalFeatureVisibility()
         {
-            bool showRecognize = _settings.ExperimentalFeaturesEnabled;
             if (NavRecognize != null)
             {
-                NavRecognize.Visibility = showRecognize ? Visibility.Visible : Visibility.Collapsed;
-            }
-
-            if (!showRecognize
-                && (ReferenceEquals(MainNavigation.SelectedItem, NavRecognize) || ContentHost.MainFrame.Content is RecognizePage))
-            {
-                MainNavigation.SelectedItem = NavEditor;
-                NavigateTo("editor");
+                NavRecognize.Visibility = Visibility.Visible;
             }
         }
 
@@ -314,19 +575,30 @@ namespace MusicBox
 
             Title = LocalizationService.Translate("window.title");
             if (WindowTitleText != null) WindowTitleText.Text = LocalizationService.Translate("window.title");
-            if (NavEditorText != null) NavEditorText.Text = isEnglish ? "Editor" : "\u7f16\u8f91";
-            if (NavConvertText != null) NavConvertText.Text = isEnglish ? "Convert" : "\u8f6c\u6362";
-            if (NavRecognizeText != null) NavRecognizeText.Text = isEnglish ? "Detect" : "\u8bc6\u522b";
-            if (NavSettingsText != null) NavSettingsText.Text = isEnglish ? "Settings" : "\u8bbe\u7f6e";
+            if (NavEditorText != null) NavEditorText.Text = LocalizationService.Translate("nav.editor");
+            if (NavConvertText != null) NavConvertText.Text = LocalizationService.Translate("nav.convert");
+            if (NavComposeText != null) NavComposeText.Text = LocalizationService.Translate("nav.compose");
+            if (NavRecognizeText != null) NavRecognizeText.Text = LocalizationService.Translate("nav.recognize");
+            if (NavSettingsText != null) NavSettingsText.Text = LocalizationService.Translate("nav.settings");
+
+            ApplyNavLabelStyle(NavEditorText, isEnglish);
+            ApplyNavLabelStyle(NavConvertText, isEnglish);
+            ApplyNavLabelStyle(NavComposeText, isEnglish);
+            ApplyNavLabelStyle(NavRecognizeText, isEnglish);
+            ApplyNavLabelStyle(NavSettingsText, isEnglish);
+            UpdateNavigationVisualStates(MainNavigation.SelectedItem as NavigationViewItem);
 
             if (ConvertImportMenu != null) ConvertImportMenu.Title = isEnglish ? "Import" : "\u5bfc\u5165";
             if (ConvertFormatMenu != null) ConvertFormatMenu.Title = isEnglish ? "Format" : "\u683c\u5f0f\u8f6c\u6362";
             if (ConvertExportMenu != null) ConvertExportMenu.Title = isEnglish ? "Export" : "\u5bfc\u51fa";
-            if (ConvertImportFromEditorMenuItem != null) ConvertImportFromEditorMenuItem.Text = isEnglish ? "Import From Editor" : "\u7f16\u8f91\u9875\u5bfc\u5165";
+            if (ConvertImportFromEditorMenuItem != null) ConvertImportFromEditorMenuItem.Text = isEnglish ? "Import From Staff" : "五线谱页导入";
             if (ConvertImportFromFileMenuItem != null) ConvertImportFromFileMenuItem.Text = isEnglish ? "Import From File" : "\u4ece\u6587\u4ef6\u5bfc\u5165";
             if (ConvertStaffToJianpuMenuItem != null) ConvertStaffToJianpuMenuItem.Text = isEnglish ? "Staff -> Jianpu" : "\u4e94\u7ebf\u8c31 \u2192 \u7b80\u8c31";
-            if (ConvertExportPdfMenuItem != null) ConvertExportPdfMenuItem.Text = "PDF";
+            if (ConvertStaffToGuitarTabMenuItem != null) ConvertStaffToGuitarTabMenuItem.Text = isEnglish ? "Staff -> Guitar Tab" : "\u4e94\u7ebf\u8c31 \u2192 \u5409\u4ed6\u8c31";
+            if (ConvertPrintMenuItem != null) ConvertPrintMenuItem.Text = isEnglish ? "Print..." : "\u6253\u5370...";
+            if (ConvertExportPdfMenuItem != null) ConvertExportPdfMenuItem.Text = isEnglish ? "Export PDF" : "\u5bfc\u51fa PDF";
             if (ConvertExportMusicXmlMenuItem != null) ConvertExportMusicXmlMenuItem.Text = "MusicXML";
+            if (ConvertExportGuitarTabMenuItem != null) ConvertExportGuitarTabMenuItem.Text = isEnglish ? "Guitar Tab TXT" : "\u5409\u4ed6\u8c31 TXT";
 
             if (EditorFileMenu != null) EditorFileMenu.Title = isEnglish ? "File" : "\u6587\u4ef6";
             if (EditorTimeMenu != null) EditorTimeMenu.Title = isEnglish ? "Time" : "\u62cd\u53f7";
@@ -342,6 +614,20 @@ namespace MusicBox
             ApplyExperimentalFeatureVisibility();
         }
 
+        private static void ApplyNavLabelStyle(TextBlock? label, bool isEnglish)
+        {
+            if (label == null)
+            {
+                return;
+            }
+
+            label.Width = 52;
+            label.FontSize = 9;
+            label.MaxLines = 1;
+            label.TextWrapping = TextWrapping.NoWrap;
+            label.TextAlignment = TextAlignment.Center;
+        }
+
         private void ApplyEditorMenuItemLocalization(bool isEnglish)
         {
             var fileMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -352,6 +638,8 @@ namespace MusicBox
                 ["saveas"] = isEnglish ? "Save As" : "\u53e6\u5b58\u4e3a",
                 ["import_musicxml"] = isEnglish ? "Import MusicXML" : "\u5bfc\u5165 MusicXML",
                 ["export_musicxml"] = isEnglish ? "Export MusicXML" : "\u5bfc\u51fa MusicXML",
+                ["export_wav"] = isEnglish ? "Export WAV" : "\u5bfc\u51fa WAV",
+                ["export_pdf"] = isEnglish ? "Export PDF" : "\u5bfc\u51fa PDF",
                 ["print"] = isEnglish ? "Print..." : "\u6253\u5370..."
             };
 
@@ -470,6 +758,7 @@ namespace MusicBox
                         break;
                 }
             }
+
         }
 
         private void TryApplyBackdrop()
@@ -547,3 +836,14 @@ namespace MusicBox
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+

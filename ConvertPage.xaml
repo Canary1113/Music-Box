@@ -3,7 +3,6 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
-    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
     Background="{x:Null}">
 
     <Grid x:Name="RootGrid"
@@ -38,11 +37,5 @@
             </ScrollViewer>
         </Border>
 
-        <!-- Hidden export backend: keeps PDF export path while preview is fully native-rendered. -->
-        <controls:WebView2 x:Name="PdfExportWebView"
-                           Visibility="Collapsed"
-                           Width="1"
-                           Height="1"
-                           DefaultBackgroundColor="Transparent"/>
     </Grid>
 </Page>

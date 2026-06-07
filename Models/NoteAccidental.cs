@@ -5,7 +5,9 @@
         None,
         Sharp,
         Flat,
-        Natural
+        Natural,
+        DoubleSharp,
+        DoubleFlat
     }
 }
 

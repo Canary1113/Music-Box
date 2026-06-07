@@ -16,13 +16,11 @@ namespace MusicBox.Services
 
     public static class AppBuildInfoService
     {
-        public const string DefaultVersionDisplay = "26H2";
         public const string DefaultVersionCode = "262001";
 
         public static AppBuildInfo GetCurrent()
         {
             string? repoRoot = TryFindRepoRoot();
-            string versionDisplay = DefaultVersionDisplay;
             string versionCode = DefaultVersionCode;
             string commitDate = GetFallbackCommitDate();
             string commitCount = "0";
@@ -41,12 +39,13 @@ namespace MusicBox.Services
             commitCount = NormalizeCommitCount(commitCount);
             string buildNumber = $"{versionCode}.{commitDate}{commitCount}";
 
-            if (TryParseBranchVersion(branchName, out string branchVersionDisplay, out string branchVersionCode, out string branchBuildNumber))
+            if (TryParseBranchVersion(branchName, out string branchVersionCode, out string branchBuildNumber))
             {
-                versionDisplay = branchVersionDisplay;
                 versionCode = branchVersionCode;
                 buildNumber = branchBuildNumber;
             }
+
+            string versionDisplay = BuildVersionDisplay(buildNumber, versionCode);
 
             return new AppBuildInfo
             {
@@ -179,9 +178,22 @@ namespace MusicBox.Services
             return string.IsNullOrWhiteSpace(digits) ? "0" : digits;
         }
 
-        private static bool TryParseBranchVersion(string branchName, out string versionDisplay, out string versionCode, out string buildNumber)
+        private static string BuildVersionDisplay(string buildNumber, string versionCode)
         {
-            versionDisplay = string.Empty;
+            string buildDigits = new string((buildNumber ?? string.Empty).Where(char.IsDigit).ToArray());
+            string codeDigits = new string((versionCode ?? string.Empty).Where(char.IsDigit).ToArray());
+            string source = buildDigits.Length >= 3 ? buildDigits : codeDigits;
+
+            if (source.Length < 3)
+            {
+                return "00H0";
+            }
+
+            return $"{source.Substring(0, 2)}H{source[2]}";
+        }
+
+        private static bool TryParseBranchVersion(string branchName, out string versionCode, out string buildNumber)
+        {
             versionCode = string.Empty;
             buildNumber = string.Empty;
 
@@ -197,17 +209,15 @@ namespace MusicBox.Services
                 return false;
             }
 
-            string displayCandidate = parts[0];
             string buildCandidate = parts[^1];
             string codeCandidate = buildCandidate.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? string.Empty;
             string versionDigits = new string(codeCandidate.Where(char.IsDigit).ToArray());
 
-            if (string.IsNullOrWhiteSpace(displayCandidate) || string.IsNullOrWhiteSpace(versionDigits) || !buildCandidate.Contains('.'))
+            if (string.IsNullOrWhiteSpace(versionDigits) || !buildCandidate.Contains('.'))
             {
                 return false;
             }
 
-            versionDisplay = displayCandidate;
             versionCode = versionDigits;
             buildNumber = buildCandidate;
             return true;

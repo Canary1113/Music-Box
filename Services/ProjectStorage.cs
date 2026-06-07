@@ -22,8 +22,7 @@ namespace MusicBox.Services
 
         public ProjectStorage()
         {
-            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            DataRoot = Path.Combine(localAppData, "MusicMagic");
+            DataRoot = ResolveDataRoot();
         }
 
         public string GetDefaultProjectPath()
@@ -44,18 +43,25 @@ namespace MusicBox.Services
 
         public ScoreProject Load(string path)
         {
-            var json = File.ReadAllText(path);
-            var project = JsonSerializer.Deserialize<ScoreProject>(json, _jsonOptions);
-            if (project == null) return ProjectFactory.CreateDefault();
+            try
+            {
+                var json = File.ReadAllText(path);
+                var project = JsonSerializer.Deserialize<ScoreProject>(json, _jsonOptions);
+                if (project == null) return ProjectFactory.CreateDefault();
 
-            project.Notes ??= new();
-            project.ExpressionMarks ??= new();
-            project.TimeSignatureChanges ??= new();
-            project.KeySignatureChanges ??= new();
-            project.StaffClefs ??= new();
-            project.LayoutSystemMeasureCounts ??= new();
-            project.LayoutBarlineOffsets ??= new();
-            return project;
+                project.Notes ??= new();
+                project.ExpressionMarks ??= new();
+                project.TimeSignatureChanges ??= new();
+                project.KeySignatureChanges ??= new();
+                project.StaffClefs ??= new();
+                project.LayoutSystemMeasureCounts ??= new();
+                project.LayoutBarlineOffsets ??= new();
+                return project;
+            }
+            catch (Exception)
+            {
+                return ProjectFactory.CreateDefault();
+            }
         }
 
         public void Save(ScoreProject project, string path)
@@ -71,6 +77,49 @@ namespace MusicBox.Services
             var path = Path.Combine(RecoveryFolder, "auto-save.json");
             var json = JsonSerializer.Serialize(project, _jsonOptions);
             File.WriteAllText(path, json);
+        }
+
+        private static string ResolveDataRoot()
+        {
+            string[] candidates =
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicMagic"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "MusicMagic"),
+                Path.Combine(AppContext.BaseDirectory, "AppData", "MusicMagic")
+            };
+
+            foreach (string candidate in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    continue;
+                }
+
+                if (TryEnsureWritable(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            string fallback = Path.Combine(Path.GetTempPath(), "MusicMagic");
+            Directory.CreateDirectory(fallback);
+            return fallback;
+        }
+
+        private static bool TryEnsureWritable(string path)
+        {
+            try
+            {
+                Directory.CreateDirectory(path);
+                string probePath = Path.Combine(path, ".write-test");
+                File.WriteAllText(probePath, "ok");
+                File.Delete(probePath);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

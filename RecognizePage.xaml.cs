@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -23,8 +24,10 @@ namespace MusicBox
         private static readonly object s_audioRunSync = new();
         private static Task<IReadOnlyList<DetectedAudioNote>>? s_runningAudioTask;
         private static string? s_runningAudioInputPath;
+        private static AudioRecognitionMode s_runningAudioMode = AudioRecognitionMode.MelodyFocus;
         private static string s_runningAudioProgressText = string.Empty;
         private static IReadOnlyList<DetectedAudioNote>? s_runningAudioResult;
+        private static CancellationTokenSource? s_runningAudioCancellation;
 
         private static OmrPageStateCache? s_cache;
         private static readonly object s_omrRunSync = new();
@@ -36,6 +39,7 @@ namespace MusicBox
         private MainViewModel? _viewModel;
         private string? _selectedAudioPath;
         private IReadOnlyList<DetectedAudioNote> _detectedNotes = Array.Empty<DetectedAudioNote>();
+        private AudioRecognitionMode _audioRecognitionMode = AudioRecognitionMode.MelodyFocus;
         private bool _audioAnalyzing;
         private Task<IReadOnlyList<DetectedAudioNote>>? _attachedAudioWatchingTask;
 
@@ -54,6 +58,9 @@ namespace MusicBox
             InitializeComponent();
             _omrService = new ScoreOmrService(_omrRuntimeManager);
             OmrCandidatesListView.ItemsSource = _omrCandidates;
+            AudioRecognitionModeComboBox.SelectedIndex = 0;
+            UpdateAudioResultEmptyState();
+            UpdateOmrCandidatesEmptyState();
             Loaded += RecognizePage_Loaded;
         }
 
@@ -111,6 +118,12 @@ namespace MusicBox
             await Task.CompletedTask;
         }
 
+        private async void RefreshRuntimeStatusButton_Click(object sender, RoutedEventArgs e)
+        {
+            await RefreshRuntimeStatusAsync();
+            SaveOmrStateToCache();
+        }
+
         private void SetOmrProgress(bool busy, string? text = null)
         {
             OmrProgressRing.IsActive = busy;
@@ -126,36 +139,83 @@ namespace MusicBox
             AudioAnalyzeProgressText.Text = text ?? string.Empty;
             AnalyzeAudioButton.IsEnabled = !busy;
             SelectAudioButton.IsEnabled = !busy;
+            AudioRecognitionModeComboBox.IsEnabled = !busy;
             ImportDetectedNotesButton.IsEnabled = !busy && _detectedNotes.Count > 0;
+            UpdateAudioResultEmptyState();
+        }
+
+        private void UpdateAudioResultEmptyState()
+        {
+            if (AudioEmptyStatePanel == null || DetectedNotesPreviewTextBox == null)
+            {
+                return;
+            }
+
+            AudioEmptyStatePanel.Visibility = string.IsNullOrWhiteSpace(DetectedNotesPreviewTextBox.Text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        private void UpdateOmrCandidatesEmptyState()
+        {
+            if (OmrCandidatesEmptyStatePanel == null)
+            {
+                return;
+            }
+
+            OmrCandidatesEmptyStatePanel.Visibility = _omrCandidates.Count == 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
 
         private void ApplyStaticLocalizedText()
         {
             bool isEnglish = IsEnglishUi();
+            RecognizePageTitleText.Text = isEnglish ? "Recognition Center" : "识别中心";
+            RecognizePageSubtitleText.Text = isEnglish
+                ? "Convert audio or images into staff notation with multiple formats and high-precision recognition."
+                : "将音频或图片转换为五线谱，支持多种格式与高精度识别。";
             AudioSectionTitleText.Text = isEnglish ? "Audio -> Staff (MP3/WAV)" : "音频识别 -> 五线谱（MP3/WAV）";
             AudioSectionDescText.Text = isEnglish
                 ? "Offline MP3/WAV recognition: detect monophonic pitch and generate draft notes for direct import."
-                : "支持 MP3 / WAV 离线识别：提取主旋律音高并生成草稿音符，可直接导入编辑页生成五线谱。";
-            FrequencyLabelText.Text = isEnglish ? "Frequency (Hz):" : "频率 (Hz):";
-            FrequencyResultLabelText.Text = isEnglish ? "Converted:" : "换算:";
-            SelectAudioButton.Content = isEnglish ? "Pick Audio (MP3/WAV)" : "选择音频 (MP3/WAV)";
-            AnalyzeAudioButton.Content = isEnglish ? "Analyze Pitch" : "分析音高并生成草稿";
-            ImportDetectedNotesButton.Content = isEnglish ? "Import to Editor" : "导入到编辑页";
+                : "支持 MP3 / WAV 离线识别：提取主旋律音高并生成草稿音符，可直接导入五线谱页。";
+            AudioStepTitleText.Text = isEnglish ? "1. Select audio and parameters" : "1. 选择音频与参数";
+            AudioResultTitleText.Text = isEnglish ? "2. Recognition result" : "2. 识别结果";
+            FrequencyLabelText.Text = isEnglish ? "Frequency (Hz)" : "频率（Hz）";
+            FrequencyResultLabelText.Text = isEnglish ? "Converted" : "换算";
+            SetIconButtonContent(SelectAudioButton, "\uE8A5", isEnglish ? "Pick Audio (MP3/WAV)" : "选择音频 (MP3/WAV)");
+            SetIconButtonContent(AnalyzeAudioButton, "\uE768", isEnglish ? "Start Recognition" : "开始识别");
+            SetIconButtonContent(ClearAudioButton, "\uE74D", isEnglish ? "Clear" : "清空");
+            SetIconButtonContent(ImportDetectedNotesButton, "\uE8B5", isEnglish ? "Import to Staff" : "导入到五线谱页");
+            SetIconButtonContent(AudioResultImportButton, "\uE8B5", isEnglish ? "Import to Staff" : "导入到五线谱页");
+            SetIconButtonContent(ExportAudioMusicXmlButton, "\uE896", isEnglish ? "Export MusicXML" : "导出 MusicXML");
+            AudioModeLabelText.Text = isEnglish ? "Mode:" : "识别模式:";
+            SetComboBoxItemContent(AudioModeMelodyItem, "\uEC4F", isEnglish ? "Melody Focus" : "旋律优先");
+            SetComboBoxItemContent(AudioModeBalancedItem, "\uE8D4", isEnglish ? "Balanced" : "平衡");
+            SetComboBoxItemContent(AudioModeDenseItem, "\uE9D2", isEnglish ? "High Recall / Low Notes" : "高召回/低音保留");
+            RefreshAudioModeSelectionBox();
+            UpdateAudioModeHelpText();
             AudioSupportText.Text = isEnglish
-                ? "Supports MP3/WAV, shows live progress, reduces false chords, and auto-infers key + meter after recognition."
-                : "支持 MP3 / WAV，含百分比进度，已优化误判和弦问题，并在识别后自动推断调号与拍号。";
+                ? "Supports MP3/WAV with three recognition modes. Melody Focus is best for full songs with accompaniment."
+                : "支持 MP3 / WAV，提供三种识别模式。完整歌曲或有伴奏时建议先用“旋律优先”。";
 
             OmrSectionTitleText.Text = isEnglish ? "Image/PDF -> Staff (Beta)" : "图片 / PDF 识别 -> 五线谱（Beta）";
             OmrSectionDescText.Text = isEnglish
                 ? "Supports PDF/PNG/JPG/BMP/TIFF and converts to MusicXML via multi-engine ranking."
                 : "支持 PDF、PNG、JPG、BMP、TIFF。内部通过多引擎 + 多候选评分转换成 MusicXML。";
-            SelectSheetFileButton.Content = isEnglish ? "Pick Image/PDF" : "选择图片/PDF";
-            RunOmrButton.Content = isEnglish ? "Recognize to MusicXML" : "识别为谱面 (MusicXML)";
-            ImportBestOmrButton.Content = isEnglish ? "Import Best Candidate" : "导入最优候选";
-            ImportSelectedOmrButton.Content = isEnglish ? "Import Selected Candidate" : "导入选中候选";
-            OpenOmrArtifactsButton.Content = isEnglish ? "Open Artifacts" : "查看中间图";
-            CandidatesTitleText.Text = isEnglish ? "Candidates" : "候选列表";
-            CandidatesEngineHeaderText.Text = isEnglish ? "Engine" : "引擎";
+            OmrBetaBadgeText.Text = isEnglish ? "Beta" : "Beta 版本";
+            OmrSelectTitleText.Text = isEnglish ? "1. Select image/PDF" : "1. 选择图片/PDF";
+            OmrStatusInfoTitleText.Text = isEnglish ? "Status" : "状态信息";
+            OmrEngineTitleText.Text = isEnglish ? "3. Engine and environment" : "3. 引擎与环境信息";
+            SetIconButtonContent(SelectSheetFileButton, "\uEB9F", isEnglish ? "Pick Image/PDF" : "选择图片/PDF");
+            SetIconButtonContent(RunOmrButton, "\uE768", isEnglish ? "Recognize to MusicXML" : "识别为谱面 (MusicXML)");
+            SetIconButtonContent(ImportBestOmrButton, "\uE73E", isEnglish ? "Import Best Candidate" : "导入最优候选");
+            SetIconButtonContent(ImportSelectedOmrButton, "\uE8B5", isEnglish ? "Import Selected Candidate" : "导入选中候选");
+            SetIconButtonContent(OpenOmrArtifactsButton, "\uE8A7", isEnglish ? "Open Artifacts" : "查看中间层");
+            SetIconButtonContent(RefreshRuntimeStatusButton, "\uE72C", isEnglish ? "Refresh Status" : "刷新状态");
+            OmrEmptyCandidatesText.Text = isEnglish ? "No candidates yet" : "暂无候选结果";
+            CandidatesTitleText.Text = isEnglish ? "2. Candidates (sorted by score)" : "2. 候选列表（按评分排序）";
+            CandidatesEngineHeaderText.Text = "#";
             CandidatesInputHeaderText.Text = isEnglish ? "Input Variant" : "输入版本";
             CandidatesNotesHeaderText.Text = isEnglish ? "Notes" : "音符数";
             CandidatesMeasuresHeaderText.Text = isEnglish ? "Measures" : "小节数";
@@ -170,9 +230,15 @@ namespace MusicBox
                 SelectedAudioPathText.Text = isEnglish ? "No audio selected" : "未选择音频文件";
             }
 
-            if (string.IsNullOrWhiteSpace(RecognizeSummaryText.Text) || RecognizeSummaryText.Text.Contains("Result", StringComparison.OrdinalIgnoreCase) || RecognizeSummaryText.Text.Contains("识别结果"))
+            if (string.IsNullOrWhiteSpace(RecognizeSummaryText.Text)
+                || RecognizeSummaryText.Text.Contains("Select audio", StringComparison.OrdinalIgnoreCase)
+                || RecognizeSummaryText.Text.Contains("选择音频")
+                || RecognizeSummaryText.Text.Contains("Result", StringComparison.OrdinalIgnoreCase)
+                || RecognizeSummaryText.Text.Contains("识别结果"))
             {
-                RecognizeSummaryText.Text = isEnglish ? "Result: -" : "识别结果: -";
+                RecognizeSummaryText.Text = isEnglish
+                    ? "Select audio and click \"Start Recognition\" to view results."
+                    : "选择音频并点击“开始识别”以查看结果。";
             }
 
             if (string.IsNullOrWhiteSpace(SelectedSheetPathText.Text) || SelectedSheetPathText.Text.Contains("No sheet selected", StringComparison.OrdinalIgnoreCase) || SelectedSheetPathText.Text.Contains("未选择"))
@@ -189,18 +255,159 @@ namespace MusicBox
             {
                 OmrBestReasonText.Text = isEnglish ? "Best Candidate: -" : "最优候选: -";
             }
+
+            UpdateAudioResultEmptyState();
+            UpdateOmrCandidatesEmptyState();
+        }
+
+        private static void SetIconButtonContent(Button button, string glyph, string text)
+        {
+            button.Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Children =
+                {
+                    new FontIcon
+                    {
+                        Glyph = glyph,
+                        FontSize = 15,
+                        VerticalAlignment = VerticalAlignment.Center
+                    },
+                    new TextBlock
+                    {
+                        Text = text,
+                        VerticalAlignment = VerticalAlignment.Center
+                    }
+                }
+            };
+        }
+
+        private static void SetComboBoxItemContent(ComboBoxItem item, string glyph, string text)
+        {
+            item.Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new FontIcon
+                    {
+                        Glyph = glyph,
+                        FontSize = 14,
+                        VerticalAlignment = VerticalAlignment.Center
+                    },
+                    new TextBlock
+                    {
+                        Text = text,
+                        VerticalAlignment = VerticalAlignment.Center
+                    }
+                }
+            };
+        }
+
+        private void UpdateAudioModeHelpText()
+        {
+            if (AudioModeHelpText == null)
+            {
+                return;
+            }
+
+            bool isEnglish = IsEnglishUi();
+            string helpText = _audioRecognitionMode switch
+            {
+                AudioRecognitionMode.Balanced => isEnglish
+                    ? "General single-instrument or light accompaniment. Medium note count and moderate filtering."
+                    : "适合单乐器或轻伴奏。音符数量中等，过滤和保留比较折中。",
+                AudioRecognitionMode.Dense => isEnglish
+                    ? "Keeps more notes and low register material. Use when missing notes matter more than extra noise."
+                    : "保留更多音和中低音。适合漏音严重时尝试，但杂音会更多。",
+                _ => isEnglish
+                    ? "Best for full songs with drums/accompaniment. Prioritizes the lead melody and suppresses bass octave errors."
+                    : "适合完整歌曲/有鼓和伴奏。优先保主旋律，减少被低音伴奏拉低八度。"
+            };
+            AudioModeHelpText.Text = helpText;
+            AudioModeInfoBar.Message = helpText;
+        }
+
+        private AudioRecognitionMode GetSelectedAudioRecognitionMode()
+        {
+            if (AudioRecognitionModeComboBox.SelectedItem is ComboBoxItem item)
+            {
+                string tag = item.Tag?.ToString() ?? string.Empty;
+                if (Enum.TryParse(tag, out AudioRecognitionMode mode))
+                {
+                    return mode;
+                }
+            }
+
+            return AudioRecognitionMode.MelodyFocus;
+        }
+
+        private void SetSelectedAudioRecognitionMode(AudioRecognitionMode mode)
+        {
+            _audioRecognitionMode = mode;
+            foreach (object obj in AudioRecognitionModeComboBox.Items)
+            {
+                if (obj is ComboBoxItem item
+                    && string.Equals(item.Tag?.ToString(), mode.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    AudioRecognitionModeComboBox.SelectedItem = item;
+                    break;
+                }
+            }
+
+            UpdateAudioModeHelpText();
+        }
+
+        private void RefreshAudioModeSelectionBox()
+        {
+            ComboBoxItem? selectedItem = AudioRecognitionModeComboBox.SelectedItem as ComboBoxItem;
+            if (selectedItem == null)
+            {
+                return;
+            }
+
+            AudioRecognitionModeComboBox.SelectedItem = null;
+            AudioRecognitionModeComboBox.SelectedItem = selectedItem;
+        }
+
+        private static string GetAudioRecognitionModeName(AudioRecognitionMode mode)
+        {
+            bool isEnglish = IsEnglishUi();
+            return mode switch
+            {
+                AudioRecognitionMode.Balanced => isEnglish ? "Balanced" : "平衡",
+                AudioRecognitionMode.Dense => isEnglish ? "High Recall / Low Notes" : "高召回/低音保留",
+                _ => isEnglish ? "Melody Focus" : "旋律优先"
+            };
+        }
+
+        private void AudioRecognitionModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            _audioRecognitionMode = GetSelectedAudioRecognitionMode();
+            UpdateAudioModeHelpText();
+            if (RecognizeSummaryText == null || DetectedNotesPreviewTextBox == null || SelectedAudioPathText == null)
+            {
+                return;
+            }
+
+            SaveAudioStateToCache();
         }
 
         private void AttachRunningAudioIfNeeded()
         {
             Task<IReadOnlyList<DetectedAudioNote>>? task;
             string? input;
+            AudioRecognitionMode mode;
             string text;
             IReadOnlyList<DetectedAudioNote>? finishedResult;
             lock (s_audioRunSync)
             {
                 task = s_runningAudioTask;
                 input = s_runningAudioInputPath;
+                mode = s_runningAudioMode;
                 text = s_runningAudioProgressText;
                 finishedResult = s_runningAudioResult;
             }
@@ -209,6 +416,7 @@ namespace MusicBox
             {
                 if (finishedResult != null)
                 {
+                    SetSelectedAudioRecognitionMode(mode);
                     ApplyDetectedAudioNotes(finishedResult, input);
                     lock (s_audioRunSync)
                     {
@@ -225,6 +433,7 @@ namespace MusicBox
             {
                 if (!string.IsNullOrWhiteSpace(input))
                 {
+                    SetSelectedAudioRecognitionMode(mode);
                     _selectedAudioPath = input;
                     SelectedAudioPathText.Text = $"{Loc("已选择", "Selected")}: {input}";
                 }
@@ -250,7 +459,10 @@ namespace MusicBox
             }
         }
 
-        private Task<IReadOnlyList<DetectedAudioNote>> GetOrStartRunningAudioTask(string inputPath, IProgress<AudioRecognitionProgress> progress)
+        private Task<IReadOnlyList<DetectedAudioNote>> GetOrStartRunningAudioTask(
+            string inputPath,
+            AudioRecognitionMode mode,
+            IProgress<AudioRecognitionProgress> progress)
         {
             lock (s_audioRunSync)
             {
@@ -260,9 +472,15 @@ namespace MusicBox
                 }
 
                 s_runningAudioInputPath = inputPath;
+                s_runningAudioMode = mode;
                 s_runningAudioProgressText = $"{Loc("识别进度", "Progress")}: 0%";
                 s_runningAudioResult = null;
-                s_runningAudioTask = Task.Run(() => AudioPitchRecognizer.DetectNotesFromAudio(inputPath, progress));
+                s_runningAudioCancellation?.Dispose();
+                s_runningAudioCancellation = new CancellationTokenSource();
+                CancellationToken cancellationToken = s_runningAudioCancellation.Token;
+                s_runningAudioTask = Task.Run(
+                    () => AudioPitchRecognizer.DetectNotesFromAudio(inputPath, progress, mode, cancellationToken),
+                    cancellationToken);
                 return s_runningAudioTask;
             }
         }
@@ -277,6 +495,8 @@ namespace MusicBox
                     s_runningAudioResult = result;
                     s_runningAudioProgressText = $"{Loc("识别进度", "Progress")}: 100%";
                     s_runningAudioTask = null;
+                    s_runningAudioCancellation?.Dispose();
+                    s_runningAudioCancellation = null;
                 }
             }
         }
@@ -288,9 +508,16 @@ namespace MusicBox
                 while (!task.IsCompleted)
                 {
                     string progressText;
+                    bool isCurrentTask;
                     lock (s_audioRunSync)
                     {
+                        isCurrentTask = ReferenceEquals(s_runningAudioTask, task);
                         progressText = s_runningAudioProgressText;
+                    }
+
+                    if (!isCurrentTask)
+                    {
+                        return;
                     }
 
                     SetAudioProgress(true, string.IsNullOrWhiteSpace(progressText) ? $"{Loc("识别进度", "Progress")}: 0%" : progressText);
@@ -298,8 +525,31 @@ namespace MusicBox
                 }
 
                 await ObserveRunningAudioTaskAsync(task);
+                lock (s_audioRunSync)
+                {
+                    if (s_runningAudioResult == null && !ReferenceEquals(s_runningAudioTask, task))
+                    {
+                        return;
+                    }
+                }
+
                 IReadOnlyList<DetectedAudioNote> result = await task;
                 ApplyDetectedAudioNotes(result, _selectedAudioPath);
+            }
+            catch (OperationCanceledException)
+            {
+                lock (s_audioRunSync)
+                {
+                    if (ReferenceEquals(s_runningAudioTask, task))
+                    {
+                        s_runningAudioTask = null;
+                        s_runningAudioResult = null;
+                        s_runningAudioProgressText = string.Empty;
+                        s_runningAudioInputPath = null;
+                        s_runningAudioCancellation?.Dispose();
+                        s_runningAudioCancellation = null;
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -321,7 +571,7 @@ namespace MusicBox
                     text = s_runningAudioProgressText;
                 }
 
-                SetAudioProgress(stillRunning, stillRunning ? text : $"{Loc("识别进度", "Progress")}: 100%");
+                SetAudioProgress(stillRunning, stillRunning ? text : null);
                 SaveAudioStateToCache();
             }
         }
@@ -334,6 +584,7 @@ namespace MusicBox
                 RecognizeSummaryText.Text = $"{Loc("识别结果", "Result")}: {Loc("未检测到有效音符（请尝试更干净的单旋律音频）", "No valid notes were detected (try cleaner monophonic audio)")}";
                 DetectedNotesPreviewTextBox.Text = string.Empty;
                 ImportDetectedNotesButton.IsEnabled = false;
+                UpdateAudioResultEmptyState();
                 SaveAudioStateToCache();
                 return;
             }
@@ -348,6 +599,7 @@ namespace MusicBox
             AudioStructureInference inference = InferAudioStructureSafe(_detectedNotes, ppq);
             RecognizeSummaryText.Text =
                 $"{Loc("识别结果", "Result")}: {Loc("检测到", "Detected")} {_detectedNotes.Count} {Loc("个音符片段", "note segments")} · " +
+                $"{Loc("模式", "Mode")} {GetAudioRecognitionModeName(_audioRecognitionMode)} · " +
                 $"{Loc("拍号", "Meter")} {inference.Numerator}/{inference.Denominator}, 1={inference.KeyName}";
 
             var lines = new List<string>
@@ -369,6 +621,7 @@ namespace MusicBox
 
             DetectedNotesPreviewTextBox.Text = string.Join(Environment.NewLine, lines);
             ImportDetectedNotesButton.IsEnabled = true;
+            UpdateAudioResultEmptyState();
             SaveAudioStateToCache();
         }
 
@@ -590,6 +843,7 @@ namespace MusicBox
             {
                 SelectedAudioPath = _selectedAudioPath,
                 DetectedNotes = _detectedNotes?.ToList() ?? new List<DetectedAudioNote>(),
+                Mode = _audioRecognitionMode,
                 Summary = RecognizeSummaryText.Text,
                 Preview = DetectedNotesPreviewTextBox.Text,
                 SelectedPathText = SelectedAudioPathText.Text,
@@ -610,6 +864,7 @@ namespace MusicBox
 
             _selectedAudioPath = cache.SelectedAudioPath;
             _detectedNotes = cache.DetectedNotes?.ToList() ?? new List<DetectedAudioNote>();
+            SetSelectedAudioRecognitionMode(cache.Mode);
             SelectedAudioPathText.Text = string.IsNullOrWhiteSpace(cache.SelectedPathText)
                 ? Loc("未选择音频文件", "No audio selected")
                 : cache.SelectedPathText!;
@@ -619,8 +874,36 @@ namespace MusicBox
             DetectedNotesPreviewTextBox.Text = cache.Preview ?? string.Empty;
             SetAudioProgress(cache.IsRunning, cache.Progress);
             ImportDetectedNotesButton.IsEnabled = _detectedNotes.Count > 0;
+            UpdateAudioResultEmptyState();
 
             await Task.CompletedTask;
+        }
+
+        private void ClearAudioButton_Click(object sender, RoutedEventArgs e)
+        {
+            CancelRunningAudioRecognition();
+            _selectedAudioPath = null;
+            _detectedNotes = Array.Empty<DetectedAudioNote>();
+            SelectedAudioPathText.Text = Loc("未选择音频文件", "No audio selected");
+            RecognizeSummaryText.Text = Loc("选择音频并点击“开始识别”以查看结果。", "Select audio and click Analyze to view results.");
+            DetectedNotesPreviewTextBox.Text = string.Empty;
+            AudioAnalyzeProgressText.Text = string.Empty;
+            ImportDetectedNotesButton.IsEnabled = false;
+            SetAudioProgress(false);
+            UpdateAudioResultEmptyState();
+            SaveAudioStateToCache();
+        }
+
+        private static void CancelRunningAudioRecognition()
+        {
+            lock (s_audioRunSync)
+            {
+                s_runningAudioCancellation?.Cancel();
+                s_runningAudioTask = null;
+                s_runningAudioInputPath = null;
+                s_runningAudioProgressText = string.Empty;
+                s_runningAudioResult = null;
+            }
         }
 
         private async void SelectAudioButton_Click(object sender, RoutedEventArgs e)
@@ -654,6 +937,7 @@ namespace MusicBox
                 DetectedNotesPreviewTextBox.Text = string.Empty;
                 _detectedNotes = Array.Empty<DetectedAudioNote>();
                 ImportDetectedNotesButton.IsEnabled = false;
+                UpdateAudioResultEmptyState();
                 SaveAudioStateToCache();
             }
             catch (Exception ex)
@@ -673,11 +957,13 @@ namespace MusicBox
 
             try
             {
+                AudioRecognitionMode currentMode = GetSelectedAudioRecognitionMode();
                 lock (s_audioRunSync)
                 {
                     if (s_runningAudioTask != null
                         && !s_runningAudioTask.IsCompleted
-                        && !string.Equals(s_runningAudioInputPath, _selectedAudioPath, StringComparison.OrdinalIgnoreCase))
+                        && (!string.Equals(s_runningAudioInputPath, _selectedAudioPath, StringComparison.OrdinalIgnoreCase)
+                            || s_runningAudioMode != currentMode))
                     {
                         RecognizeSummaryText.Text = $"{Loc("识别结果", "Result")}: {Loc("已有音频在分析中，请稍候完成。", "Another audio is being analyzed. Please wait.")}";
                         return;
@@ -688,6 +974,16 @@ namespace MusicBox
                 string currentPath = _selectedAudioPath!;
                 var progress = new Progress<AudioRecognitionProgress>(p =>
                 {
+                    lock (s_audioRunSync)
+                    {
+                        if (s_runningAudioTask == null
+                            || !string.Equals(s_runningAudioInputPath, currentPath, StringComparison.OrdinalIgnoreCase)
+                            || s_runningAudioMode != currentMode)
+                        {
+                            return;
+                        }
+                    }
+
                     string stage = p.Stage switch
                     {
                         "Analyzing" => Loc("分析中", "Analyzing"),
@@ -698,12 +994,19 @@ namespace MusicBox
                     string progressText = $"{Loc("识别进度", "Progress")}: {Math.Clamp(p.Percent, 0, 100)}% ({stage})";
                     lock (s_audioRunSync)
                     {
+                        if (s_runningAudioTask == null
+                            || !string.Equals(s_runningAudioInputPath, currentPath, StringComparison.OrdinalIgnoreCase)
+                            || s_runningAudioMode != currentMode)
+                        {
+                            return;
+                        }
+
                         s_runningAudioProgressText = progressText;
                     }
                     SetAudioProgress(true, progressText);
                 });
 
-                Task<IReadOnlyList<DetectedAudioNote>> runningTask = GetOrStartRunningAudioTask(currentPath, progress);
+                Task<IReadOnlyList<DetectedAudioNote>> runningTask = GetOrStartRunningAudioTask(currentPath, currentMode, progress);
                 _attachedAudioWatchingTask = runningTask;
                 await WatchRunningAudioTaskForCurrentPageAsync(runningTask);
             }
@@ -741,28 +1044,33 @@ namespace MusicBox
             int ppq = Math.Max(96, _viewModel.Project.Ppq);
             AudioStructureInference inference = InferAudioStructureSafe(_detectedNotes, ppq);
             ResetProjectForAudioImport(_viewModel.Project, ppq, inference);
+            _viewModel.Project.LayoutMeasuresPerSystemOverride = EstimateAudioImportMeasuresPerSystem(_detectedNotes, inference);
 
             double bpm = Math.Max(20, _viewModel.Project.Bpm);
             double ticksPerSecond = (bpm / 60.0) * ppq;
-            int grid = Math.Max(1, ppq / 4);
-            foreach (var detected in _detectedNotes)
+            int grid = Math.Max(1, ppq / 8);
+            var importNotes = SelectMelodyPriorityImportNotes(_detectedNotes, ticksPerSecond, grid);
+            foreach (var detected in importNotes)
             {
                 int startTick = QuantizeTick((int)Math.Round(detected.StartSeconds * ticksPerSecond), grid);
-                int durationTicks = Math.Max(grid, QuantizeTick((int)Math.Round(detected.DurationSeconds * ticksPerSecond), grid));
+                int endTick = QuantizeTick((int)Math.Round((detected.StartSeconds + detected.DurationSeconds) * ticksPerSecond), grid);
+                int durationTicks = Math.Max(grid, endTick - startTick);
+                int midi = Math.Clamp(detected.Midi, 24, 108);
+                int keyFifths = GetEffectiveKeySignatureFifthsAtTick(_viewModel.Project, startTick);
                 _viewModel.Project.Notes.Add(new NoteEvent
                 {
-                    Midi = Math.Clamp(detected.Midi, 24, 108),
+                    Midi = midi,
                     StartTick = Math.Max(0, startTick),
                     DurationTicks = durationTicks,
                     BaseDurationTicks = durationTicks,
                     AugmentationDots = 0,
                     IsRest = false,
                     Voice = 1,
-                    Accidental = NoteAccidental.None,
+                    Accidental = ResolveImportedAccidental(midi, keyFifths),
                     IsStaccato = false,
                     IsStaccatissimo = false,
                     BeamGroupId = 0,
-                    PreferTrebleStaff = detected.Midi >= 60
+                    PreferTrebleStaff = midi >= 60
                 });
             }
 
@@ -779,7 +1087,7 @@ namespace MusicBox
             _viewModel.TouchProject();
             _viewModel.SetStatus($"{Loc("已导入识别音符", "Imported detected notes")}: {_viewModel.Project.Notes.Count}");
             RecognizeSummaryText.Text =
-                $"{Loc("已导入到编辑页", "Imported to editor")}: {_viewModel.Project.Notes.Count} {Loc("个音符", "notes")} · " +
+                $"{Loc("已导入到五线谱页", "Imported to staff")}: {_viewModel.Project.Notes.Count} {Loc("个音符", "notes")} · " +
                 $"{inference.Numerator}/{inference.Denominator}, 1={inference.KeyName}";
             SaveAudioStateToCache();
 
@@ -787,6 +1095,41 @@ namespace MusicBox
             {
                 mainWindow.NavigateToPage("editor");
             }
+        }
+
+        private static IReadOnlyList<DetectedAudioNote> SelectMelodyPriorityImportNotes(
+            IReadOnlyList<DetectedAudioNote> notes,
+            double ticksPerSecond,
+            int grid)
+        {
+            if (notes.Count <= 1)
+            {
+                return notes;
+            }
+
+            return notes
+                .GroupBy(note => QuantizeTick((int)Math.Round(note.StartSeconds * ticksPerSecond), grid))
+                .Select(group => group
+                    .OrderByDescending(ScoreImportMelodyCandidate)
+                    .ThenByDescending(note => note.DurationSeconds)
+                    .ThenByDescending(note => note.Midi)
+                    .First())
+                .OrderBy(note => note.StartSeconds)
+                .ToList();
+        }
+
+        private static double ScoreImportMelodyCandidate(DetectedAudioNote note)
+        {
+            int midi = Math.Clamp(note.Midi, 24, 108);
+            double durationScore = Math.Clamp(note.DurationSeconds, 0.04d, 0.7d) * 0.25d;
+            double registerScore = midi switch
+            {
+                >= 60 and <= 88 => 0.42d + Math.Max(0d, 1d - Math.Abs(midi - 76) / 28d) * 0.20d,
+                >= 55 and < 60 => 0.10d,
+                > 88 and <= 96 => 0.18d,
+                _ => -0.20d
+            };
+            return registerScore + durationScore;
         }
 
         private static bool ProjectHasMeaningfulContent(ScoreProject project)
@@ -824,8 +1167,8 @@ namespace MusicBox
             var dialog = new ContentDialog
             {
                 XamlRoot = XamlRoot,
-                Title = Loc("编辑页已有内容", "Editor already has content"),
-                Content = Loc("导入会先清空当前编辑页（包含音符、谱面记号、调号、拍号和速度）。是否继续？", "Import will clear current editor data first (notes, score marks, key, meter, tempo). Continue?"),
+                Title = Loc("五线谱页已有内容", "Staff page already has content"),
+                Content = Loc("导入会先清空当前五线谱页（包含音符、谱面记号、调号、拍号和速度）。是否继续？", "Import will clear current staff page data first (notes, score marks, key, meter, tempo). Continue?"),
                 PrimaryButtonText = Loc("继续导入", "Import"),
                 CloseButtonText = Loc("取消", "Cancel"),
                 DefaultButton = ContentDialogButton.Close
@@ -861,6 +1204,159 @@ namespace MusicBox
             {
                 project.KeySignatureChanges.AddRange(inference.KeySignatureChanges);
             }
+        }
+
+        private static int EstimateAudioImportMeasuresPerSystem(IReadOnlyList<DetectedAudioNote> notes, AudioStructureInference inference)
+        {
+            if (notes.Count == 0)
+            {
+                return 0;
+            }
+
+            double endSeconds = notes.Max(n => Math.Max(0d, n.StartSeconds + n.DurationSeconds));
+            double beatsPerSecond = Math.Clamp(inference.Bpm, 20, 300) / 60d;
+            double quarterBeatsPerMeasure = Math.Max(0.25d, inference.Numerator * (4d / Math.Max(1, inference.Denominator)));
+            int estimatedMeasures = Math.Max(1, (int)Math.Ceiling(endSeconds * beatsPerSecond / quarterBeatsPerMeasure));
+            if (estimatedMeasures >= 160)
+            {
+                return 6;
+            }
+
+            if (estimatedMeasures >= 96)
+            {
+                return 5;
+            }
+
+            if (estimatedMeasures >= 60)
+            {
+                return 4;
+            }
+
+            return 0;
+        }
+
+        private static int GetEffectiveKeySignatureFifthsAtTick(ScoreProject project, int tick)
+        {
+            int fifths = project.KeySignature.Fifths;
+            foreach (var change in project.KeySignatureChanges.OrderBy(c => c.Tick))
+            {
+                if (change.Tick > tick)
+                {
+                    break;
+                }
+
+                fifths = change.Fifths;
+            }
+
+            return Math.Clamp(fifths, -7, 7);
+        }
+
+        private static NoteAccidental ResolveImportedAccidental(int midi, int keySignatureFifths)
+        {
+            foreach (NoteAccidental accidental in GetPreferredAccidentalOrder(keySignatureFifths))
+            {
+                if (GetEffectiveMidiForAccidental(midi, accidental, keySignatureFifths) == midi)
+                {
+                    return accidental;
+                }
+            }
+
+            return NoteAccidental.Natural;
+        }
+
+        private static IEnumerable<NoteAccidental> GetPreferredAccidentalOrder(int keySignatureFifths)
+        {
+            yield return NoteAccidental.None;
+            yield return NoteAccidental.Natural;
+
+            if (keySignatureFifths < 0)
+            {
+                yield return NoteAccidental.Flat;
+                yield return NoteAccidental.Sharp;
+            }
+            else
+            {
+                yield return NoteAccidental.Sharp;
+                yield return NoteAccidental.Flat;
+            }
+
+            yield return NoteAccidental.DoubleSharp;
+            yield return NoteAccidental.DoubleFlat;
+        }
+
+        private static int GetEffectiveMidiForAccidental(int midi, NoteAccidental accidental, int keySignatureFifths)
+        {
+            int naturalMidi = QuantizeToNaturalMidi(midi - GetAccidentalSemitoneOffset(accidental));
+            int keyOffset = GetKeySignatureSemitoneOffset(naturalMidi, keySignatureFifths);
+            int offset = accidental switch
+            {
+                NoteAccidental.DoubleSharp => 2,
+                NoteAccidental.Sharp => keyOffset > 0 ? keyOffset + 1 : 1,
+                NoteAccidental.Flat => keyOffset < 0 ? keyOffset - 1 : -1,
+                NoteAccidental.DoubleFlat => -2,
+                NoteAccidental.Natural => 0,
+                _ => keyOffset
+            };
+
+            return Math.Clamp(naturalMidi + offset, 0, 127);
+        }
+
+        private static int GetAccidentalSemitoneOffset(NoteAccidental accidental)
+        {
+            return accidental switch
+            {
+                NoteAccidental.DoubleSharp => 2,
+                NoteAccidental.Sharp => 1,
+                NoteAccidental.Flat => -1,
+                NoteAccidental.DoubleFlat => -2,
+                _ => 0
+            };
+        }
+
+        private static int QuantizeToNaturalMidi(int midi)
+        {
+            int clamped = Math.Clamp(midi, 0, 127);
+            int pitchClass = clamped % 12;
+            int[] naturalPitchClasses = { 0, 2, 4, 5, 7, 9, 11 };
+            int best = naturalPitchClasses[0];
+            int bestDiff = Math.Abs(pitchClass - best);
+            for (int i = 1; i < naturalPitchClasses.Length; i++)
+            {
+                int candidate = naturalPitchClasses[i];
+                int diff = Math.Abs(pitchClass - candidate);
+                if (diff < bestDiff)
+                {
+                    best = candidate;
+                    bestDiff = diff;
+                }
+            }
+
+            return clamped + (best - pitchClass);
+        }
+
+        private static int GetKeySignatureSemitoneOffset(int naturalMidi, int fifths)
+        {
+            int pitchClass = QuantizeToNaturalMidi(naturalMidi) % 12;
+            if (fifths > 0)
+            {
+                int[] sharpOrder = { 5, 0, 7, 2, 9, 4, 11 }; // F C G D A E B
+                int count = Math.Min(fifths, sharpOrder.Length);
+                for (int i = 0; i < count; i++)
+                {
+                    if (pitchClass == sharpOrder[i]) return 1;
+                }
+            }
+            else if (fifths < 0)
+            {
+                int[] flatOrder = { 11, 4, 9, 2, 7, 0, 5 }; // B E A D G C F
+                int count = Math.Min(Math.Abs(fifths), flatOrder.Length);
+                for (int i = 0; i < count; i++)
+                {
+                    if (pitchClass == flatOrder[i]) return -1;
+                }
+            }
+
+            return 0;
         }
 
         private static AudioStructureInference InferAudioStructureSafe(IReadOnlyList<DetectedAudioNote> notes, int ppq)
@@ -1383,6 +1879,7 @@ namespace MusicBox
                 _recognizedMusicXmlPath = null;
                 _lastOmrResult = null;
                 _omrCandidates.Clear();
+                UpdateOmrCandidatesEmptyState();
 
                 SelectedSheetPathText.Text = $"{Loc("已选择", "Selected")}: {_selectedSheetPath}";
                 SheetRecognizeSummaryText.Text = $"{Loc("OMR 结果", "OMR Result")}: {Loc("等待识别", "Waiting")}";
@@ -1524,14 +2021,17 @@ namespace MusicBox
             {
                 ImportSelectedOmrButton.IsEnabled = false;
                 OpenOmrArtifactsButton.IsEnabled = false;
+                UpdateOmrCandidatesEmptyState();
                 return;
             }
 
+            int rowNumber = 1;
             foreach (OmrCandidateInfo candidate in diagnostics.Candidates
                 .OrderByDescending(c => c.QualityScore)
                 .ThenBy(c => c.PageIndex.HasValue ? 1 : 0))
             {
-                _omrCandidates.Add(new OmrCandidateListItem(candidate));
+                _omrCandidates.Add(new OmrCandidateListItem(rowNumber, candidate));
+                rowNumber++;
             }
 
             OmrCandidateInfo? best = diagnostics.BestCandidate;
@@ -1546,6 +2046,7 @@ namespace MusicBox
 
             OpenOmrArtifactsButton.IsEnabled = !string.IsNullOrWhiteSpace(diagnostics.ArtifactRoot) && Directory.Exists(diagnostics.ArtifactRoot);
             ImportSelectedOmrButton.IsEnabled = OmrCandidatesListView.SelectedItem is OmrCandidateListItem selected && File.Exists(selected.MusicXmlPath);
+            UpdateOmrCandidatesEmptyState();
             SaveOmrStateToCache();
         }
 
@@ -1763,11 +2264,13 @@ namespace MusicBox
 
         private sealed class OmrCandidateListItem
         {
-            public OmrCandidateListItem(OmrCandidateInfo source)
+            public OmrCandidateListItem(int rowNumber, OmrCandidateInfo source)
             {
+                RowNumber = rowNumber;
                 Source = source;
             }
 
+            public int RowNumber { get; }
             public OmrCandidateInfo Source { get; }
             public string Engine => Source.Engine + (Source.PageIndex.HasValue ? $" (p{Source.PageIndex.Value})" : string.Empty);
             public string InputVariant => Source.InputVariant;
@@ -1796,6 +2299,7 @@ namespace MusicBox
         {
             public string? SelectedAudioPath { get; set; }
             public List<DetectedAudioNote>? DetectedNotes { get; set; }
+            public AudioRecognitionMode Mode { get; set; } = AudioRecognitionMode.MelodyFocus;
             public string? SelectedPathText { get; set; }
             public string? Summary { get; set; }
             public string? Preview { get; set; }

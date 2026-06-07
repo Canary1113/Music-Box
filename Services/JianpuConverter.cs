@@ -15,9 +15,6 @@ namespace MusicBox.Services
         private const int NativeKeyLabelRenderWidthPx = 56;
         private const int NativeLineRightPaddingPx = 18;
 
-        private const string ScoreMarkFinalBarline = "score_final_barline";
-        private const string ScoreMarkRepeatBarline = "score_repeat_barline";
-
         private readonly struct JianpuEvent
         {
             public JianpuEvent(int startTick, int endTick, bool isRest, IReadOnlyList<PitchToken>? pitches = null)
@@ -108,35 +105,6 @@ namespace MusicBox.Services
             public double BeatWeight { get; }
         }
 
-        private readonly struct BarlineDecoration
-        {
-            public BarlineDecoration(bool startRepeat, bool endRepeat, bool final)
-            {
-                StartRepeat = startRepeat;
-                EndRepeat = endRepeat;
-                Final = final;
-            }
-
-            public bool StartRepeat { get; }
-            public bool EndRepeat { get; }
-            public bool Final { get; }
-
-            public BarlineDecoration WithStartRepeat()
-            {
-                return new BarlineDecoration(startRepeat: true, endRepeat: EndRepeat, final: Final);
-            }
-
-            public BarlineDecoration WithEndRepeat()
-            {
-                return new BarlineDecoration(startRepeat: StartRepeat, endRepeat: true, final: Final);
-            }
-
-            public BarlineDecoration WithFinal()
-            {
-                return new BarlineDecoration(startRepeat: StartRepeat, endRepeat: EndRepeat, final: true);
-            }
-        }
-
         public string BuildPreviewHtml(ScoreProject project, bool darkTheme = false)
         {
             if (project == null)
@@ -180,17 +148,21 @@ namespace MusicBox.Services
 
             var upperMeasures = BuildMeasures(upperTimeline, measureTicks);
             List<List<JianpuEvent>>? lowerMeasures = null;
-            int totalMeasureCount = upperMeasures.Count;
+            int totalMeasureCount = Math.Max(ScorePreviewLayoutHelper.GetContentMeasureCount(project), upperMeasures.Count);
             if (dualStaff)
             {
                 List<JianpuEvent> lowerTimeline = BuildTimelineWithRests(lowerNotes, tonicPc, tonicMidiRef, preferFlat);
                 lowerMeasures = BuildMeasures(lowerTimeline, measureTicks);
                 totalMeasureCount = Math.Max(upperMeasures.Count, lowerMeasures.Count);
-                PadMeasureList(upperMeasures, totalMeasureCount, measureTicks);
+            }
+
+            PadMeasureList(upperMeasures, totalMeasureCount, measureTicks);
+            if (lowerMeasures != null)
+            {
                 PadMeasureList(lowerMeasures, totalMeasureCount, measureTicks);
             }
 
-            var barlineMap = BuildBarlineMap(project.ExpressionMarks, measureTicks, totalMeasureCount);
+            var barlineMap = ScorePreviewLayoutHelper.BuildBarlineMap(project.ExpressionMarks, measureTicks, totalMeasureCount);
             var keyChangeMap = BuildKeyChangeMap(project.KeySignatureChanges, measureTicks, totalMeasureCount);
 
             return BuildDocumentHtml(
@@ -314,17 +286,21 @@ namespace MusicBox.Services
 
             var upperMeasures = BuildMeasures(upperTimeline, measureTicks);
             List<List<JianpuEvent>>? lowerMeasures = null;
-            int totalMeasureCount = upperMeasures.Count;
+            int totalMeasureCount = Math.Max(ScorePreviewLayoutHelper.GetContentMeasureCount(project), upperMeasures.Count);
             if (dualStaff)
             {
                 List<JianpuEvent> lowerTimeline = BuildTimelineWithRests(lowerNotes, tonicPc, tonicMidiRef, preferFlat);
                 lowerMeasures = BuildMeasures(lowerTimeline, measureTicks);
                 totalMeasureCount = Math.Max(upperMeasures.Count, lowerMeasures.Count);
-                PadMeasureList(upperMeasures, totalMeasureCount, measureTicks);
+            }
+
+            PadMeasureList(upperMeasures, totalMeasureCount, measureTicks);
+            if (lowerMeasures != null)
+            {
                 PadMeasureList(lowerMeasures, totalMeasureCount, measureTicks);
             }
 
-            var barlineMap = BuildBarlineMap(project.ExpressionMarks, measureTicks, totalMeasureCount);
+            var barlineMap = ScorePreviewLayoutHelper.BuildBarlineMap(project.ExpressionMarks, measureTicks, totalMeasureCount);
             var keyChangeMap = BuildKeyChangeMap(project.KeySignatureChanges, measureTicks, totalMeasureCount);
 
             var upperTokensByMeasure = new List<List<NativeToken>>(totalMeasureCount);
@@ -592,50 +568,6 @@ namespace MusicBox.Services
             return measures;
         }
 
-        private static Dictionary<int, BarlineDecoration> BuildBarlineMap(
-            IReadOnlyList<ExpressionMark>? marks,
-            int measureTicks,
-            int measureCount)
-        {
-            var map = new Dictionary<int, BarlineDecoration>();
-            if (marks == null || marks.Count == 0)
-            {
-                return map;
-            }
-
-            foreach (var mark in marks.OrderBy(m => m.StartTick))
-            {
-                string code = NormalizeExpressionCode(mark.Code);
-                if (code != ScoreMarkRepeatBarline && code != ScoreMarkFinalBarline)
-                {
-                    continue;
-                }
-
-                int boundaryIndex = ResolveBoundaryIndex(mark.StartTick, measureTicks, measureCount);
-                map.TryGetValue(boundaryIndex, out var existing);
-                if (code == ScoreMarkFinalBarline)
-                {
-                    map[boundaryIndex] = existing.WithFinal();
-                    continue;
-                }
-
-                bool isStartRepeat = mark.ShapeHeightSteps < 0f;
-                map[boundaryIndex] = isStartRepeat
-                    ? existing.WithStartRepeat()
-                    : existing.WithEndRepeat();
-            }
-
-            return map;
-        }
-
-        private static int ResolveBoundaryIndex(int tick, int measureTicks, int measureCount)
-        {
-            int safeMeasureTicks = Math.Max(1, measureTicks);
-            int safeTick = Math.Max(0, tick);
-            int boundary = (int)Math.Round(safeTick / (double)safeMeasureTicks, MidpointRounding.AwayFromZero);
-            return Math.Clamp(boundary, 0, Math.Max(1, measureCount));
-        }
-
         private static Dictionary<int, string> BuildKeyChangeMap(
             IReadOnlyList<KeySignatureChange>? changes,
             int measureTicks,
@@ -649,7 +581,7 @@ namespace MusicBox.Services
 
             foreach (var change in changes.Where(c => c != null).OrderBy(c => c.Tick))
             {
-                int boundaryIndex = ResolveBoundaryIndex(change.Tick, measureTicks, measureCount);
+                int boundaryIndex = ScorePreviewLayoutHelper.ResolveBoundaryIndex(change.Tick, measureTicks, measureCount);
                 if (boundaryIndex <= 0)
                 {
                     continue;
@@ -735,7 +667,7 @@ namespace MusicBox.Services
         }
 
         private static void MoveFinalBarlineToPaddedTailIfNeeded(
-            Dictionary<int, BarlineDecoration> barlineMap,
+            Dictionary<int, ScorePreviewLayoutHelper.PreviewBoundaryDecoration> barlineMap,
             int originalMeasureCount,
             int paddedMeasureCount)
         {
@@ -762,7 +694,7 @@ namespace MusicBox.Services
             IReadOnlyList<List<JianpuEvent>> upperMeasures,
             IReadOnlyList<List<JianpuEvent>>? lowerMeasures,
             bool dualStaff,
-            IReadOnlyDictionary<int, BarlineDecoration> barlineByBoundary,
+            IReadOnlyDictionary<int, ScorePreviewLayoutHelper.PreviewBoundaryDecoration> barlineByBoundary,
             IReadOnlyDictionary<int, string> keyChangeByBoundary,
             int ppq,
             bool darkTheme)
@@ -966,13 +898,13 @@ namespace MusicBox.Services
             return sb.ToString();
         }
 
-        private static string RenderBarlineHtml(int boundaryIndex, IReadOnlyDictionary<int, BarlineDecoration> barlineByBoundary)
+        private static string RenderBarlineHtml(int boundaryIndex, IReadOnlyDictionary<int, ScorePreviewLayoutHelper.PreviewBoundaryDecoration> barlineByBoundary)
         {
             string text = ResolveBarlineText(boundaryIndex, barlineByBoundary);
             return $"<span class=\"bar\">{WebUtility.HtmlEncode(text)}</span>";
         }
 
-        private static string ResolveBarlineText(int boundaryIndex, IReadOnlyDictionary<int, BarlineDecoration> barlineByBoundary)
+        private static string ResolveBarlineText(int boundaryIndex, IReadOnlyDictionary<int, ScorePreviewLayoutHelper.PreviewBoundaryDecoration> barlineByBoundary)
         {
             barlineByBoundary.TryGetValue(boundaryIndex, out var mark);
             if (mark.Final)
@@ -1494,16 +1426,6 @@ namespace MusicBox.Services
             }
 
             return new DurationVisual(0, 3);
-        }
-
-        private static string NormalizeExpressionCode(string? code)
-        {
-            if (string.IsNullOrWhiteSpace(code))
-            {
-                return "mf";
-            }
-
-            return code.Trim().ToLowerInvariant();
         }
 
         private static string BuildEmptyHtml(string message, bool darkTheme)

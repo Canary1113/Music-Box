@@ -102,8 +102,10 @@ namespace MusicBox.Services
         {
             return accidental switch
             {
+                NoteAccidental.DoubleSharp => 2,
                 NoteAccidental.Sharp => 1,
                 NoteAccidental.Flat => -1,
+                NoteAccidental.DoubleFlat => -2,
                 _ => 0
             };
         }
@@ -163,8 +165,10 @@ namespace MusicBox.Services
             int naturalMidi = QuantizeToNaturalMidi(note.Midi - GetAccidentalSemitoneOffset(note.Accidental));
             int offset = note.Accidental switch
             {
+                NoteAccidental.DoubleSharp => 2,
                 NoteAccidental.Sharp => 1,
                 NoteAccidental.Flat => -1,
+                NoteAccidental.DoubleFlat => -2,
                 NoteAccidental.Natural => 0,
                 _ => GetKeySignatureSemitoneOffset(naturalMidi, keySignatureFifths)
             };

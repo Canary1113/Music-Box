@@ -1,0 +1,12 @@
+{
+  "name": "codex-openai-profile-deck",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "node create_deck.cjs"
+  },
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}

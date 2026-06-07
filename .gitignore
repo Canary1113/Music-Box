@@ -31,6 +31,7 @@ xamlcompiler_*.txt
 # User-specific
 *.csproj.user
 temp-audio-runner/
+compose-preferences.json
 
 # Signing secrets
 msix-output/*.pfx

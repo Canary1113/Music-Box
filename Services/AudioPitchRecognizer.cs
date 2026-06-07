@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using NAudio.Dsp;
 using NAudio.Wave;
 
@@ -23,9 +24,117 @@ namespace MusicBox.Services
         public int TotalFrames { get; init; }
     }
 
+    public enum AudioRecognitionMode
+    {
+        MelodyFocus,
+        Balanced,
+        Dense
+    }
+
     public static class AudioPitchRecognizer
     {
-        private const bool PreferMonophonic = true;
+        private const int MelodyRegisterFloorMidi = 55;
+        private const int MelodyRegisterCenterMidi = 76;
+
+        private sealed class RecognitionOptions
+        {
+            public AudioRecognitionMode Mode { get; init; }
+            public double RmsScale { get; init; }
+            public double MinAdaptiveRms { get; init; }
+            public double MaxAdaptiveRms { get; init; }
+            public double MaxZeroCrossingRate { get; init; }
+            public int BridgeMaxFrames { get; init; }
+            public double BridgeMinConfidence { get; init; }
+            public double MinMergedDurationSeconds { get; init; }
+            public double MinCleanDurationSeconds { get; init; }
+            public double SamePitchMergeGapSeconds { get; init; }
+            public bool AllowSyntheticLowerOctave { get; init; }
+            public int SyntheticLowerMaxMidi { get; init; }
+            public int RefineLowerOctaveMaxMidi { get; init; }
+            public float SpectralPeakThresholdFactor { get; init; }
+            public double LowHarmonicSalienceThreshold { get; init; }
+            public double LowFundamentalThreshold { get; init; }
+            public double LowSupportBonus { get; init; }
+            public bool PreferMonophonic { get; init; }
+            public double MinFrequencyHz { get; init; }
+            public double MaxFrequencyHz { get; init; }
+
+            public static RecognitionOptions ForMode(AudioRecognitionMode mode)
+            {
+                return mode switch
+                {
+                    AudioRecognitionMode.Balanced => new RecognitionOptions
+                    {
+                        Mode = mode,
+                        RmsScale = 0.80d,
+                        MinAdaptiveRms = 0.0038d,
+                        MaxAdaptiveRms = 0.019d,
+                        MaxZeroCrossingRate = 0.50d,
+                        BridgeMaxFrames = 4,
+                        BridgeMinConfidence = 0.34d,
+                        MinMergedDurationSeconds = 0.070d,
+                        MinCleanDurationSeconds = 0.085d,
+                        SamePitchMergeGapSeconds = 0.14d,
+                        AllowSyntheticLowerOctave = true,
+                        SyntheticLowerMaxMidi = 64,
+                        RefineLowerOctaveMaxMidi = 64,
+                        SpectralPeakThresholdFactor = 0.16f,
+                        LowHarmonicSalienceThreshold = 0.092d,
+                        LowFundamentalThreshold = 0.030d,
+                        LowSupportBonus = 0.04d,
+                        PreferMonophonic = true,
+                        MinFrequencyHz = 65.41d,
+                        MaxFrequencyHz = 1760d
+                    },
+                    AudioRecognitionMode.Dense => new RecognitionOptions
+                    {
+                        Mode = mode,
+                        RmsScale = 0.70d,
+                        MinAdaptiveRms = 0.0034d,
+                        MaxAdaptiveRms = 0.018d,
+                        MaxZeroCrossingRate = 0.52d,
+                        BridgeMaxFrames = 6,
+                        BridgeMinConfidence = 0.30d,
+                        MinMergedDurationSeconds = 0.060d,
+                        MinCleanDurationSeconds = 0.075d,
+                        SamePitchMergeGapSeconds = 0.095d,
+                        AllowSyntheticLowerOctave = true,
+                        SyntheticLowerMaxMidi = 64,
+                        RefineLowerOctaveMaxMidi = 64,
+                        SpectralPeakThresholdFactor = 0.14f,
+                        LowHarmonicSalienceThreshold = 0.082d,
+                        LowFundamentalThreshold = 0.025d,
+                        LowSupportBonus = 0.08d,
+                        PreferMonophonic = false,
+                        MinFrequencyHz = 55d,
+                        MaxFrequencyHz = 2093d
+                    },
+                    _ => new RecognitionOptions
+                    {
+                        Mode = AudioRecognitionMode.MelodyFocus,
+                        RmsScale = 0.94d,
+                        MinAdaptiveRms = 0.0048d,
+                        MaxAdaptiveRms = 0.021d,
+                        MaxZeroCrossingRate = 0.46d,
+                        BridgeMaxFrames = 2,
+                        BridgeMinConfidence = 0.40d,
+                        MinMergedDurationSeconds = 0.075d,
+                        MinCleanDurationSeconds = 0.095d,
+                        SamePitchMergeGapSeconds = 0.18d,
+                        AllowSyntheticLowerOctave = false,
+                        SyntheticLowerMaxMidi = 58,
+                        RefineLowerOctaveMaxMidi = 58,
+                        SpectralPeakThresholdFactor = 0.18f,
+                        LowHarmonicSalienceThreshold = 0.108d,
+                        LowFundamentalThreshold = 0.038d,
+                        LowSupportBonus = 0d,
+                        PreferMonophonic = true,
+                        MinFrequencyHz = 82.41d,
+                        MaxFrequencyHz = 1760d
+                    }
+                };
+            }
+        }
 
         private readonly struct PitchCandidate
         {
@@ -73,7 +182,7 @@ namespace MusicBox.Services
 
         private readonly struct FrameAnalysis
         {
-            public FrameAnalysis(int startSample, double rms, double harmonicity, double flatness, double peakRatio, double zcr, PitchCandidate[] candidates)
+            public FrameAnalysis(int startSample, double rms, double harmonicity, double flatness, double peakRatio, double zcr, PitchCandidate[] candidates, double onsetStrength = 0d)
             {
                 StartSample = startSample;
                 Rms = rms;
@@ -82,6 +191,7 @@ namespace MusicBox.Services
                 PeakRatio = Math.Clamp(peakRatio, 0d, 1d);
                 ZeroCrossingRate = Math.Clamp(zcr, 0d, 1d);
                 Candidates = candidates ?? Array.Empty<PitchCandidate>();
+                OnsetStrength = Math.Max(0d, onsetStrength);
             }
 
             public int StartSample { get; }
@@ -90,6 +200,7 @@ namespace MusicBox.Services
             public double Flatness { get; }
             public double PeakRatio { get; }
             public double ZeroCrossingRate { get; }
+            public double OnsetStrength { get; }
             public PitchCandidate[] Candidates { get; }
             public bool HasPitch => Candidates.Length > 0;
             public int PrimaryMidi => HasPitch ? Candidates[0].Midi : 0;
@@ -103,10 +214,10 @@ namespace MusicBox.Services
                     double zcrPenalty = Math.Clamp(1d - ZeroCrossingRate * 2.2d, 0d, 1d);
                     return Math.Clamp(
                         Harmonicity * 0.44d
-                        + PeakRatio * 0.20d
-                        + (1d - Flatness) * 0.22d
+                        + PeakRatio * 0.24d
+                        + (1d - Flatness) * 0.24d
                         + zcrPenalty * 0.08d
-                        + primary * 0.06d,
+                        + primary * 0.10d,
                         0d,
                         1d);
                 }
@@ -114,129 +225,167 @@ namespace MusicBox.Services
 
             public FrameAnalysis WithoutPitch()
             {
-                return new FrameAnalysis(StartSample, Rms, Harmonicity, Flatness, PeakRatio, ZeroCrossingRate, Array.Empty<PitchCandidate>());
+                return new FrameAnalysis(StartSample, Rms, Harmonicity, Flatness, PeakRatio, ZeroCrossingRate, Array.Empty<PitchCandidate>(), OnsetStrength);
             }
 
             public FrameAnalysis WithCandidates(PitchCandidate[] candidates)
             {
-                return new FrameAnalysis(StartSample, Rms, Harmonicity, Flatness, PeakRatio, ZeroCrossingRate, candidates);
+                return new FrameAnalysis(StartSample, Rms, Harmonicity, Flatness, PeakRatio, ZeroCrossingRate, candidates, OnsetStrength);
             }
         }
 
-        public static IReadOnlyList<DetectedAudioNote> DetectNotesFromAudio(string audioPath, IProgress<AudioRecognitionProgress>? progress = null)
+        public static IReadOnlyList<DetectedAudioNote> DetectNotesFromAudio(
+            string audioPath,
+            IProgress<AudioRecognitionProgress>? progress = null,
+            AudioRecognitionMode mode = AudioRecognitionMode.MelodyFocus,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var (rawSamples, sampleRate) = ReadMonoSamples(audioPath);
+            cancellationToken.ThrowIfCancellationRequested();
             if (rawSamples.Length == 0 || sampleRate <= 0)
             {
                 return Array.Empty<DetectedAudioNote>();
             }
 
             float[] samples = PreprocessSamples(rawSamples, sampleRate);
+            cancellationToken.ThrowIfCancellationRequested();
+            RecognitionOptions options = RecognitionOptions.ForMode(mode);
             try
             {
-                var advancedNotes = DetectNotesFromPreparedSamples(samples, sampleRate, progress);
+                var advancedNotes = DetectNotesFromPreparedSamples(samples, sampleRate, progress, options, cancellationToken);
                 if (advancedNotes.Count > 0)
                 {
                     return advancedNotes;
                 }
             }
-            catch
+            catch (OperationCanceledException)
             {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                progress?.Report(new AudioRecognitionProgress
+                {
+                    Percent = 73,
+                    Stage = $"AdvancedFailed: {ex.GetType().Name}: {ex.Message}",
+                    ProcessedFrames = 0,
+                    TotalFrames = 0
+                });
                 // Fall back to a simpler monophonic path when the advanced tracker rejects a file.
             }
 
             progress?.Report(new AudioRecognitionProgress { Percent = 74, Stage = "Fallback", ProcessedFrames = 0, TotalFrames = 0 });
             try
             {
-                return DetectNotesFallback(samples, sampleRate, progress);
+                return DetectNotesFallback(samples, sampleRate, progress, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch
             {
-                return DetectNotesFixedArray256(samples, sampleRate, progress);
+                return DetectNotesFixedArray256(samples, sampleRate, progress, cancellationToken);
             }
         }
 
         private static IReadOnlyList<DetectedAudioNote> DetectNotesFromPreparedSamples(
             float[] samples,
             int sampleRate,
-            IProgress<AudioRecognitionProgress>? progress)
+            IProgress<AudioRecognitionProgress>? progress,
+            RecognitionOptions options,
+            CancellationToken cancellationToken = default)
         {
             int frameSize = Math.Clamp((int)(sampleRate * 0.046), 1024, 4096);
-            int hopSize = Math.Max(128, frameSize / 5);
+            int hopSize = Math.Max(192, frameSize / 3);
             int totalFrames = Math.Max(1, ((samples.Length - frameSize) / hopSize) + 1);
-            const double minFreq = 55d;
-            const double maxFreq = 1760d;
-            const double minRms = 0.0052d;
-            double adaptiveMinRms = Math.Max(minRms, EstimateAdaptiveMinRms(samples, frameSize, hopSize));
+            double minFreq = options.MinFrequencyHz;
+            double maxFreq = options.MaxFrequencyHz;
+            double adaptiveMinRms = Math.Clamp(
+                EstimateAdaptiveMinRms(samples, frameSize, hopSize) * options.RmsScale,
+                options.MinAdaptiveRms,
+                options.MaxAdaptiveRms);
 
             var frames = new List<FrameAnalysis>(totalFrames);
             int frameIndex = 0;
+            double previousRms = 0d;
             for (int start = 0; start + frameSize < samples.Length; start += hopSize, frameIndex++)
             {
                 if ((frameIndex & 7) == 0)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int percent = Math.Clamp((int)Math.Round(frameIndex / (double)Math.Max(1, totalFrames) * 68d), 0, 68);
                     progress?.Report(new AudioRecognitionProgress { Percent = percent, Stage = "Analyzing", ProcessedFrames = frameIndex, TotalFrames = totalFrames });
                 }
 
                 double rms = ComputeRms(samples, start, frameSize);
                 double zcr = ComputeZeroCrossingRate(samples, start, frameSize);
-                if (rms < adaptiveMinRms || zcr > 0.48d)
+                double onsetStrength = CalculateOnsetStrength(previousRms, rms);
+                previousRms = rms;
+                if (rms < adaptiveMinRms || zcr > options.MaxZeroCrossingRate)
                 {
-                    frames.Add(new FrameAnalysis(start, rms, 0d, 1d, 0d, zcr, Array.Empty<PitchCandidate>()));
+                    frames.Add(new FrameAnalysis(start, rms, 0d, 1d, 0d, zcr, Array.Empty<PitchCandidate>(), onsetStrength));
                     continue;
                 }
 
                 var (autoFreq, autoScore) = EstimatePitchAutocorrelation(samples, start, frameSize, sampleRate, minFreq, maxFreq);
-                var (spectralCandidates, flatness, peakRatio) = AnalyzeSpectrum(samples, start, frameSize, sampleRate, minFreq, maxFreq, maxNotes: 4);
+                var (yinFreq, yinScore) = EstimatePitchNormalizedDifference(samples, start, frameSize, sampleRate, minFreq, maxFreq);
+                var (spectralCandidates, flatness, peakRatio) = AnalyzeSpectrum(samples, start, frameSize, sampleRate, minFreq, maxFreq, maxNotes: 8, options);
                 var candidates = spectralCandidates.ToList();
+                double pitchScore = Math.Max(autoScore, yinScore * 0.95d);
 
                 if (autoFreq > 0)
                 {
                     var (autoMidi, _) = PitchUtils.FrequencyToMidiWithCents(autoFreq);
-                    int safeMidi = Math.Clamp(autoMidi, 24, 108);
-                    int idx = candidates.FindIndex(c => Math.Abs(c.Midi - safeMidi) <= 1);
-                    if (idx >= 0)
-                    {
-                        PitchCandidate m = candidates[idx];
-                        candidates[idx] = new PitchCandidate(m.Midi, (m.FrequencyHz + autoFreq) * 0.5d, m.Strength + 0.30f);
-                    }
-                    else
-                    {
-                        candidates.Add(new PitchCandidate(safeMidi, autoFreq, 1.25f));
-                    }
+                    AddOrBoostCandidateByMidi(candidates, autoMidi, autoFreq, 1.25f);
                 }
 
+                if (yinFreq > 0d && yinScore >= 0.16d)
+                {
+                    var (yinMidi, _) = PitchUtils.FrequencyToMidiWithCents(yinFreq);
+                    AddOrBoostCandidateByMidi(
+                        candidates,
+                        yinMidi,
+                        yinFreq,
+                        (float)Math.Clamp(0.45d + yinScore * 0.85d, 0.35d, 1.45d));
+                    BoostAgreedPitchCandidates(candidates, autoFreq, yinFreq, spectralCandidates);
+                    ResolveOctaveConflict(candidates, autoFreq, yinFreq, spectralCandidates);
+                }
+
+                RebalanceCandidatesByContinuity(candidates, options);
                 PitchCandidate[] ordered = candidates
                     .OrderByDescending(c => c.Strength)
                     .ThenByDescending(c => c.Midi)
-                    .Take(5)
+                    .Take(7)
                     .ToArray();
 
-                if (IsNoisyFrame(rms, zcr, autoScore, flatness, peakRatio, ordered))
+                if (IsNoisyFrame(rms, zcr, autoScore, flatness, peakRatio, ordered, options))
                 {
                     ordered = Array.Empty<PitchCandidate>();
                 }
-                else if (PreferMonophonic)
+                else if (options.PreferMonophonic)
                 {
-                    ordered = SelectMonophonicCandidates(ordered, autoFreq);
+                    ordered = SelectMonophonicCandidates(ordered, autoFreq, options);
                 }
 
-                frames.Add(new FrameAnalysis(start, rms, autoScore, flatness, peakRatio, zcr, ordered));
+                frames.Add(new FrameAnalysis(start, rms, pitchScore, flatness, peakRatio, zcr, ordered, onsetStrength));
             }
 
-            frames = StabilizeMonophonicTrajectory(frames);
-            frames = SmoothMonophonicFrames(frames);
-            frames = BridgeTinyVoicingGaps(frames);
+            frames = StabilizeMonophonicTrajectory(frames, options);
+            frames = SmoothMonophonicFrames(frames, options);
+            frames = BridgeTinyVoicingGaps(frames, options);
             frames = SuppressIsolatedVoicedFrames(frames);
+            cancellationToken.ThrowIfCancellationRequested();
             progress?.Report(new AudioRecognitionProgress { Percent = 72, Stage = "Grouping", ProcessedFrames = frameIndex, TotalFrames = totalFrames });
 
-            var merged = MergeFrames(frames, sampleRate, frameSize, progress);
+            var merged = MergeFrames(frames, sampleRate, frameSize, progress, options);
             var stabilized = StabilizeVoices(merged);
-            var cleaned = CleanShortNoiseNotes(stabilized);
+            var cleaned = CleanShortNoiseNotes(stabilized, options);
+            cancellationToken.ThrowIfCancellationRequested();
             progress?.Report(new AudioRecognitionProgress { Percent = 88, Stage = "Refining", ProcessedFrames = totalFrames, TotalFrames = totalFrames });
-            var refined = RefineDetectedNotes(samples, sampleRate, cleaned, progress);
-            var finalNotes = CleanShortNoiseNotes(StabilizeVoices(refined));
+            var refined = RefineDetectedNotes(samples, sampleRate, cleaned, progress, options, cancellationToken);
+            var finalNotes = CleanShortNoiseNotes(StabilizeVoices(refined), options);
 
             progress?.Report(new AudioRecognitionProgress { Percent = 100, Stage = "Done", ProcessedFrames = totalFrames, TotalFrames = totalFrames });
             return finalNotes;
@@ -245,7 +394,8 @@ namespace MusicBox.Services
         private static IReadOnlyList<DetectedAudioNote> DetectNotesFixedArray256(
             float[] samples,
             int sampleRate,
-            IProgress<AudioRecognitionProgress>? progress)
+            IProgress<AudioRecognitionProgress>? progress,
+            CancellationToken cancellationToken = default)
         {
             if (samples == null || samples.Length < 512 || sampleRate <= 0)
             {
@@ -309,6 +459,7 @@ namespace MusicBox.Services
             {
                 if ((frameIndex & 7) == 0)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int percent = 78 + Math.Clamp((int)Math.Round(frameIndex / (double)Math.Max(1, totalFrames) * 20d), 0, 20);
                     progress?.Report(new AudioRecognitionProgress { Percent = percent, Stage = "Fallback256", ProcessedFrames = frameIndex, TotalFrames = totalFrames });
                 }
@@ -398,7 +549,8 @@ namespace MusicBox.Services
         private static IReadOnlyList<DetectedAudioNote> DetectNotesFallback(
             float[] samples,
             int sampleRate,
-            IProgress<AudioRecognitionProgress>? progress)
+            IProgress<AudioRecognitionProgress>? progress,
+            CancellationToken cancellationToken = default)
         {
             if (samples.Length < 512 || sampleRate <= 0)
             {
@@ -465,6 +617,7 @@ namespace MusicBox.Services
             {
                 if ((frameIndex & 7) == 0)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int percent = 74 + Math.Clamp((int)Math.Round(frameIndex / (double)Math.Max(1, totalFrames) * 24d), 0, 24);
                     progress?.Report(new AudioRecognitionProgress { Percent = percent, Stage = "Fallback", ProcessedFrames = frameIndex, TotalFrames = totalFrames });
                 }
@@ -542,7 +695,8 @@ namespace MusicBox.Services
                 return cleaned;
             }
 
-            var refined = RefineDetectedNotes(samples, sampleRate, cleaned, progress);
+            cancellationToken.ThrowIfCancellationRequested();
+            var refined = RefineDetectedNotes(samples, sampleRate, cleaned, progress, cancellationToken);
             var finalNotes = CleanShortNoiseNotes(StabilizeVoices(refined));
             progress?.Report(new AudioRecognitionProgress { Percent = 100, Stage = "Done", ProcessedFrames = totalFrames, TotalFrames = totalFrames });
             return finalNotes;
@@ -584,9 +738,9 @@ namespace MusicBox.Services
             return output;
         }
 
-        private static List<FrameAnalysis> StabilizeMonophonicTrajectory(IReadOnlyList<FrameAnalysis> frames)
+        private static List<FrameAnalysis> StabilizeMonophonicTrajectory(IReadOnlyList<FrameAnalysis> frames, RecognitionOptions options)
         {
-            if (!PreferMonophonic || frames.Count == 0)
+            if (!options.PreferMonophonic || frames.Count == 0)
             {
                 return frames.ToList();
             }
@@ -650,7 +804,7 @@ namespace MusicBox.Services
                 FrameAnalysis firstFrame = output[runStart];
                 for (int c = 0; c < candidatesByFrame[0].Length; c++)
                 {
-                    scoreTable[0][c] = ScoreTrajectoryCandidate(candidatesByFrame[0][c], firstFrame.Confidence);
+                    scoreTable[0][c] = ScoreTrajectoryCandidate(candidatesByFrame[0][c], firstFrame.Confidence, options);
                 }
 
                 for (int f = 1; f < frameCount; f++)
@@ -661,7 +815,7 @@ namespace MusicBox.Services
 
                     for (int cur = 0; cur < current.Length; cur++)
                     {
-                        double baseScore = ScoreTrajectoryCandidate(current[cur], frame.Confidence);
+                        double baseScore = ScoreTrajectoryCandidate(current[cur], frame.Confidence, options);
                         double best = double.NegativeInfinity;
                         int bestPrev = -1;
                         for (int prev = 0; prev < previous.Length; prev++)
@@ -709,9 +863,9 @@ namespace MusicBox.Services
             return output;
         }
 
-        private static List<FrameAnalysis> SmoothMonophonicFrames(IReadOnlyList<FrameAnalysis> frames)
+        private static List<FrameAnalysis> SmoothMonophonicFrames(IReadOnlyList<FrameAnalysis> frames, RecognitionOptions options)
         {
-            if (!PreferMonophonic || frames.Count == 0)
+            if (!options.PreferMonophonic || frames.Count == 0)
             {
                 return frames.ToList();
             }
@@ -760,41 +914,59 @@ namespace MusicBox.Services
             return output;
         }
 
-        private static List<FrameAnalysis> BridgeTinyVoicingGaps(IReadOnlyList<FrameAnalysis> frames)
+        private static List<FrameAnalysis> BridgeTinyVoicingGaps(IReadOnlyList<FrameAnalysis> frames, RecognitionOptions options)
         {
-            if (!PreferMonophonic || frames.Count < 3)
+            if (!options.PreferMonophonic || frames.Count < 3)
             {
                 return frames.ToList();
             }
 
             var output = frames.ToList();
-            for (int i = 1; i < output.Count - 1; i++)
+            int i = 1;
+            while (i < output.Count - 1)
             {
                 if (IsFrameVoiced(output[i]))
+                {
+                    i++;
+                    continue;
+                }
+
+                int gapStart = i;
+                while (i < output.Count - 1 && !IsFrameVoiced(output[i]))
+                {
+                    i++;
+                }
+
+                int gapEnd = i - 1;
+                int gapLength = gapEnd - gapStart + 1;
+                if (gapStart <= 0 || i >= output.Count || gapLength > options.BridgeMaxFrames)
                 {
                     continue;
                 }
 
-                FrameAnalysis prev = output[i - 1];
-                FrameAnalysis next = output[i + 1];
+                FrameAnalysis prev = output[gapStart - 1];
+                FrameAnalysis next = output[i];
                 if (!IsFrameVoiced(prev) || !IsFrameVoiced(next))
                 {
                     continue;
                 }
 
-                if (Math.Abs(prev.PrimaryMidi - next.PrimaryMidi) > 1)
+                if (Math.Abs(prev.PrimaryMidi - next.PrimaryMidi) > 2)
                 {
                     continue;
                 }
 
-                if (Math.Min(prev.Confidence, next.Confidence) < 0.36d)
+                if (Math.Min(prev.Confidence, next.Confidence) < options.BridgeMinConfidence)
                 {
                     continue;
                 }
 
                 int midi = (int)Math.Round((prev.PrimaryMidi + next.PrimaryMidi) / 2d);
-                float strength = Math.Clamp((prev.PrimaryStrength + next.PrimaryStrength) * 0.5f, 0.05f, 1.6f);
-                output[i] = output[i].WithCandidates(new[] { new PitchCandidate(midi, MidiToFrequency(midi), strength) });
+                float strength = Math.Clamp((prev.PrimaryStrength + next.PrimaryStrength) * 0.42f, 0.05f, 1.4f);
+                for (int fill = gapStart; fill <= gapEnd; fill++)
+                {
+                    output[fill] = output[fill].WithCandidates(new[] { new PitchCandidate(midi, MidiToFrequency(midi), strength) });
+                }
             }
 
             return output;
@@ -804,10 +976,11 @@ namespace MusicBox.Services
             IReadOnlyList<FrameAnalysis> frames,
             int sampleRate,
             int frameSize,
-            IProgress<AudioRecognitionProgress>? progress)
+            IProgress<AudioRecognitionProgress>? progress,
+            RecognitionOptions options)
         {
             var notes = new List<DetectedAudioNote>();
-            const double minDurationSeconds = 0.080;
+            double minDurationSeconds = options.MinMergedDurationSeconds;
             int totalFrames = Math.Max(1, frames.Count);
             int i = 0;
 
@@ -829,7 +1002,7 @@ namespace MusicBox.Services
                 while (i < frames.Count && IsFrameVoiced(frames[i]))
                 {
                     FrameAnalysis frame = frames[i];
-                    if (ShouldSplitForPitchChange(frames, i, dominantMidi))
+                    if (ShouldSplitForPitchChange(frames, i, dominantMidi) || IsLikelyOnset(frames, i, startIndex))
                     {
                         break;
                     }
@@ -848,7 +1021,7 @@ namespace MusicBox.Services
                         weightedPower[candidate.Midi] = power + weight;
                     }
 
-                    dominantMidi = ResolveDominantMidi(midiVotes, dominantMidi);
+                    dominantMidi = ResolveDominantMidi(midiVotes, dominantMidi, options);
                     i++;
                 }
 
@@ -877,7 +1050,7 @@ namespace MusicBox.Services
                     continue;
                 }
 
-                int primaryMidi = ResolveDominantMidi(midiVotes, dominantMidi);
+                int primaryMidi = ResolveDominantMidi(midiVotes, dominantMidi, options);
                 int totalVotes = midiVotes.Values.Sum();
                 midiVotes.TryGetValue(primaryMidi, out int primaryVotes);
                 if (primaryVotes < Math.Max(3, (int)Math.Ceiling(totalVotes * 0.36d)))
@@ -923,12 +1096,12 @@ namespace MusicBox.Services
                 return false;
             }
 
-            if (frame.Confidence < 0.21d)
+            if (frame.Confidence < 0.25d)
             {
                 return false;
             }
 
-            if (frame.Flatness > 0.62d && frame.Harmonicity < 0.56d)
+            if (frame.Flatness > 0.58d && frame.Harmonicity < 0.60d)
             {
                 return false;
             }
@@ -942,7 +1115,8 @@ namespace MusicBox.Services
             double harmonicity,
             double flatness,
             double peakRatio,
-            IReadOnlyList<PitchCandidate> candidates)
+            IReadOnlyList<PitchCandidate> candidates,
+            RecognitionOptions options)
         {
             if (candidates.Count == 0)
             {
@@ -953,18 +1127,35 @@ namespace MusicBox.Services
             bool weakHarmonic = harmonicity < 0.50d;
             bool flatSpectrum = flatness > 0.55d;
             bool weakPeaks = peakRatio < 0.14d;
+            float reliableThreshold = options.Mode == AudioRecognitionMode.MelodyFocus ? 0.34f : 0.28f;
+            float midCandidateThreshold = options.Mode == AudioRecognitionMode.MelodyFocus ? 0.28f : 0.22f;
+            bool reliableCandidate = primaryStrength >= reliableThreshold
+                || candidates.Any(c => c.Strength >= midCandidateThreshold && c.Midi is >= 60 and <= 92);
 
-            if (rms < 0.010d && weakHarmonic) return true;
-            if (zcr > 0.28d && harmonicity < 0.72d) return true;
-            if (flatSpectrum && weakHarmonic) return true;
-            if (flatness > 0.48d && peakRatio < 0.18d) return true;
-            if (weakPeaks && harmonicity < 0.66d) return true;
-            if (primaryStrength < 0.12f && harmonicity < 0.74d) return true;
+            if (rms < 0.0065d && weakHarmonic && !reliableCandidate) return true;
+            if (zcr > 0.30d && harmonicity < 0.68d && !reliableCandidate) return true;
+            if (flatness > 0.62d && weakHarmonic && !reliableCandidate) return true;
+            if (flatSpectrum && weakHarmonic && primaryStrength < 0.24f) return true;
+            if (flatness > 0.54d && peakRatio < 0.13d && primaryStrength < 0.30f) return true;
+            if (weakPeaks && harmonicity < 0.58d && primaryStrength < 0.24f) return true;
+            if (primaryStrength < 0.09f && harmonicity < 0.64d) return true;
 
             return false;
         }
 
-        private static PitchCandidate[] SelectMonophonicCandidates(IReadOnlyList<PitchCandidate> ordered, double autoFreq)
+        private static double CalculateOnsetStrength(double previousRms, double currentRms)
+        {
+            if (previousRms <= 1e-6d)
+            {
+                return currentRms > 0.006d ? currentRms : 0d;
+            }
+
+            double riseRatio = currentRms / Math.Max(1e-6d, previousRms);
+            double riseAmount = Math.Max(0d, currentRms - previousRms);
+            return Math.Max(riseAmount, Math.Max(0d, riseRatio - 1d) * 0.012d);
+        }
+
+        private static PitchCandidate[] SelectMonophonicCandidates(IReadOnlyList<PitchCandidate> ordered, double autoFreq, RecognitionOptions options)
         {
             if (ordered == null || ordered.Count == 0)
             {
@@ -978,32 +1169,78 @@ namespace MusicBox.Services
                 safeAutoMidi = Math.Clamp(autoMidi, 24, 108);
             }
 
+            float strongest = ordered.Max(c => c.Strength);
+            float strongestUpper = ordered.Where(c => c.Midi >= 60).Select(c => c.Strength).DefaultIfEmpty(0f).Max();
+            float strongestLow = ordered.Where(c => c.Midi < 60).Select(c => c.Strength).DefaultIfEmpty(0f).Max();
+            bool hasClearLowEvidence = strongestLow >= Math.Max(0.24f, strongest * 0.80f)
+                && strongestLow >= strongestUpper * 0.88f;
+            bool hasClearUpperEvidence = strongestUpper >= Math.Max(0.22f, strongest * 0.58f);
+
             var scored = new List<(PitchCandidate Candidate, double Score)>(ordered.Count * 2);
             for (int i = 0; i < ordered.Count; i++)
             {
                 PitchCandidate candidate = ordered[i];
-                double score = Math.Clamp(candidate.Strength, 0.02d, 2.0d) * 1.20d;
+                double score = Math.Clamp(candidate.Strength, 0.02d, 2.0d) * 1.12d
+                    + ScoreAdaptiveRegister(candidate.Midi, hasClearLowEvidence, hasClearUpperEvidence, options);
                 if (safeAutoMidi >= 0)
                 {
                     int distance = Math.Abs(candidate.Midi - safeAutoMidi);
-                    score += Math.Max(0d, 1.30d - distance * 0.24d);
+                    double autoReward = Math.Max(0d, 0.92d - distance * 0.18d);
+                    if (options.Mode == AudioRecognitionMode.MelodyFocus
+                        && safeAutoMidi < 60
+                        && candidate.Midi < 60
+                        && hasClearUpperEvidence)
+                    {
+                        autoReward *= 0.25d;
+                        score -= 0.42d;
+                    }
+
+                    score += autoReward;
                     if (candidate.Midi - safeAutoMidi >= 12)
                     {
-                        score -= 0.55d;
+                        score -= options.Mode == AudioRecognitionMode.MelodyFocus && hasClearUpperEvidence ? 0.05d : 0.18d;
                     }
                     else if (safeAutoMidi - candidate.Midi >= 12)
                     {
-                        score -= 0.26d;
+                        score -= 0.52d;
                     }
                 }
 
                 scored.Add((candidate, score));
-                if (candidate.Midi >= 36 && candidate.Strength >= 0.15f)
+                if (options.AllowSyntheticLowerOctave && candidate.Midi >= 36 && candidate.Strength >= 0.15f)
                 {
                     int lowerMidi = candidate.Midi - 12;
                     double lowerFreq = Math.Max(1d, candidate.FrequencyHz * 0.5d);
-                    float lowerStrength = Math.Clamp(candidate.Strength * 0.82f, 0.05f, 1.7f);
-                    double lowerScore = score - 0.12d;
+                    if (lowerMidi > options.SyntheticLowerMaxMidi && !hasClearLowEvidence)
+                    {
+                        continue;
+                    }
+
+                    bool lowerAlreadyInOrdered = ordered.Any(c => Math.Abs(c.Midi - lowerMidi) <= 1);
+                    bool lowerMatchesAuto = safeAutoMidi >= 0 && Math.Abs(lowerMidi - safeAutoMidi) <= 2;
+                    bool canUseLowerAuto = lowerMatchesAuto && (lowerAlreadyInOrdered || lowerMidi <= options.SyntheticLowerMaxMidi || hasClearLowEvidence);
+                    float lowerStrength = Math.Clamp(
+                        candidate.Strength * (lowerAlreadyInOrdered ? 0.68f : (canUseLowerAuto ? 0.58f : (hasClearLowEvidence ? 0.50f : 0.32f))),
+                        0.04f,
+                        0.82f);
+                    double lowerPenalty = lowerAlreadyInOrdered ? 0.34d : (canUseLowerAuto ? 0.42d : (hasClearLowEvidence ? 0.56d : 0.90d));
+                    double lowerScore = Math.Clamp(lowerStrength, 0.02d, 2.0d) * 1.12d
+                        + ScoreAdaptiveRegister(lowerMidi, hasClearLowEvidence, hasClearUpperEvidence, options)
+                        - lowerPenalty;
+                    if (safeAutoMidi >= 0 && (canUseLowerAuto || lowerAlreadyInOrdered || hasClearLowEvidence))
+                    {
+                        int lowerDistance = Math.Abs(lowerMidi - safeAutoMidi);
+                        lowerScore += Math.Max(0d, 0.92d - lowerDistance * 0.18d);
+                        if (lowerMidi - safeAutoMidi >= 12)
+                        {
+                            lowerScore -= 0.18d;
+                        }
+                        else if (safeAutoMidi - lowerMidi >= 12)
+                        {
+                            lowerScore -= 0.34d;
+                        }
+                    }
+
                     scored.Add((new PitchCandidate(lowerMidi, lowerFreq, lowerStrength), lowerScore));
                 }
             }
@@ -1014,11 +1251,47 @@ namespace MusicBox.Services
                 .ThenBy(item => safeAutoMidi >= 0 ? Math.Abs(item.Candidate.Midi - safeAutoMidi) : 0)
                 .GroupBy(item => item.Candidate.Midi)
                 .Select(g => g.First())
-                .Take(3)
+                .Take(4)
                 .Select(item => item.Candidate)
                 .ToList();
 
             return selected.Count == 0 ? Array.Empty<PitchCandidate>() : selected.ToArray();
+        }
+
+        private static void RebalanceCandidatesByContinuity(IList<PitchCandidate> candidates, RecognitionOptions options)
+        {
+            if (candidates.Count == 0 || !options.AllowSyntheticLowerOctave)
+            {
+                return;
+            }
+
+            // Keep lower-octave alternatives available, but lightly: for melody extraction
+            // they should not overpower a real upper voice.
+            PitchCandidate[] snapshot = candidates.ToArray();
+            foreach (PitchCandidate candidate in snapshot)
+            {
+                if (candidate.Midi < 60 || candidate.Strength < 0.30f)
+                {
+                    continue;
+                }
+
+                int lowerMidi = candidate.Midi - 12;
+                if (lowerMidi < 24)
+                {
+                    continue;
+                }
+
+                bool lowerAlreadyPresent = candidates.Any(c => Math.Abs(c.Midi - lowerMidi) <= 1);
+                if (lowerMidi > options.SyntheticLowerMaxMidi)
+                {
+                    continue;
+                }
+
+                float lowerStrength = lowerAlreadyPresent
+                    ? Math.Clamp(candidate.Strength * 0.08f, 0.02f, 0.18f)
+                    : Math.Clamp(candidate.Strength * 0.14f, 0.02f, 0.24f);
+                AddOrBoostCandidate(candidates, new PitchCandidate(lowerMidi, candidate.FrequencyHz * 0.5d, lowerStrength));
+            }
         }
 
         private static PitchCandidate[] GetTrajectoryCandidates(FrameAnalysis frame)
@@ -1033,17 +1306,152 @@ namespace MusicBox.Services
                 .ThenByDescending(c => c.Midi)
                 .GroupBy(c => c.Midi)
                 .Select(g => g.First())
-                .Take(3)
+                .Take(4)
                 .ToList();
 
             return deduped.Count == 0 ? Array.Empty<PitchCandidate>() : deduped.ToArray();
         }
 
-        private static double ScoreTrajectoryCandidate(PitchCandidate candidate, double confidence)
+        private static double ScoreTrajectoryCandidate(PitchCandidate candidate, double confidence, RecognitionOptions options)
         {
             double strength = Math.Clamp(candidate.Strength, 0.02d, 2.0d);
-            double stableRangeBonus = Math.Max(0d, 1d - Math.Abs(candidate.Midi - 66) / 44d) * 0.08d;
-            return strength * 1.15d + Math.Clamp(confidence, 0d, 1d) * 0.88d + stableRangeBonus;
+            double stableRangeBonus = Math.Max(0d, 1d - Math.Abs(candidate.Midi - MelodyRegisterCenterMidi) / 34d)
+                * (options.Mode == AudioRecognitionMode.MelodyFocus ? 0.12d : 0.06d);
+            return strength * 0.98d
+                + Math.Clamp(confidence, 0d, 1d) * 1.02d
+                + stableRangeBonus
+                + ScoreMelodyRegister(candidate.Midi, options);
+        }
+
+        private static double ScoreAdaptiveRegister(int midi, bool hasClearLowEvidence, bool hasClearUpperEvidence, RecognitionOptions options)
+        {
+            double score = ScoreMelodyRegister(midi, options);
+            if (options.Mode == AudioRecognitionMode.MelodyFocus)
+            {
+                if (midi < 60)
+                {
+                    score -= 0.24d;
+                }
+                else if (midi is >= 72 and <= 92)
+                {
+                    score += 0.10d;
+                }
+
+                return score;
+            }
+
+            if (hasClearLowEvidence)
+            {
+                if (midi < 60)
+                {
+                    score += options.Mode == AudioRecognitionMode.Dense ? 0.34d : 0.20d;
+                }
+                else if (midi >= 72)
+                {
+                    score -= options.Mode == AudioRecognitionMode.Dense ? 0.22d : 0.10d;
+                }
+            }
+            else if (hasClearUpperEvidence && midi < 55)
+            {
+                score -= 0.12d;
+            }
+
+            return score;
+        }
+
+        private static double ScoreMelodyRegister(int midi)
+        {
+            return ScoreMelodyRegister(midi, RecognitionOptions.ForMode(AudioRecognitionMode.Balanced));
+        }
+
+        private static double ScoreMelodyRegister(int midi, RecognitionOptions options)
+        {
+            if (options.Mode == AudioRecognitionMode.MelodyFocus)
+            {
+                if (midi < 48)
+                {
+                    return -1.15d;
+                }
+
+                if (midi < MelodyRegisterFloorMidi)
+                {
+                    return -0.72d;
+                }
+
+                if (midi < 60)
+                {
+                    return -0.32d;
+                }
+
+                if (midi <= 88)
+                {
+                    return Math.Max(0d, 1d - Math.Abs(midi - MelodyRegisterCenterMidi) / 28d) * 0.34d;
+                }
+
+                if (midi <= 96)
+                {
+                    return 0.10d;
+                }
+
+                return -0.20d;
+            }
+
+            if (options.Mode == AudioRecognitionMode.Balanced)
+            {
+                if (midi < 48)
+                {
+                    return -0.72d;
+                }
+
+                if (midi < MelodyRegisterFloorMidi)
+                {
+                    return -0.38d;
+                }
+
+                if (midi < 60)
+                {
+                    return -0.14d;
+                }
+
+                if (midi <= 88)
+                {
+                    return Math.Max(0d, 1d - Math.Abs(midi - MelodyRegisterCenterMidi) / 28d) * 0.22d;
+                }
+
+                if (midi <= 96)
+                {
+                    return 0.05d;
+                }
+
+                return -0.14d;
+            }
+
+            if (midi < 48)
+            {
+                return -0.46d;
+            }
+
+            if (midi < MelodyRegisterFloorMidi)
+            {
+                return -0.16d;
+            }
+
+            if (midi < 60)
+            {
+                return 0.02d;
+            }
+
+            if (midi <= 88)
+            {
+                return Math.Max(0d, 1d - Math.Abs(midi - MelodyRegisterCenterMidi) / 28d) * 0.16d;
+            }
+
+            if (midi <= 96)
+            {
+                return 0.02d;
+            }
+
+            return -0.12d;
         }
 
         private static double ScoreTrajectoryTransition(int prevMidi, int nextMidi)
@@ -1051,21 +1459,21 @@ namespace MusicBox.Services
             int delta = Math.Abs(nextMidi - prevMidi);
             if (delta <= 2)
             {
-                return 0.35d;
+                return 0.46d;
             }
 
             if (delta <= 5)
             {
-                return 0.10d - (delta - 2) * 0.12d;
+                return 0.06d - (delta - 2) * 0.16d;
             }
 
             if (delta <= 9)
             {
-                return -0.42d - (delta - 5) * 0.22d;
+                return -0.62d - (delta - 5) * 0.27d;
             }
 
-            double octavePenalty = delta >= 12 ? 0.95d : 0d;
-            return -1.50d - (delta - 9) * 0.34d - octavePenalty;
+            double octavePenalty = delta >= 12 ? 1.20d : 0d;
+            return -1.85d - (delta - 9) * 0.40d - octavePenalty;
         }
 
         private static bool ShouldSplitForPitchChange(IReadOnlyList<FrameAnalysis> frames, int index, int dominantMidi)
@@ -1104,7 +1512,40 @@ namespace MusicBox.Services
             return confirmations >= 2;
         }
 
+        private static bool IsLikelyOnset(IReadOnlyList<FrameAnalysis> frames, int index, int runStart)
+        {
+            if (index <= runStart + 1 || index <= 0 || index >= frames.Count)
+            {
+                return false;
+            }
+
+            FrameAnalysis prev = frames[index - 1];
+            FrameAnalysis cur = frames[index];
+            if (!IsFrameVoiced(prev) || !IsFrameVoiced(cur))
+            {
+                return false;
+            }
+
+            bool enoughGapFromStart = index - runStart >= 3;
+            if (!enoughGapFromStart || Math.Abs(cur.PrimaryMidi - prev.PrimaryMidi) > 1)
+            {
+                return false;
+            }
+
+            double rmsRise = cur.Rms / Math.Max(1e-6d, prev.Rms);
+            bool clearEnergyAttack = rmsRise >= 1.55d && cur.Rms - prev.Rms >= 0.006d;
+            bool confidenceAttack = cur.Confidence - prev.Confidence >= 0.20d;
+            bool onsetPropertyAttack = cur.OnsetStrength >= 0.012d && cur.OnsetStrength >= prev.OnsetStrength * 1.35d;
+
+            return clearEnergyAttack || confidenceAttack || onsetPropertyAttack;
+        }
+
         private static int ResolveDominantMidi(IReadOnlyDictionary<int, int> votes, int fallback)
+        {
+            return ResolveDominantMidi(votes, fallback, RecognitionOptions.ForMode(AudioRecognitionMode.Balanced));
+        }
+
+        private static int ResolveDominantMidi(IReadOnlyDictionary<int, int> votes, int fallback, RecognitionOptions options)
         {
             if (votes.Count == 0)
             {
@@ -1114,6 +1555,7 @@ namespace MusicBox.Services
             return votes
                 .OrderByDescending(kvp => kvp.Value)
                 .ThenBy(kvp => Math.Abs(kvp.Key - fallback))
+                .ThenByDescending(kvp => ScoreMelodyRegister(kvp.Key, options))
                 .ThenByDescending(kvp => kvp.Key)
                 .First()
                 .Key;
@@ -1174,7 +1616,9 @@ namespace MusicBox.Services
                     output.Add(new DetectedAudioNote
                     {
                         Midi = stabilizedMidi,
-                        FrequencyHz = ordered[voice].FrequencyHz > 0d ? ordered[voice].FrequencyHz : MidiToFrequency(stabilizedMidi),
+                        FrequencyHz = stabilizedMidi == ordered[voice].Midi && ordered[voice].FrequencyHz > 0d
+                            ? ordered[voice].FrequencyHz
+                            : MidiToFrequency(stabilizedMidi),
                         StartSeconds = ordered[voice].StartSeconds,
                         DurationSeconds = ordered[voice].DurationSeconds
                     });
@@ -1189,13 +1633,18 @@ namespace MusicBox.Services
 
         private static IReadOnlyList<DetectedAudioNote> CleanShortNoiseNotes(IReadOnlyList<DetectedAudioNote> notes)
         {
+            return CleanShortNoiseNotes(notes, RecognitionOptions.ForMode(AudioRecognitionMode.Balanced));
+        }
+
+        private static IReadOnlyList<DetectedAudioNote> CleanShortNoiseNotes(IReadOnlyList<DetectedAudioNote> notes, RecognitionOptions options)
+        {
             if (notes.Count == 0)
             {
                 return notes;
             }
 
             var filtered = notes
-                .Where(n => n.DurationSeconds >= 0.090d)
+                .Where(n => n.DurationSeconds >= options.MinCleanDurationSeconds)
                 .OrderBy(n => n.StartSeconds)
                 .ThenByDescending(n => n.Midi)
                 .ToList();
@@ -1216,7 +1665,7 @@ namespace MusicBox.Services
                 DetectedAudioNote last = merged[^1];
                 double lastEnd = last.StartSeconds + last.DurationSeconds;
                 double gap = note.StartSeconds - lastEnd;
-                if (note.Midi == last.Midi && gap >= -0.01d && gap <= 0.065d)
+                if (note.Midi == last.Midi && gap >= -0.01d && gap <= options.SamePitchMergeGapSeconds)
                 {
                     double newEnd = Math.Max(lastEnd, note.StartSeconds + note.DurationSeconds);
                     double newDuration = Math.Max(0.02d, newEnd - last.StartSeconds);
@@ -1241,7 +1690,7 @@ namespace MusicBox.Services
             for (int i = 0; i < merged.Count; i++)
             {
                 DetectedAudioNote current = merged[i];
-                if (current.DurationSeconds < 0.09d && i > 0 && i < merged.Count - 1)
+                if (current.DurationSeconds < 0.16d && i > 0 && i < merged.Count - 1)
                 {
                     DetectedAudioNote prev = merged[i - 1];
                     DetectedAudioNote next = merged[i + 1];
@@ -1265,10 +1714,19 @@ namespace MusicBox.Services
                     double prevGap = current.StartSeconds - (prev.StartSeconds + prev.DurationSeconds);
                     double nextGap = next.StartSeconds - (current.StartSeconds + current.DurationSeconds);
                     bool isolatedShortBlip =
-                        current.DurationSeconds < 0.12d
+                        current.DurationSeconds < 0.16d
                         && prevGap > 0.05d
                         && nextGap > 0.05d;
                     if (isolatedShortBlip)
+                    {
+                        continue;
+                    }
+
+                    bool shortUnstableNeighbor =
+                        current.DurationSeconds < 0.14d
+                        && Math.Abs(current.Midi - prev.Midi) >= 7
+                        && Math.Abs(current.Midi - next.Midi) >= 7;
+                    if (shortUnstableNeighbor)
                     {
                         continue;
                     }
@@ -1340,7 +1798,19 @@ namespace MusicBox.Services
             float[] samples,
             int sampleRate,
             IReadOnlyList<DetectedAudioNote> notes,
-            IProgress<AudioRecognitionProgress>? progress)
+            IProgress<AudioRecognitionProgress>? progress,
+            CancellationToken cancellationToken = default)
+        {
+            return RefineDetectedNotes(samples, sampleRate, notes, progress, RecognitionOptions.ForMode(AudioRecognitionMode.Balanced), cancellationToken);
+        }
+
+        private static IReadOnlyList<DetectedAudioNote> RefineDetectedNotes(
+            float[] samples,
+            int sampleRate,
+            IReadOnlyList<DetectedAudioNote> notes,
+            IProgress<AudioRecognitionProgress>? progress,
+            RecognitionOptions options,
+            CancellationToken cancellationToken = default)
         {
             if (notes.Count == 0)
             {
@@ -1354,6 +1824,7 @@ namespace MusicBox.Services
             {
                 if ((i & 3) == 0)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     int percent = 88 + Math.Clamp((int)Math.Round((i + 1) / (double)Math.Max(1, notes.Count) * 10d), 0, 10);
                     progress?.Report(new AudioRecognitionProgress
                     {
@@ -1364,7 +1835,7 @@ namespace MusicBox.Services
                     });
                 }
 
-                refined.Add(RefineDetectedNote(samples, sampleRate, notes, i, minFreq, maxFreq));
+                refined.Add(RefineDetectedNote(samples, sampleRate, notes, i, minFreq, maxFreq, options));
             }
 
             return refined
@@ -1379,7 +1850,8 @@ namespace MusicBox.Services
             IReadOnlyList<DetectedAudioNote> notes,
             int index,
             double minFreq,
-            double maxFreq)
+            double maxFreq,
+            RecognitionOptions options)
         {
             DetectedAudioNote note = notes[index];
             if (samples.Length < 512 || note.DurationSeconds <= 0.04d)
@@ -1436,7 +1908,7 @@ namespace MusicBox.Services
                 AddPitchVote(scoreByMidi, autoMidi, autoFreq, 1.15d + autoScore * 0.8d, 0.95d + autoScore * 0.45d);
             }
 
-            var (spectralCandidates, flatness, peakRatio) = AnalyzeSpectrum(samples, trimStart, analysisLength, sampleRate, minFreq, maxFreq, maxNotes: 6);
+            var (spectralCandidates, flatness, peakRatio) = AnalyzeSpectrum(samples, trimStart, analysisLength, sampleRate, minFreq, maxFreq, maxNotes: 6, options);
             foreach (PitchCandidate candidate in spectralCandidates)
             {
                 double score = 0.58d + Math.Clamp(candidate.Strength, 0.02f, 2.0f) * 0.92d;
@@ -1451,11 +1923,17 @@ namespace MusicBox.Services
                 }
 
                 AddPitchVote(scoreByMidi, candidate.Midi, candidate.FrequencyHz, score, Math.Max(0.45d, candidate.Strength));
-                if (candidate.Midi >= 36 && candidate.Strength >= 0.16f)
+                if (options.AllowSyntheticLowerOctave && candidate.Midi >= 36 && candidate.Strength >= 0.16f)
                 {
+                    int lowerMidi = candidate.Midi - 12;
+                    if (lowerMidi > options.RefineLowerOctaveMaxMidi && note.Midi > 69)
+                    {
+                        continue;
+                    }
+
                     AddPitchVote(
                         scoreByMidi,
-                        candidate.Midi - 12,
+                        lowerMidi,
                         candidate.FrequencyHz * 0.5d,
                         score * 0.42d,
                         Math.Max(0.30d, candidate.Strength * 0.55d));
@@ -1565,10 +2043,23 @@ namespace MusicBox.Services
             double maxFreq,
             int maxNotes)
         {
+            return AnalyzeSpectrum(samples, start, length, sampleRate, minFreq, maxFreq, maxNotes, RecognitionOptions.ForMode(AudioRecognitionMode.Balanced));
+        }
+
+        private static (IReadOnlyList<PitchCandidate> Candidates, double Flatness, double PeakRatio) AnalyzeSpectrum(
+            float[] samples,
+            int start,
+            int length,
+            int sampleRate,
+            double minFreq,
+            double maxFreq,
+            int maxNotes,
+            RecognitionOptions options)
+        {
             int fftSize = NextPowerOfTwo(Math.Clamp(length * 2, 2048, 8192));
             int m = (int)Math.Log2(fftSize);
             var fft = new Complex[fftSize];
-            int available = Math.Min(length, samples.Length - start);
+            int available = Math.Min(Math.Min(length, samples.Length - start), fftSize);
             if (available <= 32)
             {
                 return (Array.Empty<PitchCandidate>(), 1d, 0d);
@@ -1639,7 +2130,7 @@ namespace MusicBox.Services
             float maxMag = peaks.Max(p => p.Mag);
             float meanMag = peaks.Average(p => p.Mag);
             double peakRatio = Math.Clamp((maxMag / Math.Max(1e-6f, meanMag) - 1d) / 14d, 0d, 1d);
-            float threshold = maxMag * 0.18f;
+            float threshold = maxMag * options.SpectralPeakThresholdFactor;
 
             var selected = new List<PitchCandidate>(Math.Max(1, maxNotes));
             foreach (var peak in peaks.OrderByDescending(p => p.Score))
@@ -1669,7 +2160,259 @@ namespace MusicBox.Services
                 }
             }
 
-            return (selected, flatness, peakRatio);
+            foreach (PitchCandidate candidate in AnalyzeHarmonicSalience(magnitude, sampleRate, fftSize, minFreq, maxFreq, maxNotes + 2, options))
+            {
+                AddOrBoostCandidate(selected, candidate);
+            }
+
+            return (selected
+                .OrderByDescending(c => c.Strength)
+                .ThenBy(c => c.Midi)
+                .Take(maxNotes)
+                .ToList(), flatness, peakRatio);
+        }
+
+        private static IReadOnlyList<PitchCandidate> AnalyzeHarmonicSalience(
+            IReadOnlyList<float> magnitude,
+            int sampleRate,
+            int fftSize,
+            double minFreq,
+            double maxFreq,
+            int maxNotes,
+            RecognitionOptions options)
+        {
+            if (magnitude.Count == 0 || sampleRate <= 0 || fftSize <= 0)
+            {
+                return Array.Empty<PitchCandidate>();
+            }
+
+            float maxMagnitude = 0f;
+            for (int i = 1; i < magnitude.Count; i++)
+            {
+                maxMagnitude = Math.Max(maxMagnitude, magnitude[i]);
+            }
+
+            if (maxMagnitude <= 1e-7f)
+            {
+                return Array.Empty<PitchCandidate>();
+            }
+
+            int minMidi = Math.Clamp((int)Math.Floor(PitchUtils.FrequencyToMidi(minFreq)) - 1, 24, 108);
+            int maxMidi = Math.Clamp((int)Math.Ceiling(PitchUtils.FrequencyToMidi(maxFreq)) + 1, 24, 108);
+            var scored = new List<PitchCandidate>();
+            for (int midi = minMidi; midi <= maxMidi; midi++)
+            {
+                double f0 = MidiToFrequency(midi);
+                if (f0 < minFreq || f0 > maxFreq)
+                {
+                    continue;
+                }
+
+                double score = 0d;
+                double weightSum = 0d;
+                int supportedPartials = 0;
+                double fundamental = InterpolatedMagnitude(magnitude, f0, sampleRate, fftSize) / maxMagnitude;
+                for (int harmonic = 1; harmonic <= 8; harmonic++)
+                {
+                    double freq = f0 * harmonic;
+                    if (freq >= sampleRate * 0.48d || freq > maxFreq * 5.2d)
+                    {
+                        break;
+                    }
+
+                    double normalized = InterpolatedMagnitude(magnitude, freq, sampleRate, fftSize) / maxMagnitude;
+                    double weight = 1d / Math.Pow(harmonic, 0.72d);
+                    score += normalized * weight;
+                    weightSum += weight;
+                    if (harmonic > 1 && normalized > 0.045d)
+                    {
+                        supportedPartials++;
+                    }
+                }
+
+                if (weightSum <= 0d)
+                {
+                    continue;
+                }
+
+                double salience = score / weightSum;
+                double minSalience = midi < 60 ? options.LowHarmonicSalienceThreshold : 0.105d;
+                double minFundamental = midi < 60 ? options.LowFundamentalThreshold : 0.035d;
+                if (salience < minSalience || (fundamental < minFundamental && supportedPartials < 2))
+                {
+                    continue;
+                }
+
+                double supportBonus = Math.Min(0.34d, supportedPartials * 0.055d);
+                if (midi is >= 48 and < 60 && supportedPartials >= 2)
+                {
+                    supportBonus += options.LowSupportBonus;
+                }
+
+                float strength = (float)Math.Clamp(salience * 1.70d + supportBonus, 0.04d, 1.65d);
+                scored.Add(new PitchCandidate(midi, f0, strength));
+            }
+
+            return scored
+                .OrderByDescending(c => c.Strength)
+                .ThenByDescending(c => ScoreMelodyRegister(c.Midi, options))
+                .ThenBy(c => options.Mode == AudioRecognitionMode.MelodyFocus ? -c.Midi : c.Midi)
+                .Take(Math.Max(1, maxNotes))
+                .ToArray();
+        }
+
+        private static double InterpolatedMagnitude(IReadOnlyList<float> magnitude, double frequency, int sampleRate, int fftSize)
+        {
+            double bin = frequency * fftSize / Math.Max(1d, sampleRate);
+            int low = (int)Math.Floor(bin);
+            int high = low + 1;
+            if (low < 0 || high >= magnitude.Count)
+            {
+                return 0d;
+            }
+
+            double t = bin - low;
+            return magnitude[low] * (1d - t) + magnitude[high] * t;
+        }
+
+        private static void AddOrBoostCandidate(IList<PitchCandidate> candidates, PitchCandidate candidate)
+        {
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                PitchCandidate current = candidates[i];
+                if (Math.Abs(current.Midi - candidate.Midi) > 0)
+                {
+                    continue;
+                }
+
+                double frequency = (current.FrequencyHz * current.Strength + candidate.FrequencyHz * candidate.Strength)
+                    / Math.Max(0.01d, current.Strength + candidate.Strength);
+                float strength = Math.Clamp(current.Strength + candidate.Strength * 0.72f, 0.04f, 1.90f);
+                candidates[i] = new PitchCandidate(current.Midi, frequency, strength);
+                return;
+            }
+
+            candidates.Add(candidate);
+        }
+
+        private static void AddOrBoostCandidateByMidi(
+            IList<PitchCandidate> candidates,
+            int midi,
+            double frequency,
+            float strength,
+            int tolerance = 1)
+        {
+            int safeMidi = Math.Clamp(midi, 24, 108);
+            int idx = candidates.ToList().FindIndex(c => Math.Abs(c.Midi - safeMidi) <= tolerance);
+            if (idx >= 0)
+            {
+                PitchCandidate old = candidates[idx];
+                double oldWeight = Math.Max(0.05f, old.Strength);
+                double newWeight = Math.Max(0.05f, strength);
+                double mixedFreq = (old.FrequencyHz * oldWeight + frequency * newWeight) / (oldWeight + newWeight);
+                candidates[idx] = new PitchCandidate(old.Midi, mixedFreq, Math.Clamp(old.Strength + strength, 0.04f, 1.95f));
+            }
+            else
+            {
+                candidates.Add(new PitchCandidate(safeMidi, frequency, strength));
+            }
+        }
+
+        private static void BoostAgreedPitchCandidates(
+            IList<PitchCandidate> candidates,
+            double autoFreq,
+            double yinFreq,
+            IReadOnlyList<PitchCandidate> spectralCandidates)
+        {
+            if (candidates.Count == 0)
+            {
+                return;
+            }
+
+            int autoMidi = FrequencyToSafeMidi(autoFreq);
+            int yinMidi = FrequencyToSafeMidi(yinFreq);
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                PitchCandidate candidate = candidates[i];
+                int agreements = 0;
+                if (autoMidi >= 0 && Math.Abs(candidate.Midi - autoMidi) <= 1) agreements++;
+                if (yinMidi >= 0 && Math.Abs(candidate.Midi - yinMidi) <= 1) agreements++;
+                if (spectralCandidates.Any(c => Math.Abs(c.Midi - candidate.Midi) <= 1)) agreements++;
+                if (agreements >= 2)
+                {
+                    float boost = agreements >= 3 ? 0.32f : 0.18f;
+                    candidates[i] = new PitchCandidate(candidate.Midi, candidate.FrequencyHz, Math.Clamp(candidate.Strength + boost, 0.04f, 1.95f));
+                }
+            }
+        }
+
+        private static void ResolveOctaveConflict(
+            IList<PitchCandidate> candidates,
+            double autoFreq,
+            double yinFreq,
+            IReadOnlyList<PitchCandidate> spectralCandidates)
+        {
+            int autoMidi = FrequencyToSafeMidi(autoFreq);
+            int yinMidi = FrequencyToSafeMidi(yinFreq);
+            if (autoMidi < 0 || yinMidi < 0 || Math.Abs(autoMidi - yinMidi) != 12)
+            {
+                return;
+            }
+
+            double autoSupport = ScoreSpectralMidiSupport(autoMidi, spectralCandidates);
+            double yinSupport = ScoreSpectralMidiSupport(yinMidi, spectralCandidates);
+            if (Math.Abs(autoSupport - yinSupport) < 0.08d)
+            {
+                return;
+            }
+
+            int preferredMidi = autoSupport > yinSupport ? autoMidi : yinMidi;
+            int weakerMidi = preferredMidi == autoMidi ? yinMidi : autoMidi;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                PitchCandidate candidate = candidates[i];
+                if (Math.Abs(candidate.Midi - preferredMidi) <= 1)
+                {
+                    candidates[i] = new PitchCandidate(candidate.Midi, candidate.FrequencyHz, Math.Clamp(candidate.Strength + 0.24f, 0.04f, 1.95f));
+                }
+                else if (Math.Abs(candidate.Midi - weakerMidi) <= 1)
+                {
+                    candidates[i] = new PitchCandidate(candidate.Midi, candidate.FrequencyHz, Math.Clamp(candidate.Strength * 0.62f, 0.04f, 1.95f));
+                }
+            }
+        }
+
+        private static int FrequencyToSafeMidi(double frequency)
+        {
+            if (frequency <= 0d || double.IsNaN(frequency) || double.IsInfinity(frequency))
+            {
+                return -1;
+            }
+
+            var (midi, _) = PitchUtils.FrequencyToMidiWithCents(frequency);
+            return Math.Clamp(midi, 24, 108);
+        }
+
+        private static double ScoreSpectralMidiSupport(int midi, IReadOnlyList<PitchCandidate> spectralCandidates)
+        {
+            double score = 0d;
+            foreach (PitchCandidate candidate in spectralCandidates)
+            {
+                int distance = Math.Abs(candidate.Midi - midi);
+                if (distance <= 1)
+                {
+                    score += candidate.Strength * (distance == 0 ? 1.0d : 0.72d);
+                    continue;
+                }
+
+                int harmonicDistance = Math.Abs(candidate.Midi - (midi + 12));
+                if (harmonicDistance <= 1)
+                {
+                    score += candidate.Strength * 0.46d;
+                }
+            }
+
+            return score;
         }
 
         private static bool IsLikelyHarmonic(double frequency, IReadOnlyList<PitchCandidate> selected)
@@ -1994,26 +2737,30 @@ namespace MusicBox.Services
             double lpY = 0d;
             double prevX = 0d;
             double peak = 0d;
+            double inputPeak = 0d;
             for (int i = 0; i < input.Length; i++)
             {
                 double x = input[i];
+                inputPeak = Math.Max(inputPeak, Math.Abs(x));
                 hpY = hpAlpha * (hpY + x - prevX);
                 prevX = x;
                 lpY += lpAlpha * (hpY - lpY);
-                double saturated = Math.Tanh(lpY * 1.65d) / Math.Tanh(1.65d);
-                output[i] = (float)saturated;
-                peak = Math.Max(peak, Math.Abs(saturated));
+                double y = lpY;
+                if (inputPeak > 1.05d && Math.Abs(y) > 1.0d)
+                {
+                    y = Math.Tanh(y);
+                }
+
+                output[i] = (float)Math.Clamp(y, -1.0d, 1.0d);
+                peak = Math.Max(peak, Math.Abs(output[i]));
             }
 
             if (peak > 1e-6d)
             {
-                double norm = Math.Min(1.0d, 0.98d / peak);
-                if (norm < 0.999d)
+                double norm = Math.Min(6.0d, 0.95d / peak);
+                for (int i = 0; i < output.Length; i++)
                 {
-                    for (int i = 0; i < output.Length; i++)
-                    {
-                        output[i] = (float)(output[i] * norm);
-                    }
+                    output[i] = (float)Math.Clamp(output[i] * norm, -1.0d, 1.0d);
                 }
             }
 

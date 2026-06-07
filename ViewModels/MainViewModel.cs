@@ -11,6 +11,7 @@ namespace MusicBox.ViewModels
         private readonly MusicXmlExporter _musicXmlExporter = new();
         private readonly MusicXmlImporter _musicXmlImporter = new();
         private readonly MidiExporter _midiExporter = new();
+        private readonly AudioExportService _audioExporter = new();
 
         private ScoreProject _project = ProjectFactory.CreateDefault();
         private string _statusText = "准备就绪";
@@ -292,6 +293,14 @@ namespace MusicBox.ViewModels
 
             _midiExporter.Export(Project, path);
             StatusText = $"已导出 MIDI: {Path.GetFileName(path)}";
+        }
+
+        public void ExportAudioToPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return;
+
+            _audioExporter.ExportWav(Project, path);
+            StatusText = $"已导出 WAV: {Path.GetFileName(path)}";
         }
 
         private void MarkDirty()
